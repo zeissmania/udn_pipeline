@@ -10,8 +10,10 @@ import time
 
 url = 'https://amelie.stanford.edu/api'
 
+BASEDIR = os.path.dirname(os.path.realpath(__file__))
+d_hpo = eval(open(f'{BASEDIR}/hpo_id_to_name.pdict').read())
 
-def create_patient(taskname):
+def create_patient(taskname, genelist, pheno_hpo_list):
     r = requests.post(
         '%s/create_patient' % url,
         verify=False,
@@ -30,8 +32,8 @@ def create_patient(taskname):
             'onlyPassVariants': 'false',
             'filterRelativesOnlyHom': 'false',
             'patientName': taskname,
-            'phenotypesArea': 'HP:0001344',
-            'genotypesArea': 'VPS53',
+            'phenotypesArea': "\n".join(pheno_hpo_list),
+            'genotypesArea': '\n'.join(genelist),
 
             # 'genotypesArea': '\n'.join(genelist),
             # 'phenotypesArea': '\n'.join(hpo)
@@ -49,14 +51,19 @@ def wait_for_processing(patient_id):
         time.sleep(1)
 
 
-def parse_json(prj, r, d_hpo):
+def parse_json(prj, json_pdict):
     """
     extract the information from json
     r = json_pdict,   got from response.json(),  or read from the pdict file
     """
-
+    r = json_pdict
     res = []
-    hpo_q = r['system_list'][0]['phenotypes']
+    # hpo_q = r['system_list'][0]['phenotypes']
+    hpo_q_raw = [_['phenotypes'] for _ in r['system_list']]
+    hpo_q = []
+    for _ in hpo_q_raw:
+        hpo_q.extend(_)
+
     hpo_q = [_['hpo_id']+ "\t" + _['name'] for _ in hpo_q]
 
     # res['query_hpo'] = hpo_q
@@ -91,7 +98,7 @@ def parse_json(prj, r, d_hpo):
         ires.insert(0, max_score)
         res.append(ires)
 
-    res = sorted(res, key=lambda x: x[0])
+    res = sorted(res, key=lambda x: x[0], reverse=True)
 
     with open(f'{prj}.amelie_final_result.full.txt', 'w') as out:
         print('The Query phenotype is :\n\t', end='', file=out)
@@ -99,14 +106,15 @@ def parse_json(prj, r, d_hpo):
 
         print('The Genes are as follow', file=out)
         for ign in res:
-            print(f'\tgene={ign[1]}\tscore={ign[0]:.2f}', file=out)
-            print(f'\tOMIM: {ign[2]}', file=out)
-            print(f'\tPapers', file=out)
+            print(f'gene={ign[1]}\tscore={ign[0]:.2f}', file=out)
+            print(f'OMIM: {ign[2]}', file=out)
+            print(f'Papers', file=out)
             for ipaper in ign[3:]:
-                print(f'\t\t{ipaper["title"]}', file=out)
-                print(f'\t\tYear={ipaper["pubmed_year"]}\tPMID={ipaper["pmid"]}', file=out)
+                print(f'\t{ipaper["title"]}', file=out)
+                print(f'\tYear={ipaper["pubmed_year"]}\tPMID={ipaper["pmid"]}', file=out)
                 print(f'\t\t', end='', file=out)
                 print(f'\n\t\t'.join(ipaper["hpo"]), file=out)
+                print(f'\t', end='', file=out)
                 print('*' * 10 + '\n', file=out)
 
             print('#' * 30 + '\n\n', file=out)
@@ -122,9 +130,8 @@ def parse_json(prj, r, d_hpo):
     # return res
 
 
-
-def get_response(prj):
-    patient_id = create_patient(prj)
+def get_response(prj, genelist, pheno_hpo_list):
+    patient_id = create_patient(prj, genelist, pheno_hpo_list)
     print("Wait while vcfs are filtered and annotated and papers are ranked")
     wait_for_processing(patient_id)
     response = requests.get('%s/patient/%s' % (url, patient_id),
@@ -137,19 +144,17 @@ def get_response(prj):
     return res
 
 
-def main(prj):
-    d_hpo = eval(open('/Users/files/ref/HPO/hpo_id_to_name.pdict').read())
+def main(prj, genelist, pheno_hpo_list):
+
     json_pdict = f'{prj}.amelie.pdict'
-
-
     if not os.path.exists(json_pdict):
-        json_res = get_response(prj)
+        json_res = get_response(prj, genelist, pheno_hpo_list)
     else:
         json_res = eval(open(json_pdict).read())
 
     # parse the hpo
     # json_res = response.json()
-    parse_json(prj, json_res, d_hpo)
+    parse_json(prj, json_res)
 
 
 if __name__ == "__main__":
@@ -157,7 +162,15 @@ if __name__ == "__main__":
     from argparse import RawTextHelpFormatter
     ps = arg.ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
     ps.add_argument('prj', help="""task name""")
+    ps.add_argument('genelist', help="""genelist, one gene per line""")
+    ps.add_argument('pheno_hpo_list', help="""phenotype HPO ID list, one HPO ID per line""")
     args = ps.parse_args()
 
+    genelist = args.genelist
+    genelist = open(genelist).read().strip().split('\n')
+    pheno_hpo_list = args.pheno_hpo_list
+    pheno_hpo_list = open(pheno_hpo_list).read().strip().split('\n')
+
+
     prj = args.prj
-    main(prj)
+    main(prj, genelist, pheno_hpo_list)
