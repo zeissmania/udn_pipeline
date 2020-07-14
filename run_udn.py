@@ -6,10 +6,15 @@ the folder should contains
 
 """
 import platform
+import os
+import sys
+import re
 import argparse as arg
 from argparse import RawTextHelpFormatter
 ps = arg.ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
-ps.add_argument('pw', help="""project path""")
+ps.add_argument('prj', help="""project name""")
+ps.add_argument('pw', help="""optioinal, project path, default is current folder""", nargs='?', default=os.getcwd())
+ps.add_argument('-annotsv', help="""path for annotSV software, default is using the annotSV in ACCRE dock""", nargs='?', default='')
 ps.add_argument(
     '-hpo', help="""designate the HPO refence file, optional. 2columns, col1=HPO ID, col2=phenotype, sep by tab""",
     nargs='?', default=None)
@@ -18,14 +23,29 @@ args = ps.parse_args()
 # load logging
 import logging
 import logging.config
-import os
-import sys
-import re
-
 import yaml
+from .amelie_api import main
 # from backports import csv  # for writing unicode circle into the csv file
 home = os.path.expanduser('~')
 machine_platform = platform.system()
+
+pw_code = os.path.dirname(os.path.abspath(__file__))
+prj = args.prj
+
+
+fl_log_conf = f'{pw_code}/logging_setting.yaml'
+log_prefix = 'UDN'
+log_prefix = log_prefix + '_' if log_prefix else ''
+with open(fl_log_conf) as f:
+    cfg = yaml.safe_load(f.read())
+    cfg['handlers']['console']['level'] = 'INFO'
+    cfg['handlers']['file']['mode'] = 'w'
+    cfg['handlers']['file']['filename'] = log_prefix + cfg['handlers']['file']['filename']
+    cfg['handlers']['error']['filename'] = log_prefix + cfg['handlers']['error']['filename']
+    logging.config.dictConfig(cfg)
+logger = logging.getLogger('main')
+
+
 #######################
 
 # annotSV output file filter settings
@@ -38,6 +58,14 @@ if machine_platform == 'Darwin':
 else:
     dock_path = '/scratch/cqs/chenh19/dock/annotsv.sif'
 # the annot_sv_rank and gnomad_AF filtering would only take effect on the proband, would not filter on the parent
+
+if os.path.exists(args.annotsv):
+    annot_sv_app = args.annotsv
+elif os.path.exists(dock_path):
+    annot_sv_app = args.annotsv or f'singularity exec {dock_path}  /tools/AnnotSV/bin/AnnotSV'
+else:
+    logger.warning('No annotSV specified')
+    annot_sv_app = ''
 
 ###################
 pw = args.pw
@@ -71,19 +99,6 @@ col_keep_raw_name = ['AnnotSV ID',
  'AnnotSV ranking']
 
 
-pw_code = os.path.dirname(os.path.abspath(__file__))
-
-fl_log_conf = f'{pw_code}/logging_setting.yaml'
-log_prefix = 'UDN'
-log_prefix = log_prefix + '_' if log_prefix else ''
-with open(fl_log_conf) as f:
-    cfg = yaml.safe_load(f.read())
-    cfg['handlers']['console']['level'] = 'INFO'
-    cfg['handlers']['file']['mode'] = 'w'
-    cfg['handlers']['file']['filename'] = log_prefix + cfg['handlers']['file']['filename']
-    cfg['handlers']['error']['filename'] = log_prefix + cfg['handlers']['error']['filename']
-    logging.config.dictConfig(cfg)
-logger = logging.getLogger('main')
 
 
 def parse_pw(pw):
@@ -234,6 +249,7 @@ def get_hpo_id(pw, pheno, hpo_db):
         print('\n'.join(res), file=out)
     with open(fl_result1, 'w') as out:
         print('\n'.join(res_pure_hpo), file=out)
+    return fl_result1
 
 
 def get_hpo_ref_file():
@@ -651,19 +667,23 @@ if __name__ == "__main__":
     vcf, pheno, anno, run_anno = parse_pw(pw)
     #  get_hpo_id
     logger.info('step 1:  get HPO id for the phenotype')
-    get_hpo_id(pw, pheno, hpo_db)
+    hpo_pure_id = get_hpo_id(pw, pheno, hpo_db)
 
     # run annotSV
     if run_anno:
-        for ivcf in vcf:
-            ivcf = os.path.realpath(ivcf)
-            cmd = f'singularity exec {dock_path}  /tools/AnnotSV/bin/AnnotSV -genomeBuild GRCh38 -typeOfAnnotation split -SVinputFile {ivcf}'
-            logger.debug(cmd)
-            os.system(cmd)
-        vcf, pheno, anno, run_anno = parse_pw(pw)
+        if annot_sv_app:
+            for ivcf in vcf:
+                ivcf = os.path.realpath(ivcf)
+                cmd = f'{annot_sv_app} -genomeBuild GRCh38 -typeOfAnnotation split -SVinputFile {ivcf}'
+                logger.debug(cmd)
+                os.system(cmd)
+            vcf, pheno, anno, run_anno = parse_pw(pw)
 
-        if len(anno) == 0:
-            logger.error('no anno file found after annotSV, please check! ')
+            if len(anno) == 0:
+                logger.error('no anno file found after annotSV, please check! ')
+                sys.exit(1)
+        else:
+            logger.error('annotSV is not specified, you need to run the annotation first')
             sys.exit(1)
 
     # refine the anno filename
@@ -706,12 +726,18 @@ if __name__ == "__main__":
             logger.warning('extracted file not found')
 
     # this step should be done manually, go to amelie website, and get the AMELIE score
-    amelie = os.popen(f'find {pw} -type f -iname "*.amelie.txt"').read().split('\n')
+    amelie = os.popen(f'find {pw} -type f -iname "*.amelie.lite.txt"').read().split('\n')
     amelie = [_.strip() for _ in amelie if _.strip()]
 
     if len(amelie) == 0:
-        logger.info('AMELIE file is not ready')
-        sys.exit(1)
+        logger.info('getting information from AMELIE')
+        genelist = os.popen(f'find {pw} -iname "*_P.filtered.genelist"').read().strip().split('\n')
+        genelist = [_.strip() for _ in genelist if _.strip()]
+        if len(genelist) == 0:
+            logger.error('No proband genelist found, name pattern = *_P.filtered.genelist')
+            sys.exit(1)
+        main(prj, genelist[0], hpo_pure_id)
+
     else:
         # add the amelie information, combine the father and mother copy number
         # the amelie result should ends with .amelie.txt
@@ -805,7 +831,7 @@ if __name__ == "__main__":
     logger.info(f'the probind file used for matching is {file_proband[0]}')
     logger.debug(f'trio={trio}')
 
-    proband_final = 'project_final_result.tsv'
+    proband_final = f'{prj}_final_result.tsv'
     run_proband_match(proband_final, d_amelie, trio)
 
     # amelie score is column 21

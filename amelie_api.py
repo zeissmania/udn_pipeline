@@ -146,6 +146,14 @@ def get_response(prj, genelist, pheno_hpo_list):
 
 def main(prj, genelist, pheno_hpo_list):
 
+    if not isinstance(genelist, list):
+        genelist = open(genelist).read().strip().split('\n')
+        genelist = [_.strip() for _ in genelist if _.strip()]
+
+    if not isinstance(pheno_hpo_list, list):
+        pheno_hpo_list = open(pheno_hpo_list).read().strip().split('\n')
+        pheno_hpo_list = [_.strip() for _ in pheno_hpo_list if _.strip()]
+
     json_pdict = f'{prj}.amelie.pdict'
     if not os.path.exists(json_pdict):
         json_res = get_response(prj, genelist, pheno_hpo_list)
@@ -167,10 +175,7 @@ if __name__ == "__main__":
     args = ps.parse_args()
 
     genelist = args.genelist
-    genelist = open(genelist).read().strip().split('\n')
     pheno_hpo_list = args.pheno_hpo_list
-    pheno_hpo_list = open(pheno_hpo_list).read().strip().split('\n')
-
 
     prj = args.prj
     main(prj, genelist, pheno_hpo_list)
