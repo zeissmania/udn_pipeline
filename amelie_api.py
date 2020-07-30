@@ -16,7 +16,7 @@ d_hpo = eval(open(f'{BASEDIR}/hpo_id_to_name.pdict').read())
 def create_patient(taskname, genelist, pheno_hpo_list):
     r = requests.post(
         '%s/create_patient' % url,
-        verify=False,
+        # verify=False,
         # headers=headers,
         # for the data,  null, false must all be string
         data={'vcf': False,
@@ -42,14 +42,14 @@ def create_patient(taskname, genelist, pheno_hpo_list):
     return r.json()['patient_id']
 
 
-def wait_for_processing(patient_id):
-    while True:
-        response = requests.get('%s/patient/%s' % (url, patient_id),
-                                verify=False)
+def wait_for_processing(patient_id, timeout=120):
+    for _ in range(timeout):
+        response = requests.get('%s/patient/%s' % (url, patient_id),)
+                                # verify=False)
         if response.json()['processing'] != 1:
-            break
+            return response
         time.sleep(1)
-
+    return 0
 
 def parse_json(prj, json_pdict):
     """
@@ -131,29 +131,38 @@ def parse_json(prj, json_pdict):
 
 
 def get_response(prj, genelist, pheno_hpo_list):
+    timeout = 120
+    print('\tCreating Patient ID')
     patient_id = create_patient(prj, genelist, pheno_hpo_list)
-    print("Wait while vcfs are filtered and annotated and papers are ranked")
-    wait_for_processing(patient_id)
-    response = requests.get('%s/patient/%s' % (url, patient_id),
-                            verify=False)
-    res = response.json()
-    # dump the result
-    with open(f'{prj}.amelie.pdict', 'w') as out:
-        print(res, file=out)
+    print(f'\tPatient ID= {patient_id}')
+    print("\tWait for response from AMELIE")
+    response = wait_for_processing(patient_id, timeout)
 
-    return res
+    if response:
+        res = response.json()
+        # dump the result
+        with open(f'{prj}.amelie.pdict', 'w') as out:
+            print(res, file=out)
+
+        return res
+    print(f'Fail to get response from AMELIE. timeout={timeout}s')
+    return 0
 
 
 def main(prj, genelist, pheno_hpo_list):
-
+    print('\tnow running amelie')
+    # print(\tgenelist)
     if not isinstance(genelist, list):
         genelist = open(genelist).read().strip().split('\n')
         genelist = [_.strip() for _ in genelist if _.strip()]
+    # print(f'\tlen genelist = {len(genelist)}')
 
+    # print(\tpheno_hpo_list)
     if not isinstance(pheno_hpo_list, list):
         pheno_hpo_list = open(pheno_hpo_list).read().strip().split('\n')
         pheno_hpo_list = [_.strip() for _ in pheno_hpo_list if _.strip()]
 
+    # print(f'\tlen HPO list = {len(pheno_hpo_list)}')
     json_pdict = f'{prj}.amelie.pdict'
     if not os.path.exists(json_pdict):
         json_res = get_response(prj, genelist, pheno_hpo_list)
@@ -161,8 +170,8 @@ def main(prj, genelist, pheno_hpo_list):
         json_res = eval(open(json_pdict).read())
 
     # parse the hpo
-    # json_res = response.json()
-    parse_json(prj, json_res)
+    if json_res:
+        parse_json(prj, json_res)
 
 
 if __name__ == "__main__":

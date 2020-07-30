@@ -1,3 +1,5 @@
+#! /usr/bin/env python3
+
 """
 input should be the project path
 the folder should contains
@@ -24,12 +26,12 @@ args = ps.parse_args()
 import logging
 import logging.config
 import yaml
-from .amelie_api import main
+from amelie_api import main
 # from backports import csv  # for writing unicode circle into the csv file
 home = os.path.expanduser('~')
 machine_platform = platform.system()
 
-pw_code = os.path.dirname(os.path.abspath(__file__))
+pw_code = os.path.dirname(os.path.realpath(__file__))
 prj = args.prj
 
 
@@ -123,11 +125,12 @@ def parse_pw(pw):
             logger.error(f'no VCF file found under {pw}')
             sys.exit(1)
     else:
-        if len(anno) == 0:
+        if len(anno) < len(vcf):
             pass
-        elif len(anno) != len(vcf):
+        elif len(anno) > len(vcf):
             logger.warning(
                 f'VCF file count({len(vcf)}) different from annotation file count({len(anno)}), would re-run the annotation')
+            run_anno = 0
         else:
             logger.info('annotation file already exist, would skip the annotSV step')
             run_anno = 0
@@ -208,7 +211,7 @@ def get_hpo_id(pw, pheno, hpo_db):
     fl_result1 = f'{pw}/{lb}_pure_hpo.txt'
     if os.path.exists(fl_result):
         logger.info(f'the term to HPO ID file already done! {fl_result}')
-        return 0
+        return fl_result1
 
     logger.info('get HPO id')
     res = []
@@ -657,6 +660,12 @@ def run_proband_match(proband_final, d_amelie, trio):
             print(info[amelie] + '\t' + i + "\t" + '\t'.join(res), file=final)
     final.close()
 
+def get_amelie_dict(amelie):
+        d_amelie = [_.strip().split('\t') for _ in open(amelie)]
+        d_amelie = {k: v for k, v in d_amelie}
+        logger.info(f'AMELIE count = {len(d_amelie)}')
+        return d_amelie
+
 
 if __name__ == "__main__":
 
@@ -737,15 +746,15 @@ if __name__ == "__main__":
             logger.error('No proband genelist found, name pattern = *_P.filtered.genelist')
             sys.exit(1)
         main(prj, genelist[0], hpo_pure_id)
+        amelie = f'{prj}.amelie.lite.txt'
+        d_amelie = get_amelie_dict(amelie)
 
     else:
         # add the amelie information, combine the father and mother copy number
         # the amelie result should ends with .amelie.txt
         amelie = amelie[0]
-        tmp = open(amelie)
-        d_amelie = [_.strip().split('\t') for _ in tmp]
-        d_amelie = {k: v for k, v in d_amelie}
-        logger.info(f'AMELIE count = {len(d_amelie)}')
+        d_amelie = get_amelie_dict(amelie)
+
 
     # add the parent information
     # first , we read the father and mother, build a dict
