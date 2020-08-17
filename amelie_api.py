@@ -123,7 +123,6 @@ def parse_json_old(prj, json_pdict):
         for ign in res:
             print(f'{ign[1]}\t{ign[0]:.2f}', file=out)
 
-
     with open(f'{prj}.amelie.parsed.pdict', 'w') as out:
         print(res, file=out)
 
