@@ -1,0 +1,25 @@
+
+prj: UDN730501  # the project name
+path: /Users/files/work/cooperate/udn/cases/3_UDN730501
+# please keep the indentation below
+files:
+  # if the file is under the path above, could use the filename only
+  pheno_file: UDN730501_terms.txt  # include the phenotype terms
+  pheno_file_select: UDN730501_amelie_query_terms.txt # optional, include the terms to select the matched terms from amelie results could be different from above file
+
+IDs:
+  # with or wihout "UND" as prefix. if not applicable, use "NA" or leave blank
+  proband_id: UDN730501
+  proband_sex: 1  # 1=male, 2=female
+
+  father: (UDN777763, 0)  # 2 values, 1=UDN-ID, 2=affect state, valid=0/1  for unaffected and affected respectively
+  mother: (UDN068324, 0)
+  brother1:   # if not exist, set as blank. if exist, the setting is just as father/mother. if multiple brothers exist, use brother2, brother3...
+  sister1:   # if not exist, set as blank. if exist, the setting is just as father/mother. if multiple sisters exist, use sister2, sister3...
+
+default:
+  # if not sure, leave this as blank (using default settings)
+  vcf_file_path:  # default is same as "path" above (leave blank here), if the vcf file is not under the path above, specify here
+  annotsv: # path for annotSV software, default is using the annotSV in ACCRE dock
+  thres_annot_sv_ranking: 2  # annotsv ranking equal or largher than this
+  thres_gnomad_maf: 0.01   # less than this value

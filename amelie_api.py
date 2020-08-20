@@ -2,16 +2,18 @@
 
 #! /usr/bin/env python3
 
-import sys, json
+import sys
 import requests
 import os
 import time
+import pickle
 
 
 url = 'https://amelie.stanford.edu/api'
 
 BASEDIR = os.path.dirname(os.path.realpath(__file__))
-d_hpo = eval(open(f'{BASEDIR}/hpo_id_to_name.pdict').read())
+# d_hpo = eval(open(f'{BASEDIR}/hpo_id_to_name.pdict').read())
+d_hpo = pickle.load(open(f'{BASEDIR}/hpo_id_to_name.pkl', 'rb'))
 
 def create_patient(taskname, genelist, pheno_hpo_list):
     r = requests.post(
@@ -266,7 +268,7 @@ def query(prj, pheno, pdict):
             pmid = f'https://pubmed.ncbi.nlm.nih.gov/{pmid}/'
             hpo = re_group_hpo(ipaper['hpo'])  # a list
 
-            for ihpo, hpo_des in hpo.items():
+            for _, hpo_des in hpo.items():
                 for ipheno in pheno:
                     for _ in hpo_des:
                         _ = _.lower()
@@ -348,6 +350,11 @@ def main(prj, genelist, pheno_hpo_list, pheno_for_match):
     if not isinstance(pheno_hpo_list, list):
         pheno_hpo_list = open(pheno_hpo_list).read().strip().split('\n')
         pheno_hpo_list = [_.strip() for _ in pheno_hpo_list if _.strip()]
+
+    if not isinstance(pheno_for_match, list):
+        pheno_for_match = open(pheno_for_match).read().strip().split('\n')
+        pheno_for_match = [_.strip() for _ in pheno_for_match if _.strip()]
+
 
     # print(f'\tlen HPO list = {len(pheno_hpo_list)}')
     json_pdict = f'{prj}.amelie.pdict'
