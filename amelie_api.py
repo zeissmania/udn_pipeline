@@ -53,13 +53,51 @@ def wait_for_processing(patient_id, timeout=120):
         time.sleep(1)
     return 0
 
-def parse_json_old(prj, json_pdict):
+
+def parse_json(prj, json_pdict, pw=None, pw_main=None, force=0):
     """
     extract the information from json
     r = json_pdict,   got from response.json(),  or read from the pdict file
     """
+    pw = pw or os.getcwd()
+    pw_main = pw_main or pw
     r = json_pdict
-    res = []
+
+    # useless key = ['created_on', 'email_subscription', 'has_dad', 'has_mom', 'has_user', 'has_variants', 'incidental_findings', 'is_vcf_patient', 'processing', 'swiper_cutoff',]
+    # meta info keys = ['patient_id', 'patient_name', 'patient_sex']
+
+    # keys in use:
+    #  r ['not_added_genes', 'not_added_hpo_codes', 'gene_data', 'system_list']
+    #  r['not_added_genes'] -> str, sep by comma. 'LOC646652, LOC100133077, FAM197Y2, LOC102724219, '
+    #  r['not_added_hpo_codes'] -> str or None
+
+    # r['gene_data'][0]
+            # gene_name -> str
+            # omim_link -> str
+            # solutions -> list
+                # item[0]  -> dict  # a single paper
+                    # 'hpo_ids'  -> list , all HPOs matched in this paper
+                    # 'journal', 'pmid', 'pubmed_year', 'title'   -> str,  the information for the paper
+                    # score -> float , the actual amelie score
+
+    # r['system_list']  -> list, each item is a disease group. will group the input HPO into these groups
+        # item[0]  -> dict, diseae category 1
+            # phenotype -> list, each item is as hpo id-name match
+                # hpo_id -> str
+                # name  -> str
+            # system -> str, the category name
+
+    # write the error, not included HPO / gene
+    missing_genes = r['not_added_genes']
+    missing_hpo = r['not_added_hpo_codes']
+    if missing_genes:
+        with open(f'{pw_main}/err_amelie.{prj}.genes_not_added.txt', 'w') as out:
+            print(missing_genes.replace(', ', '\n'), file=out)
+
+    if missing_hpo:
+        with open(f'{pw_main}/err_amelie.{prj}.HPO_not_added.txt', 'w') as out:
+            print(missing_hpo.replace(', ', '\n'), file=out)
+
     # hpo_q = r['system_list'][0]['phenotypes']
     hpo_q_raw = [_['phenotypes'] for _ in r['system_list']]
     hpo_q = []
@@ -69,10 +107,9 @@ def parse_json_old(prj, json_pdict):
     hpo_q = [_['hpo_id']+ "\t" + _['name'] for _ in hpo_q]
 
     # res['query_hpo'] = hpo_q
-
+    res = []
     genes = r['gene_data']
     for ign in genes:
-
         genename = ign['gene_name']
         ires = [genename]
         ires.append(ign.get('omim_link'))
@@ -102,111 +139,27 @@ def parse_json_old(prj, json_pdict):
 
     res = sorted(res, key=lambda x: x[0], reverse=True)
 
-    with open(f'{prj}.amelie_final_result.full.txt', 'w') as out:
-        print('The Query phenotype is :\n\t', end='', file=out)
-        print('\n\t'.join(hpo_q), file=out)
-
-        print('The Genes are as follow', file=out)
-        for ign in res:
-            print(f'gene={ign[1]}\tscore={ign[0]:.2f}', file=out)
-            print(f'OMIM: {ign[2]}', file=out)
-            print(f'Papers', file=out)
-            for ipaper in ign[3:]:
-                print(f'\t{ipaper["title"]}', file=out)
-                print(f'\tYear={ipaper["pubmed_year"]}\tPMID={ipaper["pmid"]}', file=out)
-                print(f'\t\t', end='', file=out)
-                print(f'\n\t\t'.join(ipaper["hpo"]), file=out)
-                print(f'\t', end='', file=out)
-                print('*' * 10 + '\n', file=out)
-
-            print('#' * 30 + '\n\n', file=out)
-
-    with open(f'{prj}.amelie.lite.txt', 'w') as out:
+    with open(f'{pw_main}/{prj}.amelie.lite.txt', 'w') as out:
         for ign in res:
             print(f'{ign[1]}\t{ign[0]:.2f}', file=out)
 
-    with open(f'{prj}.amelie.parsed.pdict', 'w') as out:
-        print(res, file=out)
+    # export the tsv file
 
-    # return res
-
-
-def parse_json(prj, json_pdict):
-    """
-    extract the information from json
-    r = json_pdict,   got from response.json(),  or read from the pdict file
-    """
-    r = json_pdict
-    res = []
-    # hpo_q = r['system_list'][0]['phenotypes']
-    hpo_q_raw = [_['phenotypes'] for _ in r['system_list']]
-    hpo_q = []
-    for _ in hpo_q_raw:
-        hpo_q.extend(_)
-
-    hpo_q = [_['hpo_id']+ "\t" + _['name'] for _ in hpo_q]
-
-    # res['query_hpo'] = hpo_q
-
-    genes = r['gene_data']
-    for ign in genes:
-
-        genename = ign['gene_name']
-        ires = [genename]
-        ires.append(ign.get('omim_link'))
-        max_score = -1
-        for paper in ign['solutions']:
-            try:
-                del paper['id']
-                del paper['authors']
-            except:
-                pass
-            ihpo = []
-            if paper['score'] > max_score:
-                max_score = paper['score']
-            for _ in paper['hpo_ids']:
-                ihpo.append('')
-                ihpo.append(_)
-                ihpo.extend(d_hpo[_])
-            paper['hpo'] = ihpo
-            try:
-                del paper['hpo_ids']
-            except:
-                pass
-
-            ires.append(paper)
-        ires.insert(0, max_score)
-        res.append(ires)
-
-    res = sorted(res, key=lambda x: x[0], reverse=True)
-
-    # with open(f'{prj}.amelie_final_result.full.txt', 'w') as out:
-    #     print('The Query phenotype is :\n\t', end='', file=out)
-    #     print('\n\t'.join(hpo_q), file=out)
-
-    #     print('The Genes are as follow', file=out)
-    #     for ign in res:
-    #         # print('\t'.join([ign[1], '%.2f' % ign[0], ign[2]]))
-    #         print(f'gene={ign[1]}\tscore={ign[0]:.2f}', file=out)
-    #         print(f'OMIM: {ign[2]}', file=out)
-    #         print(f'Papers', file=out)
-    #         for ipaper in ign[3:]:
-    #             print(f'\t{ipaper["title"]}', file=out)
-    #             print(f'\tYear={ipaper["pubmed_year"]}\tPMID={ipaper["pmid"]}', file=out)
-    #             print(f'\t\t', end='', file=out)
-    #             print(f'\n\t\t'.join(ipaper["hpo"]), file=out)
-    #             print(f'\t', end='', file=out)
-    #             print('*' * 10 + '\n', file=out)
-
-    #         print('#' * 30 + '\n\n', file=out)
-
-    with open(f'{prj}.amelie.lite.txt', 'w') as out:
-        for ign in res:
-            print(f'{ign[1]}\t{ign[0]:.2f}', file=out)
+    with open(f'{pw}/{prj}.amelie.parsed.raw.txt', 'w') as out:
+        for i in res:
+            score, gn, omim, *papers = i
+            print(f'{gn}\t{score}', file=out)
+            for ipaper in papers:
+                title = ipaper['title']
+                pmid = ipaper['pmid']
+                hpo = ipaper['hpo']
+                print(f'\t{pmid}\t{title}', file=out)
+                print(f'\t{hpo}', file=out)
+                print(f'', file=out)
 
 
-    with open(f'{prj}.amelie.parsed.pdict', 'w') as out:
-        print(res, file=out)
+    with open(f'{pw}/{prj}.amelie.parsed.pkl', 'wb') as out:
+        pickle.dump(res, out)
 
     return res
 
@@ -251,7 +204,7 @@ def re_group_hpo(hpo_list):
             collect = 0
     return res
 
-def query(prj, pheno, pdict):
+def query(prj, pheno, pdict, pw, pw_main):
     """
     query the phenotype, find the match
     pheno should be a list, put all the keywords in it
@@ -280,6 +233,9 @@ def query(prj, pheno, pdict):
                             break
         if len(hit) > 0:
             res[ign] = [score, omim, hit]
+        elif score > 10:
+            print(f'\tWARNING: amelie query no match with the input HPO terms: gene={ign}, score={score}')
+
 
     # struc =
     # {gene1: 0=score, 1=omim, 2 = hits(below)
@@ -291,12 +247,12 @@ def query(prj, pheno, pdict):
     #         ]
     #     }
 
-    with open(f'{prj}.amelie.matched_query.pdict', 'w') as out:
+    with open(f'{pw}/{prj}.amelie.matched_query.pdict', 'w') as out:
         print(res, file=out)
 
 
     # export into text file
-    with open(f'{prj}.amelie.matched_query.txt', 'w') as out:
+    with open(f'{pw_main}/{prj}.amelie.matched_query.txt', 'w') as out:
         for ign, l1 in res.items():
             hits = l1[2]
             print('\n'.join([ign, str(l1[0]), l1[1]]), file=out)
@@ -330,16 +286,20 @@ def get_response(prj, genelist, pheno_hpo_list):
     if response:
         res = response.json()
         # dump the result
-        with open(f'{prj}.amelie.pdict', 'w') as out:
-            print(res, file=out)
-
+        with open(f'{prj}.amelie.pkl', 'wb') as out:
+            pickle.dump(res, out)
         return res
     print(f'Fail to get response from AMELIE. timeout={timeout}s')
     return 0
 
 
-def main(prj, genelist, pheno_hpo_list, pheno_for_match):
+
+def main(prj, genelist, pheno_hpo_list, pheno_for_match, pw=None, pw_main=None, force=False):
+    # force toggle, run the parse and query process even if the file already exist
     print('\tnow running amelie')
+    pw = pw or os.getcwd()
+    pw_main = pw_main or pw  # the main files need to save to a separate folder
+    os.chdir(pw)
     # print(\tgenelist)
     if not isinstance(genelist, list):
         genelist = open(genelist).read().strip().split('\n')
@@ -357,25 +317,27 @@ def main(prj, genelist, pheno_hpo_list, pheno_for_match):
 
 
     # print(f'\tlen HPO list = {len(pheno_hpo_list)}')
-    json_pdict = f'{prj}.amelie.pdict'
+    json_pdict = f'{prj}.amelie.pkl'
     if not os.path.exists(json_pdict):
         json_res = get_response(prj, genelist, pheno_hpo_list)
     else:
-        json_res = eval(open(json_pdict).read())
+        # json_res = eval(open(json_pdict).read())
+        json_res = pickle.load(open(json_pdict, 'rb'))
 
     # parse the hpo
-    f_parsed_pdict = f'{prj}.amelie.parsed.pdict'
-    if not os.path.exists(f_parsed_pdict):
+    f_parsed_pdict = f'{prj}.amelie.parsed.pkl'
+    if not os.path.exists(f_parsed_pdict) or force:
         if json_res:
-            parsed_pdict = parse_json(prj, json_res)
+            parsed_pdict = parse_json(prj, json_res, pw, pw_main)
         else:
             print('json result from AMILIE not available, quit')
             sys.exit(1)
     else:
-        parsed_pdict = eval(open(f_parsed_pdict).read())
+        parsed_pdict = pickle.load(open(f_parsed_pdict, 'rb'))
 
     # build the matched phenotpe terms in paper
-    query(prj, pheno_for_match, parsed_pdict)
+    query(prj, pheno_for_match, parsed_pdict, pw, pw_main)
+
 
 
 if __name__ == "__main__":
@@ -386,6 +348,7 @@ if __name__ == "__main__":
     ps.add_argument('genelist', help="""genelist, one gene per line""")
     ps.add_argument('file_pheno_hpo_list', help="""phenotype HPO ID list, one HPO ID per line""")
     ps.add_argument('file_pheno_for_match', help="""optional, default is same as pheno file. consice phenotype terms for check the match of phenotype with paper""", nargs='?', default=None)
+    ps.add_argument('-pw', help="""default is current folder""", nargs='?', default=None)
 
     # file_pheno_for_match, the main different from file_pheno_hpo list is that, in this file, the terms don't need to be hpo exact term, it should be keywords, usually a single word per line, e.g. seizure,  intellect,  hypotonia
 
@@ -400,4 +363,5 @@ if __name__ == "__main__":
     pheno_for_match = [_.strip() for _ in open(args.file_pheno_for_match)]
 
     prj = args.prj
-    main(prj, genelist, pheno_hpo_list, pheno_for_match)
+    pw = args.pw or os.getcwd()
+    main(prj, genelist, pheno_hpo_list, pheno_for_match, pw)
