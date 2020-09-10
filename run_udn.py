@@ -26,7 +26,9 @@ result_selected = f'{proband}.final_result.selected.xlsx
 report = f'{proband}.report.xlsx'
 
 """
+import sys
 from udn import udn_utils
+from udn import amelie_api
 import argparse as arg
 from argparse import RawTextHelpFormatter
 ps = arg.ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
@@ -37,18 +39,34 @@ config_file = args.config
 
 case = udn_utils.UDN_case(config_file)
 
-# filter /extract annotation
-for sample_id in case.family:
-    case.annotate(sample_id)
-    case.anno_filter(sample_id)
-    case.anno_extract(sample_id)
-    case.family[sample_id]['sv_dict'] = case.group_sv_into_bin(sample_id)
+logger = case.logger
+if case.done_phase3:
+    # prj.report.xlsx
+    logger.info('Report is ready')
+elif case.done_phase2:
+    # prj.selected.genes.txt
+    logger.info('building the report...')
+    import udn_report
+    udn_report.main(case.prj, case.pw, f'{case.pw}/{case.prj}.selected.genes.txt')
 
-# query the amelie API, build the amelie result files
-case.query_amelie()
+elif case.done_phase1:
+    # prj.merged.sortedtsv
+    logger.info(f'FINAL STEP:  select the gene list manually, \n\t expected file = {case.pw}/{case.prj}.selected.genes.txt')
+else:
+    # filter /extract annotation
+    for sample_id in case.family:
+        case.annotate(sample_id)
+        case.anno_filter(sample_id)
+        case.anno_extract(sample_id)
+        case.family[sample_id]['sv_dict'] = case.group_sv_into_bin(sample_id)
+        # print(case.family[sample_id]['sv_dict'].keys())
 
-# get amelie dict
-case.amelie_dict = case.get_amelie_dict()
+    # query the amelie API, build the amelie result files
+    case.query_amelie(force=True)
 
-# match SV in proband with family
-case.run_proband_sv_match()
+    # get amelie dict
+    case.amelie_dict = case.get_amelie_dict()
+
+    # match SV in proband with family
+    case.run_proband_sv_match()
+    logger.info('Phase 1 done, please select the top 10 gene list')

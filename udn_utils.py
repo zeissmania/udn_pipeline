@@ -50,10 +50,10 @@ col_keep_raw_name = ['AnnotSV ID',
 
 
 # config the logging
-def get_logger(prj):
+def get_logger(pw, prj):
     fl_log_conf = f'{pw_code}/logging_setting.yaml'
     log_prefix = prj
-    log_prefix = log_prefix + '_' if log_prefix else ''
+    log_prefix = pw + '/' + log_prefix + '_' if log_prefix else ''
     with open(fl_log_conf) as f:
         cfg = yaml.safe_load(f.read())
         cfg['handlers']['console']['level'] = 'INFO'
@@ -63,30 +63,40 @@ def get_logger(prj):
         logging.config.dictConfig(cfg)
     return logging.getLogger('main')
 
+def line_count(fn):
+    n = 0
+    for _ in open(fn):
+        n += 1
+    return n
+
+
+intermediate_folder = 'intermediate'
+
 class UDN_case():
     def __init__(self, config_file):
         cfg = yaml.safe_load(open(config_file).read())
-
         self._cfg = cfg
         self.prj = cfg['prj']
+        self.pw = cfg['path']
         self.proband_id = cfg['IDs']['proband_id']
-        logger = get_logger(self.prj)
+        logger = get_logger(self.pw, self.prj)
         self.logger = logger
 
         # verify the config
         cfg_tested = self.verify_config()
-        self.path = self.pw = cfg_tested['path']
+        self.path = cfg_tested['path']
         self.pheno_file = cfg_tested['pheno_file']
         self.pheno_file_select = cfg_tested['pheno_file_select']
         self.family = cfg_tested['family']
         self.vcf_file_path = cfg_tested['vcf_file_path']
         self.thres_annot_sv_ranking = cfg_tested['thres_annot_sv_ranking']
         self.thres_gnomad_maf = cfg_tested['thres_gnomad_maf']
-        self.d_amelie = {}
+        self.amelie_dict = {}
+        self.udn_match = cfg_tested['udn_match']
 
         # copy the config file
-        os.system(f'cp {config_file} {self.pw}')
-
+        os.system(f'cp {config_file} {self.pw}/{self.prj}_settings.yaml 2>/dev/null')
+        os.system(f'mkdir -p {self.pw}/{intermediate_folder} 2>/dev/null')
 
         # update self.family, add the vcf_file and run_annot
         self.parse_pw()
@@ -105,13 +115,62 @@ class UDN_case():
         # the dict was stored in self.cols
         self.cols = self.get_annot_col()
 
+        # verfify if the automatic process is already done
+        self.done_phase1 = 0
+        self.done_phase2 = 0
+        self.done_phase3 = 0
+        fn_final = f'{self.pw}/{self.prj}.merged.sorted.tsv'
+        if os.path.exists(fn_final):
+            f_size = os.path.getsize(fn_final)
+            if f_size < 10000:
+                logger.warning(f'the merged anno result already exist: {fn_final}, but the size is only {f_size/1000:.2f}')
+            else:
+                self.done_phase1 = 1
+
+        # verify if the selected gene list is done
+        fn_selected = f'{self.pw}/{self.prj}.selected.genes.txt'
+        if os.path.exists(fn_selected):
+            f_size = os.path.getsize(fn_selected)
+            if f_size < 200:
+                logger.warning(f'selected gene list already exist: {fn_selected}, but the size is only {f_size/1000:.2f}')
+            else:
+                self.done_phase2 = 1
+
+        # verify if the final report is done
+        fn_report = f'{self.pw}/{self.prj}.report.xlsx'
+        if os.path.exists(fn_report):
+            f_size = os.path.getsize(fn_report)
+            if f_size < 200:
+                logger.warning(f'report already exist {fn_report}, but the size is only {f_size/1000:.2f}')
+            else:
+                self.done_phase3 = 1
+
+
     def verify_config(self):
         cfg = self._cfg
         logger = self.logger
         path = cfg['path']
         pw = path
-        prj = cfg['prj']
+        # prj = cfg['prj']
         pheno_file = cfg['pheno_file'].strip()
+
+        fn_udn_match = cfg['udn_match_gene_file']
+        udn_match = {}
+        if fn_udn_match:
+            try:
+                with open(fn_udn_match) as fp:
+                    for i in fp:
+                        a = i.strip().split('\t')
+                        gn = a[0]
+                        ct_hits = int(a[2])
+            except FileNotFoundError:
+                logger.error(f'file for UDN match specified in config file, but not exist: {fn_udn_match}')
+                sys.exit(1)
+            except ValueError:
+                logger.warning(f'wrong wrong format for the match count: {i.strip()}')
+            else:
+                udn_match[gn] = ct_hits
+
         pheno_file_select = cfg['default']['pheno_file_select']
 
         # valid pheno file
@@ -223,7 +282,7 @@ class UDN_case():
 
         pheno_pure_fn = pheno_file.rsplit('/', 1)[-1]
         try:
-            os.symlink(pheno_file, f'{pw}/{pheno_pure_fn}')
+            os.symlink(pheno_file, f'{pw}/{intermediate_folder}/{pheno_pure_fn}')
         except:
             pass
         thres_annot_sv_ranking = thres_annot_sv_ranking or 2
@@ -239,6 +298,7 @@ class UDN_case():
                'vcf_file_path': vcf_file_path,
                'thres_annot_sv_ranking': thres_annot_sv_ranking,
                'thres_gnomad_maf': thres_gnomad_maf,
+               'udn_match': udn_match if len(udn_match) > 0 else None
                }
         return res
 
@@ -247,7 +307,7 @@ class UDN_case():
         get the path for annotSV
         """
         annotsv = self._cfg['default']['annotsv']
-        logger = self.logger
+        # logger = self.logger
         if annotsv and os.path.exists(annotsv):
             return annotsv
 
@@ -283,14 +343,14 @@ class UDN_case():
                 logger.error(f'{v["type"]}  {sample_id} vcf file not found! ')
                 sys.exit(1)
             elif len(vcf) == 1:
-                v['vcf_file'] = vcf[0]
+                v['vcf'] = vcf[0]
             else:
                 logger.error(
                     f'multiple({len(vcf)}) VCF file for {v["lb"]}  {sample_id} under {vcf_file_path} found, please check ')
                 sys.exit(1)
 
             # get annotated file
-            anno_exp = f'{pw}/{v["lb"]}.annotated.txt'
+            anno_exp = f'{pw}/{intermediate_folder}/{v["lb"]}.annotated.tsv'
             if os.path.exists(anno_exp):
                 v['run_annot'] = 0
 
@@ -327,7 +387,7 @@ class UDN_case():
             hpo_db = pickle.load(open(hpo_pickle, 'rb'))
         return hpo_db
 
-    def get_hpo_id(self) -> 'write to the {pw}/{prj}_terms_hpo.txt':
+    def get_hpo_id(self) -> 'write to the {pw}/{intermediate_folder}/{prj}_terms_hpo.txt':
         """
         convert the HPO terms to HPO ID
         """
@@ -336,11 +396,11 @@ class UDN_case():
         logger = self.logger
         pheno = self.pheno_file
 
-        fl_result = f'{pw}/{prj}.terms_hpo.txt'
-        fl_result1 = f'{pw}/{prj}.terms_pure_hpo.txt'
+        fl_result = f'{pw}/{intermediate_folder}/{prj}.terms_hpo.txt'
+        fl_result1 = f'{pw}/{intermediate_folder}/{prj}.terms_pure_hpo.txt'
 
         if os.path.exists(fl_result):
-            logger.info(f'HOP id file already exists {fl_result}')
+            # logger.info(f'HOP id file already exists {fl_result}')
             return 0
 
         logger.info('Map HPO terms to IDs')
@@ -407,7 +467,7 @@ class UDN_case():
         col_keep['data'] += 1
         return col_keep
 
-    def annotate(self, sample_id) -> '{pw}/{lb}.annotated.txt':
+    def annotate(self, sample_id) -> '{pw}/{intermediate_folder}/{lb}.annotated.txt':
         """
         annotate the VCF files using annotSV
         """
@@ -419,17 +479,16 @@ class UDN_case():
 
 
         if not run_annot:
-            logger.info('annotation already done: {lb}')
+            logger.info(f'annotation already done: {lb}')
             return 0
 
-        f_anno_exp = f'{pw}/{lb}.annotated.txt'
+        f_anno_exp = f'{pw}/{intermediate_folder}/{lb}.annotated'
 
-        cmd = f'{self.annotsv_app} -genomeBuild GRCh38 -typeOfAnnotation split -outputFile {f_anno_exp} -SVinputFile {vcf}'
+        cmd = f'{self.annotsv_app} -genomeBuild GRCh38 -typeOfAnnotation split -outputFile {f_anno_exp} -SVinputFile {vcf} >{pw}/{intermediate_folder}/{lb}.annotsv.log 2>&1'
         logger.debug(cmd)
         os.system(cmd)
 
-
-    def anno_filter(self, sample_id) ->'{pw}/{lb}.filtered.txt':
+    def anno_filter(self, sample_id) ->'{pw}/{intermediate_folder}/{lb}.filtered.txt':
         """filter the raw annotSV result"""
         pw = self.pw
         prj = self.prj
@@ -440,8 +499,8 @@ class UDN_case():
         thres_annot_sv_ranking = self.thres_annot_sv_ranking
         col_keep = self.cols
 
-        f_anno_exp = f'{pw}/{lb}.annotated.txt'
-        f_anno_filter = f'{pw}/{lb}.filtered.txt'
+        f_anno_exp = f'{pw}/{intermediate_folder}/{lb}.annotated.tsv'
+        f_anno_filter = f'{pw}/{intermediate_folder}/{lb}.filtered.txt'
 
         # type_ = the type of this file, P/M/F/S
 
@@ -451,8 +510,10 @@ class UDN_case():
         # treat the annot_SV_ranking column diffently between proband and parents
         # for the proband, we demand the rank >=2
         # for the parents, the rank have no limit
-        if os.path.exists(f_anno_filter):
+
+        if os.path.exists(f_anno_filter) and os.path.getsize(f_anno_filter) > 1000:
             logger.info(f'filter file already exists: {lb}')
+            return 0
         else:
             col_gnomad_AF = col_keep['af_gnomad'] + 1
             col_annot_sv_ranking = col_keep['annot_ranking'] + 1
@@ -472,23 +533,21 @@ class UDN_case():
 
         # if proband, extract the genelist
         if type_short == 'P':
-            cmd = f"""cut -d $'\\t' -f {col_gn} {f_anno_filter}|sed '1d' |sort|uniq > {prj}.genelist"""
+            cmd = f"""cut -d $'\\t' -f {col_gn} {f_anno_filter}|sed '1d' |sort|uniq > {pw}/{intermediate_folder}/{prj}.genelist"""
             # logger.info(cmd)
             os.system(cmd)
+            lines = os.popen(f'wc -l < {pw}/{intermediate_folder}/{prj}.genelist').read().strip()
+            try:
+                lines = int(lines)
+            except:
+                logger.error(f'fail to get the line number of {prj}.genelist')
+                sys.exit(1)
 
-        lines = os.popen(f'wc -l < {lb}.filtered.genelist').read().strip()
-        try:
-            lines = int(lines)
-        except:
-            logger.error(f'fail to get the line number of {lb}.filtered.genelist')
-            sys.exit(1)
+            if lines == 0:
+                logger.error(f'{lb}:  no gene was found')
+                sys.exit(1)
 
-        if lines == 0:
-            logger.error(f'{lb}:  no gene was found')
-            sys.exit(1)
-
-
-    def anno_extract(self, sample_id) ->'{pw}/{lb}.extracted.txt':
+    def anno_extract(self, sample_id) ->'{pw}/{intermediate_folder}/{lb}.extracted.txt':
 
         pw = self.pw
         logger = self.logger
@@ -496,8 +555,8 @@ class UDN_case():
         sex = self.family[sample_id]['sex']  # 1 or 2 for male and female
         col_keep = self.cols
 
-        f_anno_filter = f'{pw}/{lb}.filtered.txt'
-        f_anno_extract = f'{pw}/{lb}.extracted.txt'
+        f_anno_filter = f'{pw}/{intermediate_folder}/{lb}.filtered.txt'
+        f_anno_extract = f'{pw}/{intermediate_folder}/{lb}.extracted.txt'
 
         # validate existence
         if not os.path.exists(f_anno_filter):
@@ -531,7 +590,7 @@ class UDN_case():
                     # sv_len = tx length (overlap of the SV and transcript)
                     # exon_span = location
 
-                    chr_ = 'chr' + chr_.upper()
+                    chr_ = 'chr' + chr_.lower()
                     try:
                         sv_len = f'{int(sv_len)/1000:.1f}kbp'
                     except:
@@ -566,7 +625,7 @@ class UDN_case():
                     try:
                         af_gnomad = float(af_gnomad)
                         if af_gnomad == -1:
-                            af_gnomad = "'-"
+                            af_gnomad = "-"
                         elif af_gnomad >= 0.01:
                             af_gnomad = f'{af_gnomad:.2f}'
                         else:
@@ -688,8 +747,8 @@ class UDN_case():
         lb = self.family[sample_id]['lb']
         # sex = self.family[sample_id]['sex']  # 1 or 2 for male and female
 
-        fn = f'{pw}/{lb}.extracted.txt'
-        fnout = f'{pw}/{lb}.sv_to_bin.pkl'
+        fn = f'{pw}/{intermediate_folder}/{lb}.extracted.txt'
+        fnout = f'{pw}/{intermediate_folder}/{lb}.sv_to_bin.pkl'
 
         if not os.path.exists(fn):
             logger.error(f'extracted fields file for {lb} not found!\nexiting...')
@@ -703,11 +762,13 @@ class UDN_case():
                 #     "af_dgv_gain", "af_dgv_loss", "af_gnomad", "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance",
                 #     "annot_ranking", 'copy_number']
                 chr_, s, e, sv_type, gn, cn = [a[_] for _ in [1, 2, 3, 4, 7, -1]]
+                chr_ = chr_.lower()
                 try:
                     s = int(s)
                     e = int(e)
                 except:
-                    logger.debug(f'wrong positon: {lb}: chr={chr_}, s={s}, e={e}')
+                    if s !='pos_s':
+                        logger.debug(f'wrong positon: {lb}: chr={chr_}, s={s}, e={e}')
                     continue
                 bin_ = int(s / 100000)
                 try:
@@ -730,7 +791,32 @@ class UDN_case():
 
         return d_parent
 
-    def query_amelie(self) -> 'build all the amelie result files':
+
+
+    def check_amelie_missing(self):
+        pw = self.pw
+        prj = self.prj
+        logger = self.logger
+
+        fn_genelist = f'{pw}/{intermediate_folder}/{prj}.genelist'
+        fn_hop_pure_id = f'{pw}/{intermediate_folder}/{prj}.terms_pure_hpo.txt'
+
+        total_genes = line_count(fn_genelist)
+        total_hpo = line_count(fn_hop_pure_id)
+
+        if total_genes > 1000:
+            logger.warning(f'the gene list for AMELIE is larger than 1000, ({total_genes}), max input is 1000')
+
+        if os.path.exists(f'{pw}/err_amelie.{prj}.genes_not_added.txt'):
+            bad_genes = line_count(f'{pw}/err_amelie.{prj}.genes_not_added.txt')
+            logger.warning(f'AMELIE missing genes: {bad_genes}/{total_genes} not included in AMELIE query')
+
+        if os.path.exists(f'{pw}/err_amelie.{prj}.HPO_not_added.txt'):
+            bad_hpo = line_count(f'{pw}/err_amelie.{prj}.HPO_not_added.txt')
+            logger.warning(f'AMELIE missing HPOs: {bad_hpo}/{total_hpo} not included in AMELIE query')
+
+
+    def query_amelie(self, force=False) -> 'build all the amelie result files':
         """
         run the amelie API
         """
@@ -739,17 +825,27 @@ class UDN_case():
         logger = self.logger
 
         fn = f'{pw}/{prj}.amelie.lite.txt'
-        if os.path.exists(fn):
-            logger.error('amelie query already done')
+        if os.path.exists(fn) and not force:
+            logger.info('amelie query already done')
+            self.check_amelie_missing()
             return 0
-
         logger.info('getting information from AMELIE')
 
-        fn_genelist = f'{pw}/{prj}.genelist'
-        fn_hop_pure_id = f'{pw}/{prj}.terms_pure_hpo.txt'
+        fn_genelist = f'{pw}/{intermediate_folder}/{prj}.genelist'
+        fn_hop_pure_id = f'{pw}/{intermediate_folder}/{prj}.terms_pure_hpo.txt'
 
-        amelie_api.main(prj, fn_genelist, fn_hop_pure_id, self.pheno_file_select)
+        total_genes = line_count(fn_genelist)
+        total_hpo = line_count(fn_hop_pure_id)
 
+        if total_genes > 1000:
+            logger.warning(f'the gene list for AMELIE is larger than 1000, ({total_genes}), would split the genelist, not deployed yet...')
+
+        amelie_api.main(prj, fn_genelist, fn_hop_pure_id, self.pheno_file_select, f'{pw}/{intermediate_folder}', pw_main=pw, force=force)
+        self.check_amelie_missing()
+
+        # # link the final amelie files
+        # os.system(f'ln {pw}/{intermediate_folder}/{prj}.amelie.matched_query.txt {pw} 2>/dev/null')
+        # os.system(f'ln {pw}/{intermediate_folder}/{prj}.amelie.lite.txt {pw} 2>/dev/null')
 
     def get_amelie_dict(self):
         """
@@ -778,7 +874,14 @@ class UDN_case():
 
         each element is [s, e, sv_type, gn, cn]
         """
-        d_sv = self.family[sample_id]['sv_dict'][chr_]
+        try:
+            d_sv = self.family[sample_id]['sv_dict'][chr_]
+        except:
+            # the whole chr_ is not found in the corresponding dict
+            logger = self.logger
+            sample_type = self.family[sample_id]['type']
+            logger.debug(f'{chr_} not found in sv dict for {sample_type}')
+            return []
 
         res = []
         for i in [bin_ -1, bin_, bin_ +1]:
@@ -801,11 +904,11 @@ class UDN_case():
         family = self.family
         prj = self.prj
         logger = self.logger
-        fn_proband = f'{pw}/{proband_id}_P.extracted.txt'
-        merged_table = f'{pw}/{prj}.merged.tsv'
+        fn_proband = f'{pw}/{intermediate_folder}/{proband_id}_P.extracted.txt'
+        merged_table = f'{pw}/{intermediate_folder}/{prj}.merged.tsv'
         final = open(merged_table, 'w')
 
-        d_amelie = self.d_amelie
+        d_amelie = self.amelie_dict
 
         # determine the order of non-proband samples
         trio_order = []
@@ -835,14 +938,15 @@ class UDN_case():
 
         for i in trio_order:
             aff_state = family[i]['aff_state']
+            aff_state = {0: 'unaff', 1:'affected'}[aff_state]
             type_ = family[i]['type']
             sample_id_lite = i.replace('UDN', '')
 
             header_suffix_copy_number.append(f'{type_} ({aff_state}) {sample_id_lite}')
 
-            header_suffix_gn.append('gn_{type_}')
-            header_suffix_sv_type.append('sv_type_{type_}')
-            header_suffix_overlap.append('overlap_{type_}')
+            header_suffix_gn.append(f'gn_{type_}')
+            header_suffix_sv_type.append(f'sv_type_{type_}')
+            header_suffix_overlap.append(f'overlap_{type_}')
 
 
         header_suffix = header_suffix_copy_number + header_suffix_gn + header_suffix_sv_type + header_suffix_overlap
@@ -850,11 +954,12 @@ class UDN_case():
         header_suffix = '\t'.join(header_suffix)
 
         with open(fn_proband) as fp:
-            header = next(fp).strip().replace('copy number', '')
-            header += header_suffix
-            print("AMELIE\t" + header, file=final)
+            header = next(fp).strip().replace('copy_number', '')
+            header = f'match_strong\tmatch_weak\tmatch_count_udn\tmut_type\tAMELIE\t{header}{header_suffix}'
+            print(header, file=final)
 
             family_sv_cache = {}
+            bad_chr_all = {}
             # key1 = chr_
             # key2 = bin_
             # key3 = family id
@@ -865,6 +970,7 @@ class UDN_case():
                 i = i.strip()
                 a = i.split('\t')
                 _, chr_, s, e, gn = [a[_] for _ in [0, 1, 2, 3, 7]]
+                chr_ = chr_.lower()
 
                 s = int(s)
                 e = int(e)
@@ -881,19 +987,34 @@ class UDN_case():
                 # get the same bin in the same family annotation results
                 for sample_id in trio_order:
                     sex = family[sample_id]['sex']
-                    # use try except
+                    sv_dict = self.family[sample_id]['sv_dict']
+                    sample_type = self.family[sample_id]['type']
                     try:
-                        sv_in_bin = family_sv_cache[chr_][bin_][sample_id]
+                        bad_chr = bad_chr_all[sample_id]
                     except:
-                        sv_in_bin = self.get_family_sv_in_bin(sample_id, chr_, bin_)
+                        bad_chr = set()
+                        bad_chr_all[sample_id] = bad_chr
 
+                    if chr_ in bad_chr:
+                        sv_in_bin = []
+                    elif chr_ not in sv_dict:
+                        bad_chr.add(chr_)
+                        logger.warning(f'{chr_} not found in sv dict for {sample_type}')
+                        sv_in_bin = []
+                    else:
+                        # use try except
                         try:
-                            family_sv_cache[chr_][bin_][sample_id] = sv_in_bin
+                            sv_in_bin = family_sv_cache[chr_][bin_][sample_id]
                         except:
+                            sv_in_bin = self.get_family_sv_in_bin(sample_id, chr_, bin_)
+
                             try:
-                                family_sv_cache[chr_][bin_] = {sample_id: sv_in_bin}
+                                family_sv_cache[chr_][bin_][sample_id] = sv_in_bin
                             except:
-                                family_sv_cache[chr_] = {bin_: {sample_id: sv_in_bin}}
+                                try:
+                                    family_sv_cache[chr_][bin_] = {sample_id: sv_in_bin}
+                                except:
+                                    family_sv_cache[chr_] = {bin_: {sample_id: sv_in_bin}}
 
                     # compare to find overlap
                     matched = ''
@@ -934,13 +1055,17 @@ class UDN_case():
                             cn = 'oy'
                         elif chr_.lower().find('chry') > -1 and sex == 1:
                             cn = 'xo'
+                        elif chr_.lower().find('chry') > -1 and sex == 2:
+                            cn = 'na'
                         else:
                             cn = 'oo'
-
                         info[sample_id] = [cn, 'not_found'] + [''] * 4
 
-
-                res = f'{amelie}\t{i}\t'
+                if self.udn_match:
+                    i_udn_match = self.udn_match.get(gn) or ''
+                else:
+                    i_udn_match = ''
+                res = f'\t\t{i_udn_match}\t\t{amelie}\t{i}\t'
                 res_suffix_cn = []
                 res_suffix_gn = []
                 res_suffix_sv_type = []
