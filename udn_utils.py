@@ -155,10 +155,12 @@ class UDN_case():
         pheno_file = cfg['pheno_file'].strip()
 
         fn_udn_match = cfg['udn_match_gene_file']
+        fn_found = os.popen(f'find {pw} -iname "{fn_udn_match}"').read().strip().split('\n')
+        fn_found = [_ for _ in fn_found if _.strip()]
         udn_match = {}
-        if fn_udn_match:
+        if fn_found:
             try:
-                with open(fn_udn_match) as fp:
+                with open(fn_found[0]) as fp:
                     for i in fp:
                         a = i.strip().split('\t')
                         gn = a[0]
