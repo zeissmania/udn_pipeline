@@ -366,20 +366,26 @@ if __name__ == "__main__":
     import argparse as arg
     from argparse import RawTextHelpFormatter
     ps = arg.ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
-    ps.add_argument('pw', help="""path for report output""")
     ps.add_argument('prj', help="""case name/title""")
     ps.add_argument('fn', help="""selected SV list, 1st column = SV type(denovo/heter/xlink)
     2nd column is the rank
     last 2/3 column (col 21-end) must be the copy number of proband and family members
     """)
+    ps.add_argument('family', help="""family info, put in the header line. sep by comma
+    like  'Proand 123456', 'Mother (unaff) 22222', 'Father(unaff) 33333'""", nargs='+')
     args = ps.parse_args()
 
     fn = args.fn
-    pw = args.pw
     prj = args.prj
+    family_info = ' '.join(args.family)
+    family_info = family_info.split(',')
+    family_info = [_.strip() for _ in family_info if _.strip()]
 
     if not os.path.exists(fn):
         print(f'error, selected SV list file not exist ! {fn}')
         sys.exit(1)
 
-    main(prj, pw, fn)
+    main(prj, fn)
+    fnout = f'{prj}.report.xlsx'
+    wb.save(fnout)
+    os.system(f'open {fnout}')
