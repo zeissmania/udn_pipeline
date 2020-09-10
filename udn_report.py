@@ -115,7 +115,11 @@ def main(prj, pw=None, fn_selected_genes=None):
 
 
 def add_data(row, data, family_info):
-    rank, _, chr_, s, e, sv_type, qual, exon_span_tag, gn, sv_len, exon_span, dgv_gain, dgv_loss, gnomad, _, ddd_disease, _, phenotype, inher = data[:19]
+    try:
+        rank, _, chr_, s, e, sv_type, qual, exon_span_tag, gn, sv_len, exon_span, dgv_gain, dgv_loss, gnomad, _, ddd_disease, _, phenotype, inher = data[:19]
+    except:
+        print(len(data[:19]))
+        print(data[:19])
     cn_proband = data[20]
     cn_family = data[21:]
     if len(cn_family) != len(family_info) - 1:
