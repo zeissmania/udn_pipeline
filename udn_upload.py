@@ -1,3 +1,4 @@
+#! /usr/bin/env python
 """
 run the upload task
 upload to emedgene / dropbox / shared drive
