@@ -4,6 +4,25 @@ this is to get the files from UDN gateway
 https://documenter.getpostman.com/view/1367615/RVu1JBWH#0ab3e9c3-792c-b292-6615-761a505df5bb
 
 the input UDN should be the proband UDN, don't add the relative UDN ( they would be get based on the proband)
+the output pickle would be
+res
+    proband
+        udn_name
+        gender
+        age
+        files
+            file1
+            file2
+            file3
+                file_att1
+                file_att2
+                file_att3
+    rellative1
+    relative2
+    relative3
+
+
+
 
 """
 import sys
@@ -189,18 +208,50 @@ def get_response(udn=None, action=None, payload=None, files=None, url=None, head
         return 0
     return r
 
+def dump_json(obj, fn):
+    with open(fn, 'wb') as out:
+        pickle.dump(obj, out)
 
-def get_all_info(udn, cookie, is_relative=False, rel_to_proband=None):
+
+def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=None):
+    """
+    rel_to_proband, if run as proband, this is None, otherwize, this func is called during geting the relatives of proband, and specified
+    info_passed_in,  {'affected': rel_aff, 'seq_status': have_seq}   include the affect state, sequenced_state, only valid when called during geting the relatives of proband, and specified
+    res_all,  when running specific relative, use this dict to accumulate among the family member
+    """
+
+    aff_convert = {'Unaffected': 'Unaffected', 'Affected': 'Affected', '3': 'Unaffected', '2': 'Affected', 'Unknown': 'Unknown'}
+    res_all = res_all or {}
+    rel_to_proband = rel_to_proband or 'Proband'
+    info_passed_in = info_passed_in or {}
+
+    res = {}
+    res['rel_to_proband'] = rel_to_proband
+    res['affect_from_proband_list'] = info_passed_in.get('affected') or 'Unknown'
+    res['seq_status'] = info_passed_in.get('seq_status')
+
     cookie = cookie or get_cookie()
     header_cookie = get_header_cookie(cookie)
     if not cookie:
         logger.error('fail to get cookie, can\'t get the amazon s3 presigned URL, exit')
         return 0
-    res_all = {}  # recursive run, if the UDN is a relative to proband, would include the previous family mumber info
-    # followup, gender, race, uuid, dob, affect, phenotip, alive,
-    # summary (diagnosis), evalustion(diagnosis)
 
-    res = {}
+    # prepare to write each json result to the pickle
+    fn_json_pk = f'{udn}.json.pkl'
+    fn_json_pk_bk = f'{udn}.json.pkl'
+    d_json = {}
+    if os.path.exists(fn_json_pk):
+        size1 = os.path.getsize(fn_json_pk)
+        try:
+            size_bk = os.path.getsize(fn_json_pk_bk)
+        except:
+            size_bk = 0
+
+        if size1 > size_bk:
+            os.system(f'mv {fn_json_pk} {fn_json_pk_bk}')
+        else:
+            logger.warning(f'json.pickle file not substituted due to size of new file is smaller than previous backup: {udn}')
+
 
     # get followup files
     action = 'followup/attachment'
@@ -229,6 +280,10 @@ def get_all_info(udn, cookie, is_relative=False, rel_to_proband=None):
     # basic patient info
     action = 'patientrecord'
     json = get_json(udn, action)
+
+    d_json['basic_info'] = json
+    dump_json(d_json, fn_json_pk)
+
     # pickle.dump(json, open(f'{udn}.patientrecord.json.pkl', 'wb'))
 
     if json:
@@ -242,7 +297,16 @@ def get_all_info(udn, cookie, is_relative=False, rel_to_proband=None):
         res['uuid'] = json['patient']['uuid']  #
         res['uuid_case'] = json['uuid']  #
         res['dob'] = json['patient']['dob']  # birthday
-        res['affect'] = json['patient']['affected']  # 2 = affected
+
+        affect_state_raw = json['patient']['affected'] # 2 = affected, 3=unaffected
+        res['affect'] = affect_state_raw
+
+
+        if res['affect_from_proband_list'] == 'affect_state_raw':
+            res['affect_final'] = affect_state_raw
+        else:
+            res['affect_final'] = f'{affect_state_raw} / {res["affect_from_proband_list"]}'
+
         res['phenotip'] = json['patient']['phenotipsid']
         res['alive'] = not json['deceased']
         res['comment'] = json['comment']
@@ -254,8 +318,7 @@ def get_all_info(udn, cookie, is_relative=False, rel_to_proband=None):
     # the result is just like above patientrecord
 
     # proband only code
-    if not is_relative:
-
+    if rel_to_proband.lower() == 'proband':
         # download the phenotip PDF file
         url_pdf = f'https://gateway.undiagnosed.hms.harvard.edu/phenotips/export/data/{res["phenotip"]}?format=pdf&pdfcover=0&pdftoc=0&pdftemplate=PhenoTips.PatientSheetCode'
 
@@ -282,8 +345,7 @@ def get_all_info(udn, cookie, is_relative=False, rel_to_proband=None):
             logger.error('Relative list is empty')
             return 0
 
-        relatives = []
-        set_na = set(['-', '—'])
+        # for this part, even the sequence state is noted as "-"  not uploaded, when clicking the actual case, sometimes, the sequence file still exist
         for i in tb:
             try:
                 seq_status = i.find(attrs={'class': 'sequploaded'})
@@ -292,40 +354,20 @@ def get_all_info(udn, cookie, is_relative=False, rel_to_proband=None):
                 logger.warning(f'fail to get the sequence uploaded info from relative: {i}')
                 continue
 
-            if have_seq in set_na:
-                # this family number doesn't have sequence data uploaded
-                # continue
-                tds = i.find_all('td')
-                basic_info = [f'{_["class"][0]}: {_.text}' for _ in tds[:10]]
-                logger.warning(f'{basic_info}: the sequence seems not uploaded yet')
             rel_to_proband_tmp = i.find(attrs={'class': 'relative'}).text
             rel_udn = i.find(attrs={'class': 'patientsimpleid'}).text
             rel_aff = i.find(attrs={'class': 'affected'}).text
-            rel_first = i.find(attrs={'class': 'patientfirst'}).text
-            rel_last = i.find(attrs={'class': 'patientlast'}).text
 
-            relatives.append({'udn': rel_udn, 'affected': rel_aff, 'relative': rel_to_proband_tmp, 'seq_uploaded': have_seq, 'firstname': rel_first, 'lastname': rel_last})
-
-        res['relatives'] = relatives
-
-        # recursively get the information of relatives
-        for i in res['relatives']:
-            udn_rel = i['udn']
-            res_rel = get_all_info(udn_rel, cookie, is_relative=True, rel_to_proband=i['relative'])
-            udn_rel_new = res_rel['simpleid']
-            if udn_rel != udn_rel_new:
-                logger.error(f'UDN unmatch for {i["relative"]} : {udn_rel} and {udn_rel_new}')
-                continue
-            i['gender'] = res_rel['gender']
-
-            try:
-                res_all['relatives'].append(res_rel)
-            except:
-                res_all['relatives'] = [res_rel]
+            res_all = get_all_info(rel_udn, cookie, rel_to_proband=rel_to_proband_tmp, res_all=res_all, info_passed_in={'affected': rel_aff, 'seq_status': have_seq})
+            logger.info(res_all.keys())
 
         # patient dignosis
         action = 'application'
         json = get_json(udn, action)
+
+        d_json['doctor_review'] = json
+        dump_json(d_json, fn_json_pk)
+
         if json:
             review = json[0]['application_review_set']
             if len(review) > 0:
@@ -350,9 +392,10 @@ def get_all_info(udn, cookie, is_relative=False, rel_to_proband=None):
     action = 'sequences'
     json = get_json(udn, action)
 
-    rel_to_proband = rel_to_proband or 'Proband'
+    d_json['files'] = json
+    dump_json(d_json, fn_json_pk)
+
     logger.info(f'now getting information of {rel_to_proband} : {udn}')
-    res['rel_to_proband'] = rel_to_proband
 
     if json:
         # json is a list
@@ -366,7 +409,9 @@ def get_all_info(udn, cookie, is_relative=False, rel_to_proband=None):
         files_raw = json['sequencingfiles']
         files = []
 
-        for ifl in files_raw:
+        for n_fl, ifl in enumerate(files_raw):
+            if n_fl % 5 == 1 and n_fl > 1:
+                time.sleep(5)
             completed = ifl['complete']
             fl_url = ifl['file_data']['locations'][0]['url']
             fl_size = ifl['file_data']['locations'][0]['filesize']
@@ -413,26 +458,27 @@ def get_all_info(udn, cookie, is_relative=False, rel_to_proband=None):
             files.append({'download': download, 'relative': rel_to_proband, 'file_uuid': file_uuid, 'fn': fn, 'url': fl_url, 'complete': completed, 'size': fl_size,
                           'expire': fl_expire, 'build': fl_assembly, 'assembly': fl_assembly, 'md5': fl_md5, 'type': fl_type})
         res['files'] = files
-
     else:
         logger.error(f'fail to get sequencing json')
 
-    if not is_relative:
-        res_all['proband'] = res
-        parse_api_res(res_all)
-        return res_all
-    else:
-        return res
-    # pickle.dump(res, open(f'{udn}.res.temp.pkl', 'wb'))
+    res_all[rel_to_proband] = res
+
+    if rel_to_proband == 'Proband':
+        try:
+            parse_api_res(res_all, cookie=cookie)
+        except:
+            logger.error(f'fail to parse the result dict, try again')
+
+    return res_all
 
 
 def get_amazon_download_link(fn, file_uuid, header_cookie, n=0):
     url_download_info = f'https://gateway.undiagnosed.hms.harvard.edu/patient/downloadsequenceurl/{file_uuid}/'
     response_download_link = requests.request('GET', url_download_info, headers=header_cookie)
-    if n > 40:
+    if n > 20:
         logger.error(f'fail to get file download link: {fn}')
         return header_cookie, None
-    if n > 10 and n % 10 == 1:
+    if n > 5 and n % 5 == 1:
         logger.info(f'renew cookie: try: {n}')
         cleanup_memory()
         cookie = get_cookie()
@@ -443,7 +489,7 @@ def get_amazon_download_link(fn, file_uuid, header_cookie, n=0):
         if str(e.__class__).find('JSONDecodeError') > -1:
             # logger.info(f'not a json response,  url_download_info= "{url_download_info}", headers={header_cookie}')
             n += 1
-            time.sleep(3)
+            time.sleep(10)
             # logger.info(header_cookie)
             header_cookie, download_url = get_amazon_download_link(fn, file_uuid, header_cookie, n)
             if download_url:
@@ -537,6 +583,10 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, pkl_fn=None):
     if not os.path.isdir('origin'):
         os.system('mkdir origin 2>/dev/null')
 
+    logger.info(f'keys for the result: {res.keys()}')
+    proband_id = res['Proband']['simpleid']
+
+
     if renew_amazon_link:
         cookie = cookie or get_cookie()
         header_cookie = get_header_cookie(cookie)
@@ -544,32 +594,15 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, pkl_fn=None):
             logger.error('fail to get cookie, can\'t get the amazon s3 presigned URL, exit')
             return 0
 
-        for ifl in res['proband']['files']:
-            fn = ifl['fn']
-            file_uuid = ifl['file_uuid']
 
-            res_amazon_url = get_amazon_download_link(fn, file_uuid, header_cookie)
-            try:
-                header_cookie, download = res_amazon_url
-            except:
-                logger.error(f'get_amazon_download_link return = {res_amazon_url} \nfn="{fn}"\nfile_uuid="{file_uuid}"\nheader_cookie="{header_cookie}"')
-                continue
-            ifl['download'] = download
-            ifl['relative'] = 'proband'
+        for rel_to_proband, v in res.items():
+            logger.info(f'renew amazon download link for {rel_to_proband}')
 
-        for _relative in res['relatives']:
-            if 'files' not in _relative:
+            if 'files' not in v:
+                logger.info(f'{rel_to_proband}: no files found')
                 continue
-            for ifl in _relative['files']:
+            for ifl in v['files']:
                 fn = ifl['fn']
-                try:
-                    rel_to_proband = ifl['relative']
-                except:
-                    try:
-                        rel_to_proband = _relative['rel_to_proband']
-                    except:
-                        logger.warning(f'fail to get relative: {ifl}')
-
                 file_uuid = ifl['file_uuid']
 
                 res_amazon_url = get_amazon_download_link(fn, file_uuid, header_cookie)
@@ -580,40 +613,43 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, pkl_fn=None):
                     continue
                 ifl['download'] = download
 
-        proband_id = res['proband']['simpleid']
         pkl_fn = pkl_fn or f'{proband_id}.udn_api_query.pkl'
-
         if os.path.exists(pkl_fn) and os.path.getsize(pkl_fn) > 5000:
             os.system(f'mv {pkl_fn} {pkl_fn}.bk')
         pickle.dump(res, open(pkl_fn, 'wb'))
 
     # report for proband
-    proband = res['proband']
+
+    proband = res['Proband']
     udn = proband['simpleid']
     hpo = proband['symp']
-    with open(f'{udn}.basic_info.md', 'w') as out:
 
+    aff_convert = {'Affected': 1, 'Unaffected': 0, '3': 0, '2': 1}
+
+
+    with open(f'{udn}.basic_info.md', 'w') as out:
         out.write(f'## 1. Basic Info\n- UDN\t{udn}\n')
         for k, v in zip('firstname,lastname,gender,race,dob,alive,affect,uuid_case,phenotip'.split(','), 'FirstName,LastName,Gender,Race,DateBirth,Alive,Affect_state,UUID_case,Phenotip_ID'.split(',')):
             out.write(f'- {v}\t{proband[k]}\n')
         out.write('\n\n')
 
         # family members
+
         out.write('## 2. Family Members\n\n')
         out.write('| Relative | Name | UDN | Gender | Affected| Sequence_Uploaded | \n')
         out.write('| :----: | :----: | :----: | :----: | :----: | :----: |\n')
-        for i in proband['relatives']:
+        for rel_to_proband, i in res.items():
+            if rel_to_proband == 'Proband':
+                continue
+
+
+            affect_state1 = aff_convert.get(i['affect_from_proband_list']) or i['affect_from_proband_list']
+            affect_state2 = aff_convert.get(i['affect']) or i['affect']
+
+            affect_state = affect_state1 if affect_state1 == affect_state2 else f'{affect_state1}/{affect_state2}'
+
             # if gender not added
-            try:
-                _ = i['gender']
-            except:
-                rel_udn = i['udn']
-                gender = [_['gender'] for _ in res['relatives'] if _['simpleid'] == rel_udn]
-                if len(gender) == 0:
-                    logger.error(f'fail to get gender for {i}')
-                    continue
-                i['gender'] = gender[0]
-            out.write(f'| {i["relative"]} | {i["firstname"]} {i["lastname"]} | {i["udn"]} | {i["gender"]} | {i["affected"]}| {i["seq_uploaded"]} |\n')
+            out.write(f'| {rel_to_proband} | {i["firstname"]} {i["lastname"]} | {i["simpleid"]} | {i["gender"]} | {affect_state}| {i["seq_status"]} |\n')
         out.write('\n\n')
 
         # HPO terms
@@ -622,6 +658,11 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, pkl_fn=None):
         for k, v in hpo:
             out.write(f'- {k}\t{v}\n')
         out.write('\n\n')
+
+        for k, v in hpo:
+            out.write(f'- {v}\n')
+        out.write('\n\n')
+
 
         # symp,uuid_case
         out.write('## 4. Summary and diagnosis\n')
@@ -643,28 +684,35 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, pkl_fn=None):
         for k, v in hpo:
             out.write(k+'\n')
 
-
     # build the udn config file
     sex_convert = {'Female' : 2, 'Male': 1}
-    aff_convert = {'Affected': 1, 'Unaffected': 0}
+
     cfg_info = {'father': '', 'mother':'', 'male':[], 'female':[], 'other': []}
 
-    for irel in proband['relatives']:
-        rel_to_proband = irel['relative']
-        rel_udn = irel['udn']
-        # skip if this relative doesn't have the sequence files
-        tmp = [_ for _ in res['relatives'] if _['simpleid'] == rel_udn]
-        if len(tmp) == 0:
-            logger.info(f'family member not found: {irel}')
+
+    for rel_to_proband, irel in res.items():
+        if rel_to_proband == 'Proband':
             continue
-        if not tmp[0].get('files'):
-            logger.info(f'No sequence file found for: {irel}')
+        try:
+            rel_udn = irel['simpleid']
+            rel_gender = irel['gender']
+        except:
+            tmp_set = set(['simpleid', 'affect', 'gender'])
+            logger.info(f'{rel_to_proband}: key not found: {[_ for _ in tmp_set if _ not in irel]}')
             continue
 
-        rel_aff = irel['affected']
-        rel_gender = irel['gender']
+        if not irel.get('files'):
+            logger.info(f'{rel_to_proband}: no files available, skip... ')
+            continue
 
-        rel_aff = aff_convert[rel_aff]
+        try:
+            affect_state1 = aff_convert.get(irel['affect_from_proband_list']) or irel['affect_from_proband_list']
+            affect_state2 = aff_convert.get(irel['affect']) or irel['affect']
+            rel_aff = affect_state1 if affect_state1 == affect_state2 else f'{affect_state1}/{affect_state2}'
+
+        except:
+            logger.error(f"{rel_to_proband}: unkown affect state: {irel['affect']} / {irel['affect_from_proband_list']}")
+            continue
 
         if rel_to_proband.lower() == 'father':
             cfg_info['father'] = [rel_udn, rel_aff]
@@ -722,25 +770,16 @@ default:
 
 
     # download file script
-    fls = proband['files'][:]
+    out = open(f'download.fastq.{udn}.txt', 'w')
+    out_fastq_sh = open(f'download.fastq.{udn}.sh', 'w')
+    out_bam = open(f'download.bam.{udn}.download_bam.sh', 'w')
 
-    for i in res['relatives']:
-        try:
-            fls += i['files']
-        except:
-            continue
-
-    logger.info(f'total files = {len(fls)}')
-
-    out = open(f'{udn}.download_fastq.txt', 'w')
-    out_bam = open(f'{udn}.download_bam.sh', 'w')
-    out_fastq_sh = open(f'{udn}.download_fastq.sh', 'w')
-    out_info = open(f'{udn}.download_files.info.txt', 'w')
-    out_cnv = open(f'{udn}.download_cnv.sh', 'w')
-    out_other = open(f'{udn}.download_other.sh', 'w')
-    out_md5 = open(f'{udn}.downloaded.md5', 'w')
+    out_info = open(f'download.info.{udn}.txt', 'w')
+    out_cnv = open(f'download.cnv.{udn}.sh', 'w')
+    out_other = open(f'download.other.{udn}.sh', 'w')
+    out_md5 = open(f'download.{udn}.md5', 'w')
     out_igv = open(f'{udn}.igv.files.txt', 'w')
-    html_bam = open(f'{udn}.bam.download_link.html', 'w')
+    html_bam = open(f'download.bam.{udn}.html', 'w')
     html_bam.write(f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -750,7 +789,6 @@ default:
 </head>
 <body>
 
-
     """)
 
     out_cnv.write('mkdir origin 2>/dev/null\n')
@@ -758,42 +796,43 @@ default:
     pw_upload = f'/scratch/h_vangard_1/chenh19/udn/upload/{udn}'
     out_fastq_sh.write(f"""#! /usr/bin/env bash
 mkdir -p {pw_upload}
-cp {udn}.download_fastq.txt {pw_upload}
-cp {udn}.downloaded.md5 {pw_upload}
+cp download.fastq.{udn}.txt {pw_upload}
+cp download.{udn}.md5 {pw_upload}
 cd {pw_upload}
 parallel '{{}}'  :::: {udn}.download_fastq.txt
 cd -
     """)
 
-    out_info.write('rel_to_proband\tfn\tsize\tbuild\tmd5\turl\turl_s3\n')
-    for ifl in fls:
-        url = ifl['download']
-        fn = ifl['fn']
-        url_s3 = ifl['url']
-        size = ifl['size']
-        build = ifl['build']
-        md5 = ifl['md5']
-        rel_to_proband = ifl.get('relative')
+    out_info.write('rel_to_proband\tfn\turl\tsize\tbuild\tmd5\turl_s3\n')
 
-        if re.match(r'.+\.bai$', fn):
-            out_igv.write(f'{url}\t{fn}\n')
-            out_bam.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
-            print(f'<span><b>{rel_to_proband}:    </b></span><a href="{url}">{fn}</a></br></br>', file=html_bam)
+    for rel_to_proband, irel in res.items():
+        if not irel.get('files'):
+            continue
+        for ifl in irel['files']:
+            url = ifl['download']
+            fn = ifl['fn']
+            url_s3 = ifl['url']
+            size = ifl['size']
+            build = ifl['build']
+            md5 = ifl['md5']
 
-        elif re.match(r'.+\.bam$', fn):
-            out_igv.write(f'{url}\t{fn}\n')
-            out_bam.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
-            print(f'<span><b>{rel_to_proband}:    </b></span><a href="{url}">{fn}</a></br></br>', file=html_bam)
-        elif re.match(r'.+\.cnv\.vcf', fn):
-            out_cnv.write(f'wget "{url}" -c -O "origin/{fn}"\n')
-        elif re.match(r'.+\.fastq.gz', fn):
-            out.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
-        else:
-            out_other.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
+            if re.match(r'.+\.bai$', fn):
+                out_igv.write(f'{url}\t{fn}\n')
+                out_bam.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
+                print(f'<span><b>{rel_to_proband}:    </b></span><a href="{url}">{fn}</a></br></br>', file=html_bam)
+            elif re.match(r'.+\.bam$', fn):
+                out_igv.write(f'{url}\t{fn}\n')
+                out_bam.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
+                print(f'<span><b>{rel_to_proband}:    </b></span><a href="{url}">{fn}</a></br></br>', file=html_bam)
+            elif re.match(r'.+\.cnv\.vcf(\.gz)?$', fn):
+                out_cnv.write(f'wget "{url}" -c -O "origin/{fn}"\n')
+            elif re.match(r'.+\.fastq.gz', fn):
+                out.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
+            else:
+                out_other.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
 
-        out_info.write(f'{rel_to_proband}\t{fn}\t{size}\t{build}\t{md5}\t{url}\t{url_s3}\n')
-        out_md5.write(f'{md5}  {fn}\n')
-
+            out_info.write(f'{rel_to_proband}\t{fn}\t{url}\t{size}\t{build}\t{md5}\t{url_s3}\n')
+            out_md5.write(f'{md5}  {fn}\n')
 
     html_bam.write("""</body>
 </html>""")
