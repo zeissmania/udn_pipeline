@@ -5,6 +5,7 @@
 import sys
 import requests
 import os
+import gzip
 import time
 import pickle
 
@@ -145,18 +146,16 @@ def parse_json(prj, json_pdict, pw=None, pw_main=None, force=0):
 
     # export the tsv file
 
-    with open(f'{pw}/{prj}.amelie.parsed.raw.txt', 'w') as out:
+    with gzip.open(f'{pw}/{prj}.amelie.parsed.raw.txt', 'wb') as out:
         for i in res:
             score, gn, omim, *papers = i
-            print(f'{gn}\t{score}', file=out)
+            out.write(f'{gn}\t{score}\n'.encode())
             for ipaper in papers:
                 title = ipaper['title']
                 pmid = ipaper['pmid']
                 hpo = ipaper['hpo']
-                print(f'\t{pmid}\t{title}', file=out)
-                print(f'\t{hpo}', file=out)
-                print(f'', file=out)
-
+                out.write(f'\t{pmid}\t{title}\n'.encode())
+                out.write(f'\t{hpo}\n\n'.encode())
 
     with open(f'{pw}/{prj}.amelie.parsed.pkl', 'wb') as out:
         pickle.dump(res, out)

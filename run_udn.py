@@ -27,6 +27,10 @@ report = f'{proband}.report.xlsx'
 
 """
 import sys
+import os
+pw_code = os.path.dirname(os.path.realpath(f'{__file__}/..'))
+sys.path.append(pw_code)
+# print(pw_code)
 from udn import udn_utils
 from udn import amelie_api
 import argparse as arg

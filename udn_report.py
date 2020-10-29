@@ -1,4 +1,4 @@
-import sys, os
+import sys, os, re
 from openpyxl.styles import PatternFill, Border, Side, Alignment, Font, NamedStyle, Color
 import openpyxl
 from openpyxl.utils import get_column_letter
@@ -87,7 +87,7 @@ def main(prj, pw=None, fn_selected_genes=None):
         except:
             sv_selected[sv_type_long] = [i[1:]]
     # set the width
-    set_column_width()
+    set_column_width(len(family_info))
 
     # row1
     row = 1
@@ -105,8 +105,10 @@ def main(prj, pw=None, fn_selected_genes=None):
     row = 3
     for sv_type_long, v in sv_selected.items():
         # sv_type_long = sv_type_conversion[sv_type]
+        # sort the rank
+        info = sorted(v, key=lambda _:int(_[0]))
         row = add_header(row, sv_type_long, family_info)
-        for i_cnv in v:
+        for i_cnv in info:
             row = add_data(row, i_cnv, family_info)
 
     fnout = f'{pw}/{prj}.report.xlsx'
@@ -128,7 +130,28 @@ def add_data(row, data, family_info):
 
     pos = f'{s}-{e}'
     dgv = f'{dgv_gain}/{dgv_loss}'
-    comment = '\n'.join([f'{phenotype} {inher}', ddd_disease, ])
+
+    # build the comment
+    inher_list = inher.split('/')
+    try:
+        phenotype_list = re.sub(r'(\W)/(\W)', '\g<1>\n', phenotype).split('\n')
+    except:
+        print(f'phenotype={phenotype}')
+        raise
+
+    phenotype_list = [re.sub('(^"+|"+$)', '', _) for _ in phenotype_list]
+
+    if len(inher_list) != len(phenotype_list):
+        if len(inher_list) == 1:
+            phenotype_list = [f'{_} {inher_list[0]}' for _ in phenotype_list]
+        else:
+            print(f'error: inher list count idfferent from phenotype count:\n{len(inher_list)} vs {len(phenotype_list)}\ninher={inher_list}, phenotyp={phenotype_list}')
+    else:
+        phenotype_list = [f'{a} {b}' for a, b in zip(phenotype_list, inher_list)]
+
+    comment = '\n'.join(phenotype_list)
+
+    # comment = '\n'.join([phenotype_new, ddd_disease, ])
 
     # build the header
     col_raw = 0
@@ -213,7 +236,6 @@ def add_data(row, data, family_info):
     col = get_column_letter(col_raw)
     ws.merge_cells(f'{col}{row}:{col}{row+3}')
 
-
     # comments
     col_raw += 1
     col = get_column_letter(col_raw)
@@ -231,12 +253,11 @@ def add_data(row, data, family_info):
     return row + 4
 
 
-def set_column_width(width=None):
+def set_column_width(n_family):
     """
-    specify the width, should be a list with 15 elements
+    specify the width, should be a list with 15 or moreelements
     """
-    width = width or [17, 16, 17, 12, 10, 10, 10, 12, 12, 12, 8, 9.5, 8, 13, 95]
-    assert len(width) == 15, 'Set column width, the element number must be 15'
+    width = [17, 16, 17, 12] + [10] * n_family + [12, 12, 12, 8, 9.5, 8, 13, 95]
     for n, v in enumerate(width):
         ws.column_dimensions[get_column_letter(n+1)].width = v
 
@@ -250,7 +271,8 @@ def add_header(row, sv_type_long, family_info):
     """
 
     # sv_type line
-    ws.merge_cells(f'A{row}:O{row}')
+    end_col_letter = get_column_letter(12 + len(family_info))
+    ws.merge_cells(f'A{row}:{end_col_letter}{row}')
     cell = f'A{row}'
     ws[cell].value = f'Structural Variants({sv_type_long})'
     ws[cell].style = "sv_type"
@@ -361,7 +383,7 @@ def add_header(row, sv_type_long, family_info):
     ws[cell].value = v
 
     # apply the format
-    for irow in ws[f'A{row+1}:O{row+4}']:
+    for irow in ws[f'A{row+1}:{end_col_letter}{row+4}']:
         for cell in irow:
             cell.style = 'header'
     return row + 5
