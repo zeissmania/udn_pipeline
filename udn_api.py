@@ -21,7 +21,8 @@ res
     relative2
     relative3
 
-
+update:
+the res dict, the key may be duplicate, such as sister, brother, before changing, if a proband have multiple brothers, then only the last one would be recorded into the dict, the previous one would be overwritten
 
 
 """
@@ -213,14 +214,23 @@ def dump_json(obj, fn):
         pickle.dump(obj, out)
 
 
-def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=None):
+def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=None, sequence_type_desired=None, demo=False):
     """
     rel_to_proband, if run as proband, this is None, otherwize, this func is called during geting the relatives of proband, and specified
     info_passed_in,  {'affected': rel_aff, 'seq_status': have_seq}   include the affect state, sequenced_state, only valid when called during geting the relatives of proband, and specified
     res_all,  when running specific relative, use this dict to accumulate among the family member
+    sequence_type_desired : valid = all, wgs, chip, rna, wes ,  is a list, default is [wgs]
+    demo: do not resolve the amazon s3 link
     """
 
-    aff_convert = {'Unaffected': 'Unaffected', 'Affected': 'Affected', '3': 'Unaffected', '2': 'Affected', 'Unknown': 'Unknown'}
+    set_seq_type = set('wgs,wes,rna,all,chip'.split(','))
+    sequence_type_desired = sequence_type_desired or ['wgs']
+    tmp = set(sequence_type_desired) - set_seq_type
+    if len(tmp) > 0:
+        logger.error(f'wrong sequence type desired found: valid is all, wgs, chip, rna, wes:  unmatch={list(tmp)}')
+        return 0
+
+    aff_convert = {'Unaffected': 'Unaffected', 'Affected': 'Affected', '3': 'Unaffected', '2': 'Affected', 'Unknown': 'Unknown', 3: 'Unaffected', 2: 'Affected'}
     res_all = res_all or {}
     rel_to_proband = rel_to_proband or 'Proband'
     info_passed_in = info_passed_in or {}
@@ -228,7 +238,7 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
     res = {}
     res['rel_to_proband'] = rel_to_proband
     res['affect_from_proband_list'] = info_passed_in.get('affected') or 'Unknown'
-    res['seq_status'] = info_passed_in.get('seq_status')
+    res['seq_status'] = info_passed_in.get('seq_status') or 'Unkown'
 
     cookie = cookie or get_cookie()
     header_cookie = get_header_cookie(cookie)
@@ -249,9 +259,8 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
 
         if size1 > size_bk:
             os.system(f'mv {fn_json_pk} {fn_json_pk_bk}')
-        else:
+        elif size1 < size_bk:
             logger.warning(f'json.pickle file not substituted due to size of new file is smaller than previous backup: {udn}')
-
 
     # get followup files
     action = 'followup/attachment'
@@ -298,11 +307,14 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
         res['uuid_case'] = json['uuid']  #
         res['dob'] = json['patient']['dob']  # birthday
 
-        affect_state_raw = json['patient']['affected'] # 2 = affected, 3=unaffected
-        res['affect'] = affect_state_raw
+        try:
+            affect_state_raw = json['patient']['affected'] # 2 = affected, 3=unaffected
+            affect_state_raw = aff_convert[affect_state_raw]
+        except:
+            affect_state_raw = 'Unknown'
 
 
-        if res['affect_from_proband_list'] == 'affect_state_raw':
+        if res['affect_from_proband_list'] == affect_state_raw:
             res['affect_final'] = affect_state_raw
         else:
             res['affect_final'] = f'{affect_state_raw} / {res["affect_from_proband_list"]}'
@@ -355,11 +367,28 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
                 continue
 
             rel_to_proband_tmp = i.find(attrs={'class': 'relative'}).text
-            rel_udn = i.find(attrs={'class': 'patientsimpleid'}).text
-            rel_aff = i.find(attrs={'class': 'affected'}).text
+            # avoid the overwritten of res_all keys, such as multipel siters /brothers
+            rel_in_prev_run = [_.split('#')[-1] for _ in res_all if re.match(rel_to_proband_tmp, _)]
 
-            res_all = get_all_info(rel_udn, cookie, rel_to_proband=rel_to_proband_tmp, res_all=res_all, info_passed_in={'affected': rel_aff, 'seq_status': have_seq})
-            logger.info(res_all.keys())
+            rel_seq = 0
+            for _ in rel_in_prev_run:
+                try:
+                    n = int(_)
+                except:
+                    n = 1
+                rel_seq = n if n > rel_seq else rel_seq
+
+            if rel_seq > 0:
+                # if no previous key was found, rel_seq shoul be zero
+                rel_seq += 1
+                rel_to_proband_tmp = f'{rel_to_proband_tmp}#{rel_seq}'
+
+            rel_udn = i.find(attrs={'class': 'patientsimpleid'}).text
+            rel_aff = i.find(attrs={'class': 'affected'}).text.strip()
+            rel_aff = aff_convert[rel_aff]
+
+            res_all = get_all_info(rel_udn, cookie, rel_to_proband=rel_to_proband_tmp, res_all=res_all, info_passed_in={'affected': rel_aff, 'seq_status': have_seq}, demo=demo)
+            # logger.info(res_all.keys())
 
         # patient dignosis
         action = 'application'
@@ -395,21 +424,75 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
     d_json['files'] = json
     dump_json(d_json, fn_json_pk)
 
+    logger.info('\n\n****************')
     logger.info(f'now getting information of {rel_to_proband} : {udn}')
+    if rel_to_proband.find('#') > -1:
+        logger.warning(f'Family member with same relative to proband: {rel_to_proband}')
 
-    if json:
-        # json is a list
-        if len(json) > 1:
-            logger.warning(f'{len(json)}  records found for sequences API, would use the first one')
-        json = json[0]
-        res['bayler_report'] = [
+    json_all = json
+    if len(json_all) > 1:
+        logger.warning(f'multi: {len(json_all)}  records found for sequences API, would use {sequence_type_desired}')
+    elif not json or len(json_all) == 0:
+        logger.error(f'\t{rel_to_proband}: fail to get sequencing json')
+
+    # json_all is a list
+    # each element is a dict, which is a sequencing request like
+    # {'id': 1984,
+#   'patient': {'simpleid': 'UDN139529'},
+#   'sequencingfiles': [...]}
+    seq_type_convert = {3: 'wgs', 4: 'rna', 5: 'reanalysis'}
+    seq_type_convert.update({str(k): v for k, v in seq_type_convert.items()})
+    files = []
+    res['bayler_report'] = []
+
+    for json in json_all:
+        sequence_type_raw = json['sequencing_type']
+        try:
+            sequence_type = seq_type_convert[sequence_type_raw]
+        except:
+            logger.warning(f'{rel_to_proband} seq_id = {json["id"]}: unkown sequence type: type code={sequence_type_raw}')
+            continue
+        if sequence_type in sequence_type_desired  or'all' in  sequence_type_desired or sequence_type == 'reanalysis':
+            pass
+        else:
+            logger.warning(f'{rel_to_proband}: skipped due to unmatch sequence type, seq_id = {json["id"]}, desired={sequence_type_desired} found={sequence_type}')
+            continue
+
+        res['bayler_report'] += [
             f'https://gateway.undiagnosed.hms.harvard.edu/patient/sequencing-report/{_}/'
             for _ in json['sequencereports']]
 
         files_raw = json['sequencingfiles']
-        files = []
-
+        logger.info(f'{rel_to_proband}: {sequence_type} seq_id={json["id"]}  total files={len(files_raw)} ')
         for n_fl, ifl in enumerate(files_raw):
+            # each file is like
+            # {'udn_id': ['UDN139529'],
+            #     'sequence_id': [1984],
+            #     'uuid': '9636f625-4b3d-4888-82d5-0db65fd1fd39',
+            #     'fileserviceuuid': '2e43d4af-80fe-48cc-83ac-ce38f06e393d',
+            #     'filename': 'UDN139529-HHG3FCCXY_s7_SL285308-recal.bai',
+            #     'sequencing_site': 'mcw',
+            #     'complete': True,
+                #     'file_data': {'creationdate': '2018-01-30T16:25:49-05:00',
+                #     'modifydate': '2018-01-30T16:25:49-05:00',
+                #     'description': 'UDN139529 sequenced at HudsonAlpha Institute for Biotechnology',
+                #     'tags': [],
+                #     'locations': [{'url': 'S3://udnarchive/b3d1b663-ff21-4d3d-89dc-406fc2bd6169/UDN139529-HHG3FCCXY_s7_SL285308-recal.bai',
+                #     'storagetype': 's3',
+                #     'uploadComplete': '2018-01-30T16:25:56-05:00',
+                #     'id': 403269,
+                #     'filesize': 8843928}],
+                #     'uuid': '2e43d4af-80fe-48cc-83ac-ce38f06e393d',
+                #     'filename': 'UDN139529-HHG3FCCXY_s7_SL285308-recal.bai',
+                #     'expirationdate': '2018-08-18',
+                #     'owner': {'email': 'jharris@hudsonalpha.org'},
+                #     'permissions': ['udn'],
+                #     'id': 35655,
+                #     'metadata': {'md5': 'b6edcdb45a938fc781555918889af4e7',
+                #     'patientid': 'UDN139529',
+                #     'coverage': '84.1278688742',
+                #     'otherinfo': 'info'}}},
+
             if n_fl % 5 == 1 and n_fl > 1:
                 time.sleep(5)
             completed = ifl['complete']
@@ -419,19 +502,19 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
             file_uuid = ifl['uuid']
             fl_expire = ifl['file_data']['expirationdate']
             fl_assembly = ifl['file_data']['metadata'].get('assembly')
-            fl_md5 = ifl['file_data']['metadata'].get('md5sum')
-            fl_type = ifl['file_data']['metadata'].get('description')
+            fl_md5 = ifl['file_data']['metadata'].get('md5sum') or ifl['file_data']['metadata'].get('md5')
+            fl_type = ifl['file_data']['metadata'].get('description') or ifl['file_data'].get('description')
 
             if re.match(r'.+\.bai$', fn):
                 pass
             elif re.match(r'.+\.bam$', fn):
                 pass
-            elif re.match(r'.+\.vcf', fn):
+            elif re.match(r'.+\.g?vcf', fn):
                 pass
             elif re.match(r'.+\.fastq.gz$', fn):
                 pass
             else:
-                logger.warning(f'unkown filetype: {fn}')
+                logger.warning(f'unkown filetype: {sequence_type}: {fn}')
                 continue
 
             # to get the actual amazon presined URL, there is a trick.
@@ -448,18 +531,19 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
 
             # which include the amazon presigned URL
 
-            res_amazon_url = get_amazon_download_link(fn, file_uuid, header_cookie)
+
+            res_amazon_url = get_amazon_download_link(fn, file_uuid, header_cookie, demo=demo)
             try:
                 header_cookie, download = res_amazon_url
             except:
                 logger.error(f'error when getting_amazon_download_link return = {res_amazon_url} \nfn="{fn}"\nfile_uuid="{file_uuid}"\nheader_cookie="{header_cookie}"')
                 sys.exit(1)
 
+            logger.info(f'{sequence_type} seq_id={json["id"]}: {fn} demo={demo}, amazon link resolved')
+
             files.append({'download': download, 'relative': rel_to_proband, 'file_uuid': file_uuid, 'fn': fn, 'url': fl_url, 'complete': completed, 'size': fl_size,
-                          'expire': fl_expire, 'build': fl_assembly, 'assembly': fl_assembly, 'md5': fl_md5, 'type': fl_type})
-        res['files'] = files
-    else:
-        logger.error(f'fail to get sequencing json')
+                          'expire': fl_expire, 'build': fl_assembly, 'assembly': fl_assembly, 'md5': fl_md5, 'type': fl_type, 'seq_type': sequence_type})
+    res['files'] = files
 
     res_all[rel_to_proband] = res
 
@@ -468,18 +552,20 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
             parse_api_res(res_all, cookie=cookie)
         except:
             logger.error(f'fail to parse the result dict, try again')
-
+            raise
     return res_all
 
-
-def get_amazon_download_link(fn, file_uuid, header_cookie, n=0):
+def get_amazon_download_link(fn, file_uuid, header_cookie, n=0, demo=False):
+    if demo:
+        logger.debug(f'demo mode for {fn}')
+        return header_cookie, 'na'
     url_download_info = f'https://gateway.undiagnosed.hms.harvard.edu/patient/downloadsequenceurl/{file_uuid}/'
     response_download_link = requests.request('GET', url_download_info, headers=header_cookie)
     if n > 20:
         logger.error(f'fail to get file download link: {fn}')
         return header_cookie, None
     if n > 5 and n % 5 == 1:
-        logger.info(f'renew cookie: try: {n}')
+        logger.debug(f'renew cookie: try: {n}')
         cleanup_memory()
         cookie = get_cookie()
         header_cookie = get_header_cookie(cookie)
@@ -491,13 +577,13 @@ def get_amazon_download_link(fn, file_uuid, header_cookie, n=0):
             n += 1
             time.sleep(10)
             # logger.info(header_cookie)
-            header_cookie, download_url = get_amazon_download_link(fn, file_uuid, header_cookie, n)
+            header_cookie, download_url = get_amazon_download_link(fn, file_uuid, header_cookie, n, demo=demo)
             if download_url:
                 return header_cookie, download_url
         else:
             raise
     else:
-        logger.info(f'got json: {fn}')
+        logger.debug(f'\tgot json: {fn}')
         try:
             return header_cookie, json['download_url']
         except:
@@ -563,7 +649,7 @@ def create_cred():
     return cred
 
 
-def parse_api_res(res, cookie=None, renew_amazon_link=False, pkl_fn=None):
+def parse_api_res(res, cookie=None, renew_amazon_link=False, pkl_fn=None, demo=False):
     """
     res = {proband: {}, relative: [{family1}, {family2}]}
     1. build a report for the proband
@@ -586,7 +672,7 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, pkl_fn=None):
     logger.info(f'keys for the result: {res.keys()}')
     proband_id = res['Proband']['simpleid']
 
-
+    affect_convert_to_01 = {'Affected': 1, 'Unaffected': 0, '3 / Unaffected': 0, '2 / Affected': 1, 'Unaffected / 3': 0, 'Affected / 2': 1}
     if renew_amazon_link:
         cookie = cookie or get_cookie()
         header_cookie = get_header_cookie(cookie)
@@ -594,23 +680,23 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, pkl_fn=None):
             logger.error('fail to get cookie, can\'t get the amazon s3 presigned URL, exit')
             return 0
 
-
         for rel_to_proband, v in res.items():
             logger.info(f'renew amazon download link for {rel_to_proband}')
-
             if 'files' not in v:
                 logger.info(f'{rel_to_proband}: no files found')
                 continue
+
             for ifl in v['files']:
                 fn = ifl['fn']
                 file_uuid = ifl['file_uuid']
 
-                res_amazon_url = get_amazon_download_link(fn, file_uuid, header_cookie)
+                res_amazon_url = get_amazon_download_link(fn, file_uuid, header_cookie, demo=demo)
                 try:
                     header_cookie, download = res_amazon_url
                 except:
                     logger.error(f'get_amazon_download_link return = {res_amazon_url} \nfn="{fn}"\nfile_uuid="{file_uuid}"\nheader_cookie="{header_cookie}"')
                     continue
+                logger.info(f'{fn}: update amazon_link done')
                 ifl['download'] = download
 
         pkl_fn = pkl_fn or f'{proband_id}.udn_api_query.pkl'
@@ -623,13 +709,11 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, pkl_fn=None):
     proband = res['Proband']
     udn = proband['simpleid']
     hpo = proband['symp']
-
-    aff_convert = {'Affected': 1, 'Unaffected': 0, '3': 0, '2': 1}
-
+    # logger.info(f'Proband files = {proband["files"]}')
 
     with open(f'{udn}.basic_info.md', 'w') as out:
         out.write(f'## 1. Basic Info\n- UDN\t{udn}\n')
-        for k, v in zip('firstname,lastname,gender,race,dob,alive,affect,uuid_case,phenotip'.split(','), 'FirstName,LastName,Gender,Race,DateBirth,Alive,Affect_state,UUID_case,Phenotip_ID'.split(',')):
+        for k, v in zip('firstname,lastname,gender,race,dob,alive,affect_final,uuid_case,phenotip'.split(','), 'FirstName,LastName,Gender,Race,DateBirth,Alive,Affect_state,UUID_case,Phenotip_ID'.split(',')):
             out.write(f'- {v}\t{proband[k]}\n')
         out.write('\n\n')
 
@@ -642,14 +726,8 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, pkl_fn=None):
             if rel_to_proband == 'Proband':
                 continue
 
-
-            affect_state1 = aff_convert.get(i['affect_from_proband_list']) or i['affect_from_proband_list']
-            affect_state2 = aff_convert.get(i['affect']) or i['affect']
-
-            affect_state = affect_state1 if affect_state1 == affect_state2 else f'{affect_state1}/{affect_state2}'
-
             # if gender not added
-            out.write(f'| {rel_to_proband} | {i["firstname"]} {i["lastname"]} | {i["simpleid"]} | {i["gender"]} | {affect_state}| {i["seq_status"]} |\n')
+            out.write(f'| {rel_to_proband} | {i["firstname"]} {i["lastname"]} | {i["simpleid"]} | {i["gender"]} | {i["affect_final"]}| {i["seq_status"]} |\n')
         out.write('\n\n')
 
         # HPO terms
@@ -689,7 +767,6 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, pkl_fn=None):
 
     cfg_info = {'father': '', 'mother':'', 'male':[], 'female':[], 'other': []}
 
-
     for rel_to_proband, irel in res.items():
         if rel_to_proband == 'Proband':
             continue
@@ -706,12 +783,9 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, pkl_fn=None):
             continue
 
         try:
-            affect_state1 = aff_convert.get(irel['affect_from_proband_list']) or irel['affect_from_proband_list']
-            affect_state2 = aff_convert.get(irel['affect']) or irel['affect']
-            rel_aff = affect_state1 if affect_state1 == affect_state2 else f'{affect_state1}/{affect_state2}'
-
+            rel_aff = affect_convert_to_01[irel['affect_final']]
         except:
-            logger.error(f"{rel_to_proband}: unkown affect state: {irel['affect']} / {irel['affect_from_proband_list']}")
+            logger.error(f"{rel_to_proband}: unkown affect state: {irel['affect_final']}")
             continue
 
         if rel_to_proband.lower() == 'father':
@@ -803,11 +877,12 @@ parallel '{{}}'  :::: {udn}.download_fastq.txt
 cd -
     """)
 
-    out_info.write('rel_to_proband\tfn\turl\tsize\tbuild\tmd5\turl_s3\n')
+    out_info.write('rel_to_proband\tfn\turl\tudn\tseq_type\tsize\tbuild\tmd5\turl_s3\n')
 
     for rel_to_proband, irel in res.items():
         if not irel.get('files'):
             continue
+        udn = irel['simpleid']
         for ifl in irel['files']:
             url = ifl['download']
             fn = ifl['fn']
@@ -815,6 +890,7 @@ cd -
             size = ifl['size']
             build = ifl['build']
             md5 = ifl['md5']
+            seq_type = ifl.get('seq_type')
 
             if re.match(r'.+\.bai$', fn):
                 out_igv.write(f'{url}\t{fn}\n')
@@ -831,7 +907,7 @@ cd -
             else:
                 out_other.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
 
-            out_info.write(f'{rel_to_proband}\t{fn}\t{url}\t{size}\t{build}\t{md5}\t{url_s3}\n')
+            out_info.write(f'{rel_to_proband}\t{fn}\t{url}\t{udn}\t{seq_type}\t{size}\t{build}\t{md5}\t{url_s3}\n')
             out_md5.write(f'{md5}  {fn}\n')
 
     html_bam.write("""</body>
@@ -858,9 +934,12 @@ if __name__ == "__main__":
         help="""filename for the credential file, must include the UDN token, login email, login username(vunetID), login_password""")
     ps.add_argument('-create', '-encry', '-enc', help="""enter into create credential mode""", action='store_true')
     ps.add_argument('-pw', help="""specify the output pw, default is create a folder same as UDN_ID""", default=None)
+    ps.add_argument('-demo', help="""do not resolve the amazon link, just check the raw link. apply to both post and new query""", action='store_true')
     ps.add_argument('-no_renew', '-norenew', help="""flag, if the pickle file already exist, renew the amazon link or not, default is renew""", action='store_true')
     args = ps.parse_args()
+    print(args)
     fn_cred = args.fn_cred or 'udn.credential.pkl.encrypt'
+    demo = args.demo
 
     passcode = getpass('Input the passcode for the encrypted credential file: ')
     if not fn_cred:
@@ -945,10 +1024,14 @@ if __name__ == "__main__":
         if os.path.exists(fn_udn_api_pkl):
             logger.info('directly load API query result from pickle file')
             res = pickle.load(open(fn_udn_api_pkl, 'rb'))
-            renew_amazon_link = not args.no_renew
+            if demo:
+                renew_amazon_link = False
+            else:
+                renew_amazon_link = not args.no_renew
 
-            parse_api_res(res, cookie=cookie, renew_amazon_link=renew_amazon_link)
+            parse_api_res(res, cookie=cookie, renew_amazon_link=renew_amazon_link, demo=demo)
         else:
-            res = get_all_info(udn, cookie=cookie)
+            res = get_all_info(udn, cookie=cookie, demo=demo)
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
+        print('\n########################\n\n')
