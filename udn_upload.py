@@ -65,7 +65,7 @@ if not os.path.exists(info_file):
 ft = []
 wrong_ft = []
 if ft_raw != 'all':
-    for i in ft:
+    for i in ft_raw:
         try:
             ft.append(ft_convert[i])
         except:
@@ -73,11 +73,12 @@ if ft_raw != 'all':
 else:
     ft = 'all'
 
-if len(wrong_ft) == 0:
+if len(wrong_ft) > 0:
     logger.error(f'unkown file type found: {wrong_ft}')
 
 
 # check the remote folder
+subfolders = []
 d_exist = {}
 if dest == 'dropbox':
     res = os.popen(f'dbxcli ls /{remote_pw}').read().strip()
@@ -95,6 +96,19 @@ if dest == 'dropbox':
             fn = a[-1].rsplit('/', 1)[-1]
             d_exist[fn] = a[-1]
 
+            # extract the sub folders
+            if a[0][0] == '-':
+                sub_full_path = a[-1]
+                sub_full_path = sub_full_path[1:] if sub_full_path[0] == '/' else sub_full_path
+                sub_path = re.sub(f'^{remote_pw}', '', sub_full_path)
+                if not sub_path:
+                    logger.info(f'root remote path found: {sub_full_path}')
+                    continue
+                sub_path_end = sub_path.rsplit('/', 1)[-1]
+                m = re.match(r'.*(UDN\d+)', sub_path_end)
+                sub_path_udn = m.group(1) if m else ''
+
+                subfolders.append([sub_path_udn, sub_path])
 elif dest == 'emedgene':
     res = os.popen(f'aws s3 ls emg-auto-samples/Vanderbilt/upload/{remote_pw}/').read().strip()
     if not res:
@@ -111,15 +125,51 @@ elif dest == 'emedgene':
             fn = a[-1].rsplit('/', 1)[-1]
             d_exist[fn] = a[-1]
 
+            # extract the sub folders
+            if a[-1][-1] == '/':
+                sub_full_path = a[-1]
+                sub_full_path = sub_full_path[:-1] if sub_full_path[-1] == '/' else sub_full_path
+                m = re.match(fr'^{remote_pw}(.*$)', sub_full_path)
+                if m:
+                    sub_path = m.group(1)
+                    if not sub_path:
+                        logger.info(f'root remote path found: {sub_full_path}')
+                        continue
+                    sub_path_end = sub_path.rsplit('/', 1)[-1]
+                    m = re.match(r'.*(UDN\d+)', sub_path_end)
+                    sub_path_udn = m.group(1) if m else None
+                    if sub_path_udn:
+                        subfolders.append([sub_path_udn, sub_path])
+                    else:
+                        logger.info(f'subfolder_without_UDN_ID: {sub_full_path}')
+                else:
+                    logger.warning(f'path not found under remote pw: {sub_full_path}')
 
+logger.info(f'\n\tremote_dest={dest}\n\tremote_pw={remote_pw}\n\tfile_type_for_upload={ft}\n\tsubfolder={subfolders}')
+
+
+
+os.system(f'mkdir {pw}/shell 2>/dev/null')
+os.system(f'mkdir {pw}/download 2>/dev/null')
+os.system(f'mkdir {pw}/log 2>/dev/null')
 
 ft_convert = {'fastq.gz': 'fastq', 'fastq': 'fastq', 'fq': 'fastq', 'bam': 'bam', 'bai':'bam', 'vcf.gz': 'vcf', 'vcf':'vcf'}
 with open(info_file) as fp:
+    n_all = 0
+    n_uploaded = 0
+    n_downloaded = 0
     for i in fp:
         a = i.split('\t')
         if a[0] == 'rel_to_proband':
             continue
-        rel, fn, url = a[:3]
+        rel, fn, url, fl_udn = a[:4]
+        n_all += 1
+
+        folder_extended = [_ for _ in subfolders if fl_udn == _[0]]
+        if len(folder_extended) == 0:
+            folder_extended = ''
+        else:
+            folder_extended = folder_extended[0][1]
 
         ext = fn.rsplit('.', 1)[-1]
         ext2 = fn.rsplit('.', 2)[-2]
@@ -132,16 +182,29 @@ with open(info_file) as fp:
             continue
 
         if i_ft not in ft and ft != 'all':
-            logger.info(f'skipped because of filetype filter: {fn}')
+            logger.info(f'skipped because of filetype filter: {fn}, i_ft={i_ft}, ft={ft}')
             continue
 
-        with open(f'{pw}/{fn}.download_upload.{dest}.sh', 'w') as out:
-            if not os.path.exists(f'{pw}/{fn}'):
-                if fn in d_exist:
-                    logger.info(f'File already uploaded! {fn}: {d_exist[fn]}')
-                    continue
-                print(f'wget "{url}" -c -O "{pw}/{fn}" > {pw}/{fn}.download.log 2>&1', file=out)
-                if dest == 'dropbox':
-                    print(f'dbxcli put {pw}/{fn} /{remote_pw}/{fn} > {pw}/fn.upload.{dest}.log 2>&1', file=out)
-                elif dest == 'emedgene':
-                    print(f'aws s3 cp {pw}/{fn} s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn} > {pw}/fn.upload.{dest}.log 2>&1', file=out)
+        if not os.path.exists(f'{pw}/{fn}'):
+            if fn in d_exist:
+                n_uploaded += 1
+                logger.info(f'File already uploaded! {fn}: {d_exist[fn]}')
+                continue
+
+        fn_download = f'{pw}/download/{fn}'
+        with open(f'{pw}/shell/{fn}.download_upload.{dest}.sh', 'w') as out:
+            skip_download = 0
+            if os.path.exists(fn_download):
+                size = os.path.getsize(fn_download)
+                if size > 10000:
+                    logger.info(f'file already downloaded, size={round(size/1000000, 1)}M: {fn}')
+                    n_downloaded += 1
+                    skip_download = 1
+            if not skip_download:
+                print(f'wget "{url}" -c -O "{fn_download}" > {pw}/log/download.{fn}.log 2>&1', file=out)
+            if dest == 'dropbox':
+                print(f'dbxcli put {pw}/download/{fn} /{remote_pw}{folder_extended}/{fn} > {pw}/log/upload.{dest}.{fn}.log 2>&1', file=out)
+            elif dest == 'emedgene':
+                print(f'aws s3 cp {pw}/download/{fn} s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}{folder_extended}/{fn} > {pw}/log/upload.{dest}.{fn}.log 2>&1', file=out)
+
+    logger.info(f'total files = {n_all}, already exist in server = {n_uploaded}, already downloaded = {n_downloaded}')
