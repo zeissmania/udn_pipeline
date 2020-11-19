@@ -214,7 +214,7 @@ def dump_json(obj, fn):
         pickle.dump(obj, out)
 
 
-def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=None, sequence_type_desired=None, demo=False):
+def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=None, sequence_type_desired=None, demo=False, get_aws_ft=None):
     """
     rel_to_proband, if run as proband, this is None, otherwize, this func is called during geting the relatives of proband, and specified
     info_passed_in,  {'affected': rel_aff, 'seq_status': have_seq}   include the affect state, sequenced_state, only valid when called during geting the relatives of proband, and specified
@@ -387,7 +387,7 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
             rel_aff = i.find(attrs={'class': 'affected'}).text.strip()
             rel_aff = aff_convert[rel_aff]
 
-            res_all = get_all_info(rel_udn, cookie, rel_to_proband=rel_to_proband_tmp, res_all=res_all, info_passed_in={'affected': rel_aff, 'seq_status': have_seq}, demo=demo)
+            res_all = get_all_info(rel_udn, cookie, rel_to_proband=rel_to_proband_tmp, res_all=res_all, info_passed_in={'affected': rel_aff, 'seq_status': have_seq}, demo=demo, get_aws_ft=get_aws_ft)
             # logger.info(res_all.keys())
 
         # patient dignosis
@@ -530,16 +530,24 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
             # {"messages": [], "download_url": "https://udnarchive.s3.amazonaws.com:443/db488479-8923-4a60-9779-48f58b2f1dad/921192-UDN830680-P.bam?Signature=iZaOBprDz69DFzCZ%2BF0Pn9qEjDk%3D&Expires=1600299340&AWSAccessKeyId=AKIAZNIVXXYEAPHA7BGD", "success": true}
 
             # which include the amazon presigned URL
+            if get_aws_ft and len(get_aws_ft) > 0:
+                tmp = re.sub('.gz$', '', fn)
+                ext = tmp.rsplit('.', 1)[-1].lower()
+                ext = 'cnv' if tmp.endswith('cnv.vcf') else ft_convert[ext]
 
-
-            res_amazon_url = get_amazon_download_link(fn, file_uuid, header_cookie, demo=demo)
-            try:
-                header_cookie, download = res_amazon_url
-            except:
-                logger.error(f'error when getting_amazon_download_link return = {res_amazon_url} \nfn="{fn}"\nfile_uuid="{file_uuid}"\nheader_cookie="{header_cookie}"')
-                sys.exit(1)
-
-            logger.info(f'{sequence_type} seq_id={json["id"]}: {fn} demo={demo}, amazon link resolved')
+                if ext not in get_aws_ft:
+                    logger.debug(f'skip update amazon link due to file type limit: {fn}')
+                    download = 'NA'
+                else:
+                    res_amazon_url = get_amazon_download_link(fn, file_uuid, header_cookie, demo=demo)
+                    try:
+                        header_cookie, download = res_amazon_url
+                    except:
+                        logger.error(f'error when getting_amazon_download_link return = {res_amazon_url} \nfn="{fn}"\nfile_uuid="{file_uuid}"\nheader_cookie="{header_cookie}"')
+                        sys.exit(1)
+                    logger.info(f'{sequence_type} seq_id={json["id"]}: {fn} demo={demo}, amazon link resolved')
+            else:
+                download = 'NA'
 
             files.append({'download': download, 'relative': rel_to_proband, 'file_uuid': file_uuid, 'fn': fn, 'url': fl_url, 'complete': completed, 'size': fl_size,
                           'expire': fl_expire, 'build': fl_assembly, 'assembly': fl_assembly, 'md5': fl_md5, 'type': fl_type, 'seq_type': sequence_type})
@@ -649,7 +657,7 @@ def create_cred():
     return cred
 
 
-def parse_api_res(res, cookie=None, renew_amazon_link=False, pkl_fn=None, demo=False):
+def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None, demo=False):
     """
     res = {proband: {}, relative: [{family1}, {family2}]}
     1. build a report for the proband
@@ -664,8 +672,15 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, pkl_fn=None, demo=F
 
     un-used = .vcf.gz, .joint.vcf,  .gvcf.gz,
     """
-    pw = os.getcwd().rsplit('/', 1)[-1]
-    pw = f'/data/cqs/chenh19/udn/{pw}'
+
+    ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'vcf', 'fq': 'fastq'}
+    ft_convert.update({_: _ for _ in ft_convert.values()})
+
+    update_aws_ft = set([ft_convert[_] for _ in update_aws_ft]) if update_aws_ft else None
+
+
+    pw_raw = os.getcwd().rsplit('/', 1)[-1]
+    pw = f'/data/cqs/chenh19/udn/{pw_raw}'
     if not os.path.isdir('origin'):
         os.system('mkdir origin 2>/dev/null')
 
@@ -689,6 +704,15 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, pkl_fn=None, demo=F
             for ifl in v['files']:
                 fn = ifl['fn']
                 file_uuid = ifl['file_uuid']
+
+                if update_aws_ft and len(update_aws_ft) > 0:
+                    tmp = re.sub('.gz$', '', fn)
+                    ext = tmp.rsplit('.', 1)[-1].lower()
+                    ext = 'cnv' if tmp.endswith('cnv.vcf') else ft_convert[ext]
+
+                    if ext not in update_aws_ft:
+                        logger.debug(f'skipp update amazon link due to file type limit: {fn}')
+                        continue
 
                 res_amazon_url = get_amazon_download_link(fn, file_uuid, header_cookie, demo=demo)
                 try:
@@ -867,7 +891,7 @@ default:
 
     out_cnv.write('mkdir origin 2>/dev/null\n')
 
-    pw_upload = f'/scratch/h_vangard_1/chenh19/udn/upload/{udn}'
+    pw_upload = f'/scratch/h_vangard_1/chenh19/udn/upload/{pw_raw}'
     out_fastq_sh.write(f"""#! /usr/bin/env bash
 mkdir -p {pw_upload}
 cp download.fastq.{udn}.txt {pw_upload}
@@ -935,15 +959,26 @@ if __name__ == "__main__":
     ps.add_argument('-create', '-encry', '-enc', help="""enter into create credential mode""", action='store_true')
     ps.add_argument('-pw', help="""specify the output pw, default is create a folder same as UDN_ID""", default=None)
     ps.add_argument('-demo', help="""do not resolve the amazon link, just check the raw link. apply to both post and new query""", action='store_true')
+    ps.add_argument('-ft', help="""could be multiple, if specified, would only update the amazon URL for these file types""", nargs='*', choices=['bam', 'vcf', 'cnv', 'fastq', 'fq'])
     ps.add_argument('-no_renew', '-norenew', help="""flag, if the pickle file already exist, renew the amazon link or not, default is renew""", action='store_true')
     args = ps.parse_args()
     print(args)
     fn_cred = args.fn_cred or 'udn.credential.pkl.encrypt'
     demo = args.demo
+    pw_script = os.path.realpath(__file__).rsplit('/', 1)[0]
+
+    ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'vcf', 'fq': 'fastq'}
+    ft_convert.update({_: _ for _ in ft_convert.values()})
+
+    update_aws_ft = set([ft_convert[_] for _ in args.ft]) if args.ft else None
+
 
     passcode = getpass('Input the passcode for the encrypted credential file: ')
     if not fn_cred:
         fn_cred = input('Specify the credential file name, if not exist, would create it: ')
+
+    if not os.path.exists(fn_cred):
+        fn_cred = f'{pw_script}/udn.credential.pkl.encrypt'
     key = Credential(passcode, fn_cred)
 
     logger.info(fn_cred)
@@ -952,7 +987,7 @@ if __name__ == "__main__":
     if args.create:
         cred = create_cred()
     elif not os.path.exists(fn_cred):
-        logger.warning(f'The credential file not found: {args.fn_cred}, would create it')
+        logger.warning(f'The credential file not found: {fn_cred}, would create it')
         cred = create_cred()
     else:
         cred = key.load()
@@ -1029,9 +1064,9 @@ if __name__ == "__main__":
             else:
                 renew_amazon_link = not args.no_renew
 
-            parse_api_res(res, cookie=cookie, renew_amazon_link=renew_amazon_link, demo=demo)
+            parse_api_res(res, cookie=cookie, update_aws_ft=update_aws_ft, renew_amazon_link=renew_amazon_link, demo=demo)
         else:
-            res = get_all_info(udn, cookie=cookie, demo=demo)
+            res = get_all_info(udn, cookie=cookie, demo=demo, get_aws_ft=update_aws_ft)
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
         print('\n########################\n\n')

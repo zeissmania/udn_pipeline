@@ -9,7 +9,7 @@ input 2 = {udn}.selected.genes.txt. first column = mut_type
 import argparse as arg
 from argparse import RawTextHelpFormatter
 ps = arg.ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
-ps.add_argument('udn', help="""udn ID""")
+ps.add_argument('udn', help="""udn ID, if not sepecified, would search the UDNxxxx.igv.files.txt""", nargs='?')
 ps.add_argument('-pw', help="""path for the UDN project, default = pwd""", default=None)
 args = ps.parse_args()
 
@@ -17,6 +17,16 @@ import os, sys
 import re
 pw = args.pw or os.getcwd()
 udn = args.udn
+if not udn:
+    import glob
+    tmp = glob.glob('UDN*.igv.files.txt')
+    if len(tmp) == 0:
+        print('Error, UDN not specified, UDNxxx.igv.files.txt not found, exit')
+        sys.exit(1)
+    elif len(tmp) > 1:
+        print(f'multiple igv files found, would use first {tmp}')
+
+    udn = tmp[0].split('.', 1)[0]
 
 import logging
 prefix = f'{udn}.build_igv_script'
@@ -42,6 +52,8 @@ logger.setLevel('DEBUG')
 logger.addHandler(console)
 logger.addHandler(fh_file)
 logger.addHandler(fh_err)
+
+
 
 
 
@@ -117,12 +129,12 @@ with open(fn_in) as fp:
             d_genes[gn].append(f'{chr_}:{s-2000}-{e+2000}')
 
 # output igv batch script
-with open(f'{pw}/{udn}.igv.script.txt', 'w') as out:
+with open(f'{pw}/igv.script.{udn}.txt', 'w') as out:
     out.write(f"""genome hg38
 SAM.QUALITY_THRESHOLD 13
 snapshotDirectory {pwigv}
-maxPanelHeight 7000
-collapse
+maxPanelHeight 2000
+squish
 setSleepInterval 500
 new
 
@@ -133,7 +145,13 @@ new
         except:
             logger.warning(f'bai file not found: {lb}')
             continue
-        out.write(f'load "{url_bam}" index="{url_bai}"\ncollapse\n\n')
+        out.write(f'load "{url_bam}" index="{url_bai}"\nsquish\n')
+
+    out.write("""
+load http://hgdownload.cse.ucsc.edu/goldenPath/hg38/database/refGene.txt.gz
+collapse
+
+""")
 
     for gn, v in d_genes.items():
         for n, region in enumerate(v):
