@@ -24,6 +24,9 @@ res
 update:
 the res dict, the key may be duplicate, such as sister, brother, before changing, if a proband have multiple brothers, then only the last one would be recorded into the dict, the previous one would be overwritten
 
+update 2020-11-03
+add chromedriver path when running under ACCRE
+
 
 """
 import sys
@@ -41,7 +44,7 @@ import requests
 from bs4 import BeautifulSoup as bs
 # basic settings
 base_url = 'https://gateway.undiagnosed.hms.harvard.edu/api'
-
+platform = sys.platform
 
 class Credential():
     def __init__(self, password, fn_pickle=None):
@@ -98,13 +101,24 @@ def get_cookie():
 
     from selenium import webdriver
     from selenium.webdriver.support.ui import WebDriverWait as wait
-    path_chromedriver = '/Users/files/work/package/chromedriver'
+
+    if platform == 'darwin':
+        path_chromedriver = '/Users/files/work/package/chromedriver'
+    else:
+        path_chromedriver = '/home/chenh19/tools/chromedriver2.35'
     option = webdriver.ChromeOptions()
     option.add_argument('--headless')
     option.add_argument('--no-sandbox')
+    if platform == 'linux':
+        option.add_argument('--disable-dev-shm-usage')
+        option.binary_location = '/home/chenh19/tools/chrome/chrome'
     driver = webdriver.Chrome(executable_path=path_chromedriver, options=option)
-
+    logger.info('driver is set')
     driver.get(url)
+
+    driver.save_screenshot('test.png')
+    sys.exit(1)
+
     email = wait(driver, timeout).until(lambda x: x.find_element_by_xpath('//input[@type="email"]'))
     password = driver.find_element_by_xpath('//input[@type="password"]')
     button = driver.find_element_by_xpath('//button[@class="auth0-lock-submit"]')
@@ -214,7 +228,7 @@ def dump_json(obj, fn):
         pickle.dump(obj, out)
 
 
-def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=None, sequence_type_desired=None, demo=False):
+def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=None, sequence_type_desired=None, demo=False, udn_raw=None):
     """
     rel_to_proband, if run as proband, this is None, otherwize, this func is called during geting the relatives of proband, and specified
     info_passed_in,  {'affected': rel_aff, 'seq_status': have_seq}   include the affect state, sequenced_state, only valid when called during geting the relatives of proband, and specified
@@ -223,6 +237,7 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
     demo: do not resolve the amazon s3 link
     """
 
+    udn_raw = udn_raw or udn
     set_seq_type = set('wgs,wes,rna,all,chip'.split(','))
     sequence_type_desired = sequence_type_desired or ['wgs']
     tmp = set(sequence_type_desired) - set_seq_type
@@ -315,6 +330,8 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
 
 
         if res['affect_from_proband_list'] == affect_state_raw:
+            res['affect_final'] = affect_state_raw
+        elif rel_to_proband == 'Proband':
             res['affect_final'] = affect_state_raw
         else:
             res['affect_final'] = f'{affect_state_raw} / {res["affect_from_proband_list"]}'
@@ -549,7 +566,7 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
 
     if rel_to_proband == 'Proband':
         try:
-            parse_api_res(res_all, cookie=cookie)
+            parse_api_res(res_all, cookie=cookie, udn_raw=udn_raw)
         except:
             logger.error(f'fail to parse the result dict, try again')
             raise
@@ -649,7 +666,7 @@ def create_cred():
     return cred
 
 
-def parse_api_res(res, cookie=None, renew_amazon_link=False, pkl_fn=None, demo=False):
+def parse_api_res(res, cookie=None, renew_amazon_link=False, pkl_fn=None, demo=False, udn_raw=None):
     """
     res = {proband: {}, relative: [{family1}, {family2}]}
     1. build a report for the proband
@@ -867,13 +884,15 @@ default:
 
     out_cnv.write('mkdir origin 2>/dev/null\n')
 
-    pw_upload = f'/scratch/h_vangard_1/chenh19/udn/upload/{udn}'
+    tmp = udn_raw or udn
+    pw_upload = f'/scratch/h_vangard_1/chenh19/udn/upload/{tmp}'
     out_fastq_sh.write(f"""#! /usr/bin/env bash
 mkdir -p {pw_upload}
 cp download.fastq.{udn}.txt {pw_upload}
+cp download.info.{udn}.txt {pw_upload}
 cp download.{udn}.md5 {pw_upload}
 cd {pw_upload}
-parallel '{{}}'  :::: {udn}.download_fastq.txt
+udn_upload emedgene download.info.{udn}.txt -ft fastq
 cd -
     """)
 
@@ -938,7 +957,15 @@ if __name__ == "__main__":
     ps.add_argument('-no_renew', '-norenew', help="""flag, if the pickle file already exist, renew the amazon link or not, default is renew""", action='store_true')
     args = ps.parse_args()
     print(args)
-    fn_cred = args.fn_cred or 'udn.credential.pkl.encrypt'
+
+    pw_script = os.path.realpath(__file__).rsplit('/', 1)[0]
+
+    if not args.fn_cred and os.path.exists('udn.credential.pkl.encrypt'):
+
+        fn_cred = 'udn.credential.pkl.encrypt'
+    else:
+        fn_cred = f'{pw_script}/udn.credential.pkl.encrypt'
+
     demo = args.demo
 
     passcode = getpass('Input the passcode for the encrypted credential file: ')
@@ -1029,9 +1056,9 @@ if __name__ == "__main__":
             else:
                 renew_amazon_link = not args.no_renew
 
-            parse_api_res(res, cookie=cookie, renew_amazon_link=renew_amazon_link, demo=demo)
+            parse_api_res(res, cookie=cookie, renew_amazon_link=renew_amazon_link, demo=demo, udn_raw=udn_raw)
         else:
-            res = get_all_info(udn, cookie=cookie, demo=demo)
+            res = get_all_info(udn, cookie=cookie, demo=demo, udn_raw=udn_raw)
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
         print('\n########################\n\n')
