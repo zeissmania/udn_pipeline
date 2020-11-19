@@ -348,7 +348,8 @@ class UDN_case():
             home = os.path.expanduser('~')
             dock_path = f'{home}/dock/annotsv.sif'
         else:
-            dock_path = '/scratch/cqs/chenh19/dock/annotsv.sif'
+            # dock_path = '/scratch/cqs/chenh19/dock/annotsv.sif'
+            dock_path = '/data/cqs/chenh19/dock/annotSV.sif'
         # the annot_sv_rank and gnomad_AF filtering would only take effect on the proband, would not filter on the parent
 
         if os.path.exists(dock_path):
@@ -440,6 +441,25 @@ class UDN_case():
 
         fl_result = f'{pw}/{intermediate_folder}/{prj}.terms_hpo.txt'
         fl_result1 = f'{pw}/{intermediate_folder}/{prj}.terms_pure_hpo.txt'
+
+        tmp1 = os.popen(f'find {pw} -iname "{prj}.terms_hpo.txt"').read().strip().split('\n')
+        tmp1 = [_.strip() for _ in tmp1 if _.strip()]
+
+        tmp2 = os.popen(f'find {pw} -iname "{prj}.terms_pure_hpo.txt"').read().strip().split('\n')
+        tmp2 = [_.strip() for _ in tmp2 if _.strip()]
+
+
+
+
+        if len(tmp1) > 0:
+            logger.info('HPO file already exist')
+            os.system(f'ln -sf {tmp1[0]} {fl_result}')
+            if len(tmp2) == 0:
+                os.system(f'cut -f2 "{tmp1[0]}" > {fl_result1}')
+            else:
+                os.system(f'ln -sf {tmp2[0]} {fl_result1}')
+            return 0
+
 
         if os.path.exists(fl_result):
             # logger.info(f'HOP id file already exists {fl_result}')

@@ -103,10 +103,15 @@ def main(prj, pw=None, fn_selected_genes=None):
 
     # add real data
     row = 3
-    for sv_type_long, v in sv_selected.items():
+
+    # sort the rank with in he same sv type
+    sv_selected_sorted = [(k, sorted(v, key=lambda _: int(_[0]))) for k, v in sv_selected.items()]
+
+    # sort the order of sv type
+    sv_selected_sorted = sorted(sv_selected_sorted, key=lambda _: int(_[1][0][0]))
+
+    for sv_type_long, info in sv_selected_sorted:
         # sv_type_long = sv_type_conversion[sv_type]
-        # sort the rank
-        info = sorted(v, key=lambda _:int(_[0]))
         row = add_header(row, sv_type_long, family_info)
         for i_cnv in info:
             row = add_data(row, i_cnv, family_info)
