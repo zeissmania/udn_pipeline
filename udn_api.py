@@ -113,11 +113,10 @@ def get_cookie():
         option.add_argument('--disable-dev-shm-usage')
         option.binary_location = '/home/chenh19/tools/chrome/chrome'
     driver = webdriver.Chrome(executable_path=path_chromedriver, options=option)
-    logger.info('driver is set')
     driver.get(url)
-
+    logger.info('driver is set')
     driver.save_screenshot('test.png')
-    sys.exit(1)
+    # sys.exit(1)
 
     email = wait(driver, timeout).until(lambda x: x.find_element_by_xpath('//input[@type="email"]'))
     password = driver.find_element_by_xpath('//input[@type="password"]')
@@ -328,7 +327,6 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
         except:
             affect_state_raw = 'Unknown'
 
-
         if res['affect_from_proband_list'] == affect_state_raw:
             res['affect_final'] = affect_state_raw
         elif rel_to_proband == 'Proband':
@@ -443,8 +441,8 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
 
     logger.info('\n\n****************')
     logger.info(f'now getting information of {rel_to_proband} : {udn}')
-    if rel_to_proband.find('#') > -1:
-        logger.warning(f'Family member with same relative to proband: {rel_to_proband}')
+    # if rel_to_proband.find('#') > -1:
+    #     logger.warning(f'Family member with same relative to proband: {rel_to_proband}')
 
     json_all = json
     if len(json_all) > 1:
@@ -457,7 +455,7 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
     # {'id': 1984,
 #   'patient': {'simpleid': 'UDN139529'},
 #   'sequencingfiles': [...]}
-    seq_type_convert = {3: 'wgs', 4: 'rna', 5: 'reanalysis'}
+    seq_type_convert = {2: 'wes', 3: 'wgs', 4: 'rna', 5: 'reanalysis'}
     seq_type_convert.update({str(k): v for k, v in seq_type_convert.items()})
     files = []
     res['bayler_report'] = []
@@ -547,24 +545,27 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
             # {"messages": [], "download_url": "https://udnarchive.s3.amazonaws.com:443/db488479-8923-4a60-9779-48f58b2f1dad/921192-UDN830680-P.bam?Signature=iZaOBprDz69DFzCZ%2BF0Pn9qEjDk%3D&Expires=1600299340&AWSAccessKeyId=AKIAZNIVXXYEAPHA7BGD", "success": true}
 
             # which include the amazon presigned URL
-            if get_aws_ft and len(get_aws_ft) > 0:
-                tmp = re.sub('.gz$', '', fn)
-                ext = tmp.rsplit('.', 1)[-1].lower()
+            tmp = re.sub(r'.tbi$', '', fn)
+            tmp = re.sub(r'.gz$', '', tmp)
+            ext = tmp.rsplit('.', 1)[-1].lower()
+            ext = tmp.rsplit('.', 2)[-2] if ext in ['gz', 'tbi', 'bai'] else ext
+            try:
                 ext = 'cnv' if tmp.endswith('cnv.vcf') else ft_convert[ext]
+            except:
+                logger.warning(f'wrong file extension: {ext}, fn={fn}, tmp={tmp}')
 
-                if ext not in get_aws_ft:
-                    logger.debug(f'skip update amazon link due to file type limit: {fn}')
-                    download = 'NA'
-                else:
-                    res_amazon_url = get_amazon_download_link(fn, file_uuid, header_cookie, demo=demo)
-                    try:
-                        header_cookie, download = res_amazon_url
-                    except:
-                        logger.error(f'error when getting_amazon_download_link return = {res_amazon_url} \nfn="{fn}"\nfile_uuid="{file_uuid}"\nheader_cookie="{header_cookie}"')
-                        sys.exit(1)
-                    logger.info(f'{sequence_type} seq_id={json["id"]}: {fn} demo={demo}, amazon link resolved')
-            else:
+            if get_aws_ft and len(get_aws_ft) > 0 and ext not in get_aws_ft:
+                logger.info(f'skip update amazon link due to file type limit: {fn}')
                 download = 'NA'
+            else:
+                res_amazon_url = get_amazon_download_link(fn, file_uuid, header_cookie, demo=demo)
+                try:
+                    header_cookie, download = res_amazon_url
+                except:
+                    logger.error(f'error when getting_amazon_download_link return = {res_amazon_url} \nfn="{fn}"\nfile_uuid="{file_uuid}"\nheader_cookie="{header_cookie}"')
+                    sys.exit(1)
+                logger.info(f'{sequence_type} seq_id={json["id"]}: {fn} demo={demo}, amazon link resolved')
+
 
             files.append({'download': download, 'relative': rel_to_proband, 'file_uuid': file_uuid, 'fn': fn, 'url': fl_url, 'complete': completed, 'size': fl_size,
                           'expire': fl_expire, 'build': fl_assembly, 'assembly': fl_assembly, 'md5': fl_md5, 'type': fl_type, 'seq_type': sequence_type})
@@ -728,7 +729,7 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
                     ext = 'cnv' if tmp.endswith('cnv.vcf') else ft_convert[ext]
 
                     if ext not in update_aws_ft:
-                        logger.debug(f'skipp update amazon link due to file type limit: {fn}')
+                        logger.info(f'skipp update amazon link due to file type limit: {fn}')
                         continue
 
                 res_amazon_url = get_amazon_download_link(fn, file_uuid, header_cookie, demo=demo)
@@ -909,14 +910,36 @@ default:
     out_cnv.write('mkdir origin 2>/dev/null\n')
 
     tmp = udn_raw or udn
+    remote_pw = re.sub(r'\d+_', '', tmp, 1)
+    m = re.match(r'(.*_)?(UDN\d+)(_.*)?', remote_pw).groups()
+    if not m:
+        logger.warning(f'wrong project name fromat: {remote_pw}')
+    else:
+        if m[0] is not None:
+            p1 = re.sub('^_*', '', m[0])
+            p1 = re.sub('_*$', '', p1)
+        else:
+            p1 = None
+
+        if m[2] is not None:
+            p2 = re.sub('^_*', '', m[2])
+            p2 = re.sub('_*$', '', p2)
+        else:
+            p2 = None
+
+        p_trailing = '_'.join([_ for _ in (p1, p2) if _])
+        p_trailing = '_' + p_trailing if p_trailing else ''
+        remote_pw = m[1] + p_trailing
+
     pw_upload = f'/scratch/h_vangard_1/chenh19/udn/upload/{tmp}'
     out_fastq_sh.write(f"""#! /usr/bin/env bash
 mkdir -p {pw_upload}
 cp download.fastq.{udn}.txt {pw_upload}
 cp download.info.{udn}.txt {pw_upload}
 cp download.{udn}.md5 {pw_upload}
+echo {pw_upload}
 cd {pw_upload}
-udn_upload emedgene download.info.{udn}.txt -ft fastq
+udn_upload emedgene {remote_pw} download.info.{udn}.txt -ft fastq
 cd -
     """)
 
