@@ -123,6 +123,22 @@ else:
 if len(wrong_ft) > 0:
     logger.error(f'unkown file type found: {wrong_ft}')
 
+# get the file expected size
+d_file_size_exp = {}
+with open(info_file) as fp:
+    for i in fp:
+        a = i.split('\t')
+        rel, fn, url, fl_udn = a[:4]
+        if a[0] == 'rel_to_proband':
+            continue
+        try:
+            size_exp = int(a[5])
+        except:
+            logger.error(f'wrong filesize format: {a[5]}, line={i}')
+            sys.exit(1)
+        else:
+            d_file_size_exp[fn] = size_exp
+
 
 # check the remote folder
 subfolders = []
@@ -170,7 +186,22 @@ elif dest == 'emedgene':
             i = i.strip()
             a = re.split('Vanderbilt/upload/', i)
             fn = a[-1].rsplit('/', 1)[-1]
-            d_exist[fn] = a[-1]
+
+            file_size = re.split(r'\s+', i.strip())[2]
+            try:
+                file_size = int(file_size)
+            except:
+                logger.error(f'wrong remote emedgene file size: {file_size}')
+                sys.exit(1)
+
+            try:
+                d_file_size_exp[fn]
+            except:
+                if fn and fn[-4:] != '.md5':
+                    logger.warning(f'remote file not found locally line={i}, fn={fn}, file_size={file_size}')
+            else:
+                if file_size == d_file_size_exp[fn]:
+                    d_exist[fn] = a[-1]
 
             # extract the sub folders
             if a[-1][-1] == '/':
@@ -230,8 +261,9 @@ with open(info_file) as fp:
         else:
             folder_extended = folder_extended[0][1]
 
-        ext = fn.rsplit('.', 1)[-1]
-        ext2 = fn.rsplit('.', 2)[-2]
+
+        ext = fn.replace('.tbi', '').rsplit('.', 1)[-1]
+        ext2 = fn.replace('.tbi', '').rsplit('.', 2)[-2]
 
         ext = f'{ext2}.{ext}' if ext == 'gz' else ext
         i_ft = ft_convert.get(ext)
@@ -265,10 +297,13 @@ with open(info_file) as fp:
                     skip_download = 1
                 else:
                     logger.warning(f'file already downloaded, but size not match: exp={size_exp} real={size} : {fn}')
-                    n_downloaded += 1
-                    os.system(f'mv {fn_download} {fn_download}.bad')
+                    # n_downloaded += 1
+                    os.system(f'mv {fn_download} {fn_download}.bad 2>/dev/null')
             if not skip_download:
                 print(f'wget "{url}" -c -O "{fn_download}" > {pw}/log/download.{fn}.log 2>&1', file=out)
+
+            print(f"""local_size=$(stat {fn_download} -c %s 2>/dev/null)\nif [ "$local_size" -ne {size_exp} ];then\necho file size not match: {fn_download}: size=$local_size, expected={size_exp}\nmv {fn_download} {fn_download}.bad 2>/dev/null;\nexit;\nfi""", file=out)
+
             if dest == 'dropbox':
                 print(f'{dock} dbxcli put {pw}/download/{fn} /{remote_pw}{folder_extended}/{fn} > {pw}/log/upload.{dest}.{fn}.log 2>&1', file=out)
             elif dest == 'emedgene':
