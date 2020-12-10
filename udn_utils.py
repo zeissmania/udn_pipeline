@@ -12,13 +12,18 @@ import os
 import sys
 import re
 import yaml
+import time
 import logging
 import logging.config
+import requests
+from bs4 import BeautifulSoup as bs
+import pickle
 
 # basic data
 pw_code = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(pw_code)
 from . import amelie_api
+
 
 sv_type_convert = {'<DEL>': 'deletion', '<DUP>': 'duplication'}
 col_keep_new_name = [
@@ -145,6 +150,194 @@ class UDN_case():
             else:
                 self.done_phase3 = 1
 
+    def omim_query(self):
+        """
+        the input is the merged.sorted.tsv file  and the phenotype keyword file
+        1. build the gene comment dict based on the previous manual input
+        2. read the local OMIM disease discription, if not found, would run the online scrapy
+        3. query the keyword file for each gene in the merged.sorted.tsv file, and rate(hit number) as reference for selecting
+        """
+        fn = f'{self.pw}/{self.prj}.merged.sorted.tsv'
+        fn_pheno = f'{self.pw}/pheno.keywords.txt'
+        udn = self.prj
+        pw = self.pw
+        logger = self.logger
+        if not os.path.exists(fn_pheno):
+            fn_pheno = f'{self.pw}/origin/{self.prj}.terms.txt'
+            if not os.path.exists(fn_pheno):
+                logger.error(f'No phenotype file found for query')
+                return 1
+
+        # get the gene list with OMIM desease
+        d_gene = {}
+        with open(fn) as fp:
+            fp.readline()
+            for i in fp:
+                a = i.split('\t')
+                gn = a[12].strip()
+                omim_id = a[20].strip()
+                try:
+                    amelie_score = float(a[4])
+                except:
+                    logger.warning(f'wrong amelie score: {a}')
+                    continue
+
+                cover_exon_flag = 1 if a[11].strip() else 0
+
+
+                if omim_id:
+                    d_gene[gn] = [omim_id, cover_exon_flag, amelie_score]
+
+        # build the predefined gene list
+
+        fn_gene_comment = f'{pw_code}/omim.gene_comment.txt'
+        fn_gene_description_omim = f'{pw_code}/omim.gene_description_omim.txt'
+
+        if os.path.exists(f'{pw}/{udn}.omim_match_gene.txt'):
+            return 0
+
+        d_gene_comment = {}
+        d_gene_comment_scrapy = {}
+        d_gene_comment_scrapy_new = {}
+
+        for d1, fn1 in zip([d_gene_comment, d_gene_comment_scrapy], [fn_gene_comment, fn_gene_description_omim]):
+            new = 1
+            try:
+                with open(fn1) as fp:
+                    for i in fp:
+                        i = i.strip()
+                        if not i.strip():
+                            try:
+                                if gn not in d1:
+                                    d1[gn] = comment
+                            except:
+                                continue
+                            new = 1
+                        elif new == 1 and len(i) < 30:
+                            gn = i
+                            new = 0
+                            comment = ''
+                        elif new == 1:
+                            logger.warning(f'wrong gene name found in {pw_code}/gene_comment.txt: {i}')
+                            gn = 'wrong'
+                            continue
+                        else:
+                            comment += i + '\n'
+            except:
+                logger.warning(f'{fn1} not exist')
+                with open(fn1, 'w') as out:
+                    pass
+
+
+        logger.info(f'OMIM gene description.txt entry={len(d_gene_comment_scrapy)}')
+
+        # build the phenotype keyword list
+        # if 2 words link together, use +, if match the exact word, add a prefix @
+        # e.g. lung+cancer  @short+stature
+        l_pheno = []
+
+        with open(fn_pheno) as fp:
+            for i in fp:
+                i = i.strip()
+                a = re.split(r'\s+', i)
+                a = [_.strip() for _ in a if _.strip()]
+
+                if len(a) == 0:
+                    continue
+
+                l_pheno.append([_.replace('+', ' ') for _ in a])
+
+        # res , key=gene, value = [0, 0]  first int = count of exact match phenotype, second int = count of partial match phenotype
+        res = {}
+        for gn, v in d_gene.items():
+            omim_id, cover_exon_flag, amelie_score = v
+            if gn in res:
+                continue  # avoid the duplicate running
+            res[gn] = [[], [], '', cover_exon_flag, amelie_score]  # match pheno, partial match pheno, comment, cover_exon_flag, amelie rank
+            if gn in d_gene_comment:
+                comment = d_gene_comment[gn] + '\n'
+            else:
+                comment = ''
+
+            if gn in d_gene_comment_scrapy:
+                comment_raw = d_gene_comment_scrapy[gn]
+                comment += comment_raw
+            else:
+                # run the scrapy
+                # comment is a dict, key=pheno_id, v=pheno description
+                comment_raw = run_omim_scrapy(gn, omim_id, logger)
+                if comment_raw:
+                    comment += '\n'.join(comment_raw.values())
+                    d_gene_comment_scrapy_new[gn] = comment.strip()
+                    d_gene_comment_scrapy[gn] = comment.strip()
+                else:
+                    # logger.info(f'No pheno description found on OMIM: gn={gn}')
+                    continue
+
+            comment = comment.strip()
+            res[gn][2] = comment
+
+            # query the phenotype
+            for ipheno in l_pheno:
+                n_word_match = 0
+                n_total_word = len(ipheno)
+                for _ in ipheno:
+                    _ = _.lower()
+                    if _[0] == '@':
+                        if re.match(f'.*\b{ipheno[1:]}\b', comment.lower()):
+                            n_word_match += 1
+                    elif _[0] == '-':  # negative match, exclude
+                        if comment.lower().find(_[1:]) < 0:
+                            n_word_match += 1
+                    elif comment.lower().find(_) > -1:
+                        n_word_match += 1
+
+                if n_word_match == n_total_word:
+                    res[gn][0].append(ipheno)
+                elif n_word_match > 0:
+                    res[gn][1].append(ipheno)
+
+        if len(d_gene_comment_scrapy_new) > 0:
+            with open(fn_gene_description_omim, 'a') as out:
+                out.write('\n\n')
+                for gn, desc in d_gene_comment_scrapy_new.items():
+                    print(gn, file=out)
+                    print(desc, file=out)
+                    print('\n\n', file=out)
+
+        # logger.info(f'OMIM query count={len(res)}')
+
+        # tally the result
+        out1 = open(f'{pw}/omim_match_gene.{udn}.txt', 'w')
+        out2 = open(f'{pw}/omim_partial_match_gene.{udn}.txt', 'w')
+        # test = next(iter(res.items()))
+        # logger.info(f'res_entry_len={len(test[1])}')
+        res1 = sorted(res.items(), key=lambda _: (len(_[1][0]), _[1][3], _[1][4]), reverse=True)
+        res2 = sorted(res.items(), key=lambda _: (len(_[1][1]), _[1][3], _[1][4]), reverse=True)
+
+        n1 = 0
+        n2 = 0
+        for gn, v in res1:
+            match, partial_match, comment, cover_exon_flag, amelie_score = v
+            if len(match) > 0:
+                n1 += 1
+                print(f'{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\t{match}', file=out1)
+                print(comment, file=out1)
+                print('\n\n', file=out1)
+        for gn, v in res2:
+            match, partial_match, comment, cover_exon_flag, amelie_score = v
+            if len(partial_match) > 0:
+                n2 += 1
+                print(f'{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\t{match}', file=out2)
+                print(comment, file=out2)
+                print('\n\n', file=out2)
+        out1.close()
+        out2.close()
+        logger.info(f'gene with OMIM match= {n1}')
+        logger.info(f'gene with OMIM partial match= {n2}')
+
+
+
     def verify_config(self):
         cfg = self._cfg
         logger = self.logger
@@ -253,8 +446,8 @@ class UDN_case():
             else:
                 rel_to_proband = None
 
-            if aff_state not in [0, 1]:
-                logger.error('Wrong affect state sepcified, key={k}, aff_state = {aff_state}.  valid = 0 / 1')
+            if aff_state not in [0, 1, -1]:
+                logger.error('Wrong affect state sepcified, key={k}, aff_state = {aff_state}.  valid = 0 / 1 ,  -1 for unkown')
                 sys.exit(1)
 
             sample_id = sample_id.upper()
@@ -381,6 +574,14 @@ class UDN_case():
                 f'find {vcf_file_path} -type f -iname "*{sample_id}*.vcf.gz" -o -iname "*{sample_id}*.vcf"').read().split('\n')
             vcf = [_.strip() for _ in vcf if _.strip()]
             if len(vcf) == 0:
+                logger.warning(f'CNV file not downloaded yet, now downloading')
+                os.system(f'bash {pw}/download.cnv.*.sh 2>/dev/null')
+                time.sleep(2)
+                vcf = os.popen(
+                    f'find {vcf_file_path} -type f -iname "*{sample_id}*.vcf.gz" -o -iname "*{sample_id}*.vcf"').read().split('\n')
+                vcf = [_.strip() for _ in vcf if _.strip()]
+
+            if len(vcf) == 0:
                 logger.error(f'{v["type"]}  {sample_id} vcf file not found! ')
                 exit_flag = 1
             elif len(vcf) == 1:
@@ -404,7 +605,6 @@ class UDN_case():
         col1 = HPO ID, col2 = phenotype
         sep by tab
         """
-        import pickle
         hpo_ref = hpo_ref or f'{pw_code}/hpo_ref.txt'
         try:
             with open(hpo_ref) as fp:
@@ -426,7 +626,6 @@ class UDN_case():
         if not os.path.exists(hpo_pickle):
             self.build_hpo_dict()
         else:
-            import pickle
             hpo_db = pickle.load(open(hpo_pickle, 'rb'))
         return hpo_db
 
@@ -805,7 +1004,6 @@ class UDN_case():
         # however, the proband - father/mother site is not always matched,
         # on the proband search step, the each site would search the upper and lower bin, e.g. the proband site is 12,345,678,  the bin is 123, but, I would search both 122, 123, 124 bin in the father/mother dict
         # the list , starts, ends, they should be sorted.
-        import pickle
         pw = self.pw
         logger = self.logger
         lb = self.family[sample_id]['lb']
@@ -985,7 +1183,7 @@ class UDN_case():
             elif t == 'Mother':
                 trio_order.append([sample_id, 2])
             else:
-                m = re.findall('\w+(\d+)$', t)
+                m = re.findall(r'\w+(\d+)$', t)
                 if len(m) > 0:
                     sn = int(m[0])
                 else:
@@ -1003,7 +1201,7 @@ class UDN_case():
 
         for i in trio_order:
             aff_state = family[i]['aff_state']
-            aff_state = {0: 'unaff', 1:'affected'}[aff_state]
+            aff_state = {0: 'unaff', 1:'affected', -1: 'unknown'}[aff_state]
             type_ = family[i]['type']
             sample_id_lite = i.replace('UDN', '')
 
@@ -1162,3 +1360,147 @@ class UDN_case():
         col_amelie = header.split('\t').index('AMELIE') + 1
         sorted_file = f'{pw}/{prj}.merged.sorted.tsv'
         os.system(f"head -1 {merged_table} > {sorted_file};sed '1d' {merged_table} |sort -t $'\\t' -k {col_amelie}nr  >> {sorted_file}")
+
+
+def get_omim_map(logger):
+    """
+    input = genemap2.txt
+    return = {pheno_id1: pheno_desc1}
+    """
+    if os.path.exists(f'{pw_code}/omim_map.pkl'):
+        try:
+            d_omim_map = pickle.load(open(f'{pw_code}/omim_map.pkl', 'rb'))
+        except:
+            return None
+        else:
+            return d_omim_map
+    elif os.path.exists(f'{pw_code}/genemap2.txt'):
+        d_omim_map = {}
+        with open(f'{pw_code}/genemap2.txt') as fp:
+            for i in fp:
+                if i[0] == '#':
+                    continue
+
+                a = i.split('\t')
+                gn_id = a[5]
+                pheno = a[12].strip()
+                if not pheno:
+                    d_omim_map[gn_id] = {}
+                else:
+                    pheno = pheno.split(';')
+                    d_omim_map[gn_id] = {}
+                    for ipheno in pheno:
+                        ipheno = ipheno.replace('Autosomal recessive', 'AR').replace('Autosomal dominant', 'AD').replace('X-linked recessive', 'XLR').replace('X-linked dominant', 'XLD')
+                        m = re.match(r".*(?:, )?(\d{6})(?: \(\d+\))", ipheno)
+                        if m:
+                            d_omim_map[gn_id][int(m.group(1))] = ipheno.strip()
+                        else:
+                            logger.warning(f'wrong OMIM phenotype format: ipheno={ipheno},gn={a[8]}')
+        with open(f'{pw_code}/omim_map.pkl', 'wb') as out:
+            pickle.dump(d_omim_map, out)
+        return d_omim_map
+    return None
+
+
+def run_omim_scrapy(gn, gn_omim_id, logger, res_prev=None):
+    """
+    get the omim disease discription
+    return key=pheno_id, value=the description and clinicalfeatures text
+    """
+    headers = {'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.67 Safari/537.36 Edg/87.0.664.52', 'sec-fetch-site': 'cross-site', 'origin': 'https://www.omim.org', 'referer': 'https://fonts.googleapis.com/', 'accept': '*/*', 'accept-encoding': 'gzip, deflate, br'}
+
+    # gene to phenotype
+    # first try the d_omim_map, key=gene id, v = omim phenotype list
+    d_omim_map = get_omim_map(logger)
+    gene_page_scrapy = 1
+    omim_id_list = set(gn_omim_id.split(';'))
+    if len(omim_id_list) > 1:
+        logger.warning(f'multiple OMIM id find, gn={gn}, omim_id={gn_omim_id}')
+        res = {}
+        for omim_id_tmp  in omim_id_list:
+            res_tmp = run_omim_scrapy(gn, omim_id_tmp.strip(), logger, res_prev=res)
+            if res_tmp:
+                res.update(res_tmp)
+        return res
+    else:
+        gn_omim_id = list(omim_id_list)[0]
+
+    # if gn == 'PKHD1':
+    #     logger.error(f'gn=PKHD1, omim_id_list={omim_id_list}, gn_omim_id={gn_omim_id}')
+
+    if d_omim_map:
+        try:
+            pheno_list = d_omim_map[gn_omim_id]
+            gene_page_scrapy = 0
+        except:
+            logger.warning(f'gene not found in d_omim_map dict: {gn} omim_id={gn_omim_id}')
+
+    if gene_page_scrapy:
+        r = requests.request('GET', f'https://www.omim.org/entry/{gn_omim_id}', headers=headers)
+        r = bs(r.text, features='lxml')
+
+        gn_web = r.find('a', attrs={'oldtitle': 'HUGO Gene Nomenclature Committee.'})
+
+        try:
+            gn_web = gn_web.text
+        except:
+            logger.warning(f'gene name not found on website, OMIM_id={gn_omim_id}, gn={gn}')
+            return 0
+
+        if gn_web != gn:
+            logger.warning(f'gene name not match, excel={gn}, web={gn_web}, omim_id={gn_omim_id}')
+            return 0
+
+        try:
+            rows = r.find('table').findAll('tr')
+        except:
+            logger.warning(f'no phenotype table found, gn={gn}')
+            return res_prev if res_prev else 0
+        rows = [_.findAll('td') for _ in rows]
+        rows = [_ for _ in rows if _]
+
+        pheno_list = {}
+        start = 1
+        for i in rows:
+            if start:
+                idx_pheno_id = 2
+                idx_phenotype = 1
+                start = 0
+            else:
+                idx_pheno_id = 1
+                idx_phenotype = 0
+            try:
+                pheno_id = i[idx_pheno_id].text.strip()
+            except:
+                tmp = [_.text.strip() for _ in i]
+                logger.warning('wrong table format: gn={gn}, pheno row={tmp}')
+            else:
+                info = [_.text.strip() for _ in i[idx_phenotype:]]
+                pheno_desc = f'{info[0]}, {info[1]} ({info[3]}) {", " + info[2] if info[2] else ""}'
+
+                try:
+                    pheno_list[int(pheno_id)] = pheno_desc
+                except:
+                    logger.warning(f'wrong OMIM phenotype ID: {pheno_id}, info={info}')
+
+    # scrapy the pheno page
+    # get the descriptioin and clinical features
+    res = {}
+    for pheno_id, pheno_desc in pheno_list.items():
+        r = requests.request('GET', f'https://www.omim.org/entry/{pheno_id}', headers=headers)
+        r = bs(r.text, features='lxml')
+        try:
+            desc = r.find('div', attrs={'id': 'descriptionFold'})
+            desc = '\n'.join([_.text.strip() for _ in desc.find_all('p')])
+        except:
+            desc = ''
+
+        try:
+            clin = r.find('div', attrs={'id': 'clinicalFeaturesFold'})
+            clin = '\n'.join([_.text.strip() for _ in clin.find_all('p')])
+        except:
+            clin = ''
+        tmp = f'**{pheno_desc}**' + '\n' + '\n'.join([desc, clin]).strip()
+        tmp = tmp.strip()
+        res[pheno_id] = tmp
+    return res_prev.update(res) if res_prev else res

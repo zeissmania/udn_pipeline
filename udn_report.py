@@ -2,6 +2,7 @@ import sys, os, re
 from openpyxl.styles import PatternFill, Border, Side, Alignment, Font, NamedStyle, Color
 import openpyxl
 from openpyxl.utils import get_column_letter
+import pandas as pd
 
 
 # def s():
@@ -25,7 +26,9 @@ def main(prj, pw=None, fn_selected_genes=None):
     # ['Proand 123456', 'Mother (unaff) 22222', 'Father(unaff) 33333']
     """
     pw = pw or os.getcwd()
-    fn_selected_genes = fn_selected_genes or f'{pw}/{prj}.selected.genes.txt'
+    fn_selected_genes = fn_selected_genes or f'{pw}/{prj}.selected.genes.xlsx'
+
+    ext = fn_selected_genes.rsplit('.', 1)[-1]
 
     # group the selected SV into groups
     sv_selected = {}
@@ -71,15 +74,21 @@ def main(prj, pw=None, fn_selected_genes=None):
     wb.add_named_style(fmt_header)
     wb.add_named_style(fmt_sv_type)
 
-    fh = open(fn_selected_genes)
-    header = fh.readline().split('\t')
+
+
+    d = pd.read_excel(fn_selected_genes, engine='openpyxl')
+    header = d.columns
     family_info = header[21:]
-    data = [_.strip().split('\t') for _ in fh]
-    for i in data:
+    # data = [_.strip().split('\t') for _ in fh]
+
+    for i in d.itertuples(False, None):
         sv_type = i[0]
         if sv_type.lower() not in sv_type_conversion:
-            if i[1] != "AMELIE":
-                print(f'wrong SV catergory found! {sv_type}')
+            try:
+                if i[1] != "AMELIE":
+                    print(f'wrong SV catergory found! {sv_type}')
+            except:
+                print(f'wrong line: {i}')
             continue
         sv_type_long = sv_type_conversion[sv_type.lower()]
         try:
@@ -114,14 +123,14 @@ def main(prj, pw=None, fn_selected_genes=None):
         # sv_type_long = sv_type_conversion[sv_type]
         row = add_header(row, sv_type_long, family_info)
         for i_cnv in info:
-            row = add_data(row, i_cnv, family_info)
+            row = add_data(row, i_cnv, family_info, ext)
 
     fnout = f'{pw}/{prj}.report.xlsx'
     wb.save(fnout)
 
 
 
-def add_data(row, data, family_info):
+def add_data(row, data, family_info, input_type):
     try:
         rank, _, chr_, s, e, sv_type, qual, exon_span_tag, gn, sv_len, exon_span, dgv_gain, dgv_loss, gnomad, _, ddd_disease, _, phenotype, inher = data[:19]
     except:
@@ -137,26 +146,30 @@ def add_data(row, data, family_info):
     dgv = f'{dgv_gain}/{dgv_loss}'
 
     # build the comment
-    inher_list = inher.split('/')
-    try:
-        phenotype_list = re.sub(r'(\W)/(\W)', '\g<1>\n', phenotype).split('\n')
-    except:
-        print(f'phenotype={phenotype}')
-        raise
+    if input_type == 'txt':
+        inher_list = inher.split('/')
+        try:
+            phenotype_list = re.sub(r'(\W)/(\W)', '\g<1>\n', phenotype).split('\n')
+        except:
+            print(f'phenotype={phenotype}')
+            raise
 
-    phenotype_list = [re.sub('(^"+|"+$)', '', _) for _ in phenotype_list]
+        phenotype_list = [re.sub('(^"+|"+$)', '', _) for _ in phenotype_list]
 
-    if len(inher_list) != len(phenotype_list):
-        if len(inher_list) == 1:
-            phenotype_list = [f'{_} {inher_list[0]}' for _ in phenotype_list]
+        if len(inher_list) != len(phenotype_list):
+            if len(inher_list) == 1:
+                phenotype_list = [f'{_} {inher_list[0]}' for _ in phenotype_list]
+            else:
+                print(f'error: inher list count idfferent from phenotype count:\n{len(inher_list)} vs {len(phenotype_list)}\ninher={inher_list}, phenotyp={phenotype_list}')
         else:
-            print(f'error: inher list count idfferent from phenotype count:\n{len(inher_list)} vs {len(phenotype_list)}\ninher={inher_list}, phenotyp={phenotype_list}')
+            phenotype_list = [f'{a} {b}' for a, b in zip(phenotype_list, inher_list)]
+
+        comment = '\n'.join(phenotype_list)
+    elif input_type == 'xlsx':
+        comment = phenotype
     else:
-        phenotype_list = [f'{a} {b}' for a, b in zip(phenotype_list, inher_list)]
-
-    comment = '\n'.join(phenotype_list)
-
-    # comment = '\n'.join([phenotype_new, ddd_disease, ])
+        print(f'ERROR: wrong selected.genes file format: {input_type}')
+        return 0
 
     # build the header
     col_raw = 0
