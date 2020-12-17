@@ -51,7 +51,7 @@ elif case.done_phase2:
     # prj.selected.genes.txt
     logger.info('building the report...')
     import udn_report
-    udn_report.main(case.prj, case.pw, f'{case.pw}/{case.prj}.selected.genes.xlsx')
+    udn_report.main(case.prj, case.pw)
 
 elif case.done_phase1:
     # prj.merged.sortedtsv

@@ -26,7 +26,15 @@ def main(prj, pw=None, fn_selected_genes=None):
     # ['Proand 123456', 'Mother (unaff) 22222', 'Father(unaff) 33333']
     """
     pw = pw or os.getcwd()
-    fn_selected_genes = fn_selected_genes or f'{pw}/{prj}.selected.genes.xlsx'
+    for fn_tmp in [fn_selected_genes, f'{pw}/{prj}.selected.genes.xlsx', f'{pw}/selected.genes.xlsx', f'{pw}/{prj}.selected.genes.txt', f'{pw}/selected.genes.txt']:
+        if fn_tmp and os.path.exists(fn_tmp):
+            fn_selected_genes = fn_tmp
+            break
+    else:
+        print(f'ERROR, selected.genes file not found!')
+        return 1
+
+    print(f'selected.gene file = {fn_selected_genes}')
 
     ext = fn_selected_genes.rsplit('.', 1)[-1]
 

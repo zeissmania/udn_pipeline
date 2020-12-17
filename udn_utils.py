@@ -81,7 +81,7 @@ class UDN_case():
         cfg = yaml.safe_load(open(config_file).read())
         self._cfg = cfg
         self.prj = cfg['prj']
-        self.pw = cfg['path']
+        self.pw = cfg['path'] or os.getcwd()
         self.proband_id = cfg['IDs']['proband_id']
         logger = get_logger(self.pw, self.prj)
         self.logger = logger
@@ -133,13 +133,17 @@ class UDN_case():
                 self.done_phase1 = 1
 
         # verify if the selected gene list is done
-        fn_selected = f'{self.pw}/{self.prj}.selected.genes.txt'
-        if os.path.exists(fn_selected):
-            f_size = os.path.getsize(fn_selected)
-            if f_size < 200:
-                logger.warning(f'selected gene list already exist: {fn_selected}, but the size is only {f_size/1000:.2f}')
-            else:
-                self.done_phase2 = 1
+        pw = self.pw
+        prj = self.prj
+        for fn_tmp in [f'{pw}/{prj}.selected.genes.xlsx', f'{pw}/selected.genes.xlsx', f'{pw}/{prj}.selected.genes.txt', f'{pw}/selected.genes.txt']:
+            if fn_tmp and os.path.exists(fn_tmp):
+                fn_selected = fn_tmp
+                f_size = os.path.getsize(fn_selected)
+                if f_size < 200:
+                    logger.warning(f'selected gene list already exist: {fn_selected}, but the size is only {f_size/1000:.2f}')
+                else:
+                    self.done_phase2 = 1
+                    break
 
         # verify if the final report is done
         fn_report = f'{self.pw}/{self.prj}.report.xlsx'

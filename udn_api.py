@@ -853,7 +853,7 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
 
 
     cfg = f"""prj: {udn}  # the project name
-path: {pw}
+path:
 # if the file is under the path above, could use the filename only
 pheno_file: {udn}.terms.txt  # include the phenotype terms
 udn_match_gene_file:  # if available, specify here, this file contains the Number of occurrences in the 3rd column, gene symbol as the 1st column
