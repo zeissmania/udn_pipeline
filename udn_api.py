@@ -705,7 +705,7 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
     logger.info(f'keys for the result: {res.keys()}')
     proband_id = res['Proband']['simpleid']
 
-    affect_convert_to_01 = {'Affected': 1, 'Unaffected': 0, '3 / Unaffected': 0, '2 / Affected': 1, 'Unaffected / 3': 0, 'Affected / 2': 1}
+    affect_convert_to_01 = {'Affected': 1, 'Unaffected': 0, '3 / Unaffected': 0, '2 / Affected': 1, 'Unaffected / 3': 0, 'Affected / 2': 1, 'Unknown': -1}
     if renew_amazon_link:
         cookie = cookie or get_cookie()
         header_cookie = get_header_cookie(cookie)
@@ -827,7 +827,7 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
         try:
             rel_aff = affect_convert_to_01[irel['affect_final']]
         except:
-            logger.error(f"{rel_to_proband}: unkown affect state: {irel['affect_final']}")
+            logger.warning(f"{rel_to_proband}: unkown affect state: {irel['affect_final']}")
             continue
 
         if rel_to_proband.lower() == 'father':
@@ -1100,6 +1100,9 @@ if __name__ == "__main__":
     for udn_raw, udn in validated:
         os.system(f'mkdir -p {root}/{udn_raw}/origin 2>/dev/null')
         os.chdir(f'{root}/{udn_raw}')
+        if not os.path.exists(f'{root}/{udn_raw}/pheno.keywords.txt'):
+            with open(f'{root}/{udn_raw}/pheno.keywords.txt', 'w') as out:
+                pass
 
         logger = get_logger(f'{root}/{udn_raw}/{udn}.udn_api')
         logger.info(os.getcwd())

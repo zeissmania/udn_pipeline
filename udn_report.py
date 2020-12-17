@@ -139,7 +139,7 @@ def add_data(row, data, family_info):
     # build the comment
     inher_list = inher.split('/')
     try:
-        phenotype_list = re.sub(r'(\W)/(\W)', '\g<1>\n', phenotype).split('\n')
+        phenotype_list = re.sub(r'(\W)/(\W)', r'\g<1>\n', phenotype).split('\n')
     except:
         print(f'phenotype={phenotype}')
         raise
