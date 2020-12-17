@@ -51,10 +51,12 @@ elif case.done_phase2:
     # prj.selected.genes.txt
     logger.info('building the report...')
     import udn_report
-    udn_report.main(case.prj, case.pw, f'{case.pw}/{case.prj}.selected.genes.txt')
+    udn_report.main(case.prj, case.pw, f'{case.pw}/{case.prj}.selected.genes.xlsx')
 
 elif case.done_phase1:
     # prj.merged.sortedtsv
+    # query the amelie API, build the amelie result files
+    case.omim_query()
     logger.info(f'FINAL STEP:  select the gene list manually, \n\t expected file = {case.pw}/{case.prj}.selected.genes.txt')
 else:
     # filter /extract annotation
@@ -73,4 +75,8 @@ else:
 
     # match SV in proband with family
     case.run_proband_sv_match()
+
+    # run OMIM match
+    case.omim_query()
+
     logger.info('Phase 1 done, please select the top 10 gene list')
