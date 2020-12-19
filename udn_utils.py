@@ -113,8 +113,8 @@ class UDN_case():
         self.annotsv_app = self.get_annotsv()
         if not self.annotsv_app:
             if self.family[self.proband_id]['run_annot']:
-                logger.error('No annotSV specified, exiting...')
-                sys.exit(1)
+                logger.warning('No annotSV specified...')
+                # sys.exit(1)
 
         # get the colum number for the kept fields
         # the dict was stored in self.cols
@@ -124,6 +124,8 @@ class UDN_case():
         self.done_phase1 = 0
         self.done_phase2 = 0
         self.done_phase3 = 0
+        # logger.info(cfg)
+        # logger.info(f'pw={self.pw}, prj={self.prj}, vcfpath={self.vcf_file_path}')
         fn_final = f'{self.pw}/{self.prj}.merged.sorted.tsv'
         if os.path.exists(fn_final):
             f_size = os.path.getsize(fn_final)
@@ -284,22 +286,26 @@ class UDN_case():
             # query the phenotype
             for ipheno in l_pheno:
                 n_word_match = 0
+                matched_word = []
                 n_total_word = len(ipheno)
                 for _ in ipheno:
                     _ = _.lower()
                     if _[0] == '@':
                         if re.match(f'.*\b{ipheno[1:]}\b', comment.lower()):
                             n_word_match += 1
+                            matched_word.append(_[1:])
                     elif _[0] == '-':  # negative match, exclude
                         if comment.lower().find(_[1:]) < 0:
                             n_word_match += 1
+                            matched_word.append(_[1:])
                     elif comment.lower().find(_) > -1:
                         n_word_match += 1
+                        matched_word.append(_)
 
                 if n_word_match == n_total_word:
                     res[gn][0].append(ipheno)
                 elif n_word_match > 0:
-                    res[gn][1].append(ipheno)
+                    res[gn][1].append(matched_word)
 
         if len(d_gene_comment_scrapy_new) > 0:
             with open(fn_gene_description_omim, 'a') as out:
@@ -332,7 +338,7 @@ class UDN_case():
             match, partial_match, comment, cover_exon_flag, amelie_score = v
             if len(partial_match) > 0:
                 n2 += 1
-                print(f'{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\t{match}', file=out2)
+                print(f'{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\t{partial_match}', file=out2)
                 print(comment, file=out2)
                 print('\n\n', file=out2)
         out1.close()
@@ -346,7 +352,7 @@ class UDN_case():
         cfg = self._cfg
         logger = self.logger
         path = cfg['path']
-        pw = path
+        pw = path or os.getcwd()
         # prj = cfg['prj']
         pheno_file = cfg['pheno_file'].strip()
 
@@ -421,7 +427,7 @@ class UDN_case():
         thres_gnomad_maf = cfg['default']['thres_gnomad_maf']   # default is 2
         vcf_file_path = cfg['default']['vcf_file_path']
         # default is the same as path
-        vcf_file_path = vcf_file_path or path
+        vcf_file_path = vcf_file_path or path or os.getcwd()
 
         family = {}
         family[proband_id] = {
@@ -542,15 +548,16 @@ class UDN_case():
         import platform
         machine_platform = platform.system()
         if machine_platform == 'Darwin':
-            home = os.path.expanduser('~')
-            dock_path = f'{home}/dock/annotsv.sif'
+            dock_path = f'/Users/files/dock/annotsv.sif'
+            mount = '-B /Users/files'
         else:
             # dock_path = '/scratch/cqs/chenh19/dock/annotsv.sif'
             dock_path = '/data/cqs/chenh19/dock/annotSV.sif'
+            mount = ''
         # the annot_sv_rank and gnomad_AF filtering would only take effect on the proband, would not filter on the parent
 
         if os.path.exists(dock_path):
-            return f'singularity exec {dock_path}  /tools/AnnotSV/bin/AnnotSV'
+            return f'singularity exec {dock_path} {mount} /tools/AnnotSV/bin/AnnotSV'
         # logger.warning('No annotSV specified')
         return None
 
@@ -564,10 +571,10 @@ class UDN_case():
         vcf_file_path = self.vcf_file_path
 
         # if the vcf not exist, try to download it
-        vcfs = os.popen(f'find {vcf_file_path} -type f -iname "*.cnv.vcf"  -o -iname "*.cnv.vcf.gz"').read().strip().split('\n')
+        vcfs = os.popen(f'find {vcf_file_path} -type f -iname "*.cnv.vcf"  -o -iname "*.cnv.vcf.gz 2>/dev/null"').read().strip().split('\n')
         if len(vcfs) == 0:
             try:
-                os.system('find . -iname "*.download_cnv.sh" -exec bash {} \\;')
+                os.system('find . -iname "*.download_cnv.sh" -exec bash {} \\; 2>/dev.null')
             except:
                 pass
 
