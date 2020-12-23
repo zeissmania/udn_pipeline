@@ -284,22 +284,26 @@ class UDN_case():
             # query the phenotype
             for ipheno in l_pheno:
                 n_word_match = 0
+                matched_word = []
                 n_total_word = len(ipheno)
                 for _ in ipheno:
                     _ = _.lower()
                     if _[0] == '@':
                         if re.match(f'.*\b{ipheno[1:]}\b', comment.lower()):
                             n_word_match += 1
+                            matched_word.append(_[1:])
                     elif _[0] == '-':  # negative match, exclude
                         if comment.lower().find(_[1:]) < 0:
                             n_word_match += 1
+                            matched_word.append(_[1:])
                     elif comment.lower().find(_) > -1:
                         n_word_match += 1
+                        matched_word.append(_)
 
                 if n_word_match == n_total_word:
                     res[gn][0].append(ipheno)
                 elif n_word_match > 0:
-                    res[gn][1].append(ipheno)
+                    res[gn][1].append(matched_word)
 
         if len(d_gene_comment_scrapy_new) > 0:
             with open(fn_gene_description_omim, 'a') as out:
@@ -332,7 +336,7 @@ class UDN_case():
             match, partial_match, comment, cover_exon_flag, amelie_score = v
             if len(partial_match) > 0:
                 n2 += 1
-                print(f'{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\t{match}', file=out2)
+                print(f'{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\t{partial_match}', file=out2)
                 print(comment, file=out2)
                 print('\n\n', file=out2)
         out1.close()
