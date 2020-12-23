@@ -4,18 +4,21 @@ import openpyxl
 from openpyxl.utils import get_column_letter
 import pandas as pd
 
+import xlsxwriter
 
-# def s():
-#     fno = 'test.xlsx'
-#     wb.save(fno)
-#     !open {fno}
-wb = openpyxl.Workbook()
-ws = wb.active
-ws.title = 'Original'
+
+# # def s():
+# #     fno = 'test.xlsx'
+# #     wb.save(fno)
+# #     !open {fno}
+# wb = openpyxl.Workbook()
+# ws = wb.active
+# ws.title = 'Original'
+
 
 def main(prj, pw=None, fn_selected_genes=None):
-
     """
+    expected file = selected.genes.xlsx
     prj = UDNxxxx
     pw, default is current folder
     fn_selected_genes , default is '{prj}.selected.genes.txt'
@@ -25,18 +28,15 @@ def main(prj, pw=None, fn_selected_genes=None):
     # family info, is a list or tuple, like
     # ['Proand 123456', 'Mother (unaff) 22222', 'Father(unaff) 33333']
     """
+
     pw = pw or os.getcwd()
-    for fn_tmp in [fn_selected_genes, f'{pw}/{prj}.selected.genes.xlsx', f'{pw}/selected.genes.xlsx', f'{pw}/{prj}.selected.genes.txt', f'{pw}/selected.genes.txt']:
+    for fn_tmp in [fn_selected_genes, f'{pw}/{prj}.selected.genes.xlsx', f'{pw}/selected.genes.xlsx']:
         if fn_tmp and os.path.exists(fn_tmp):
             fn_selected_genes = fn_tmp
             break
     else:
-        print(f'ERROR, selected.genes file not found!')
+        print(f'ERROR, selected.genes.xlsx file not found!')
         return 1
-
-    print(f'selected.gene file = {fn_selected_genes}')
-
-    ext = fn_selected_genes.rsplit('.', 1)[-1]
 
     # group the selected SV into groups
     sv_selected = {}
@@ -49,44 +49,10 @@ def main(prj, pw=None, fn_selected_genes=None):
                         'x-link': 'X-linked',
                         }
 
-    # style / format
-    bd = Side(style='medium', color='d9d9d9')
-    colr_blue = Color(rgb='00dce6f1')  # light blue
-    colr_gray = Color(rgb='00d9d9d9')  # light blue
-
-    fmt_header = NamedStyle(name='header',
-                            font=Font(size=11, bold=True,),
-                            border=Border(left=bd, right=bd, top=bd, bottom=bd),
-                            fill=PatternFill(fill_type='solid', fgColor=colr_blue),
-                            alignment=Alignment(vertical='center', horizontal='center', wrap_text=True),
-                            )
-
-    fmt_sv_type = NamedStyle(name='sv_type',
-                            font=Font(size=14, bold=True,),
-                            fill=PatternFill(fill_type='solid', fgColor=colr_gray),
-                            )
-
-    fmt_data = NamedStyle(name='data',
-                        border=Border(left=bd, right=bd, top=bd, bottom=bd),
-                        alignment=Alignment(vertical='center', horizontal='center'),
-                        )
-
-    fmt_data_wrap = NamedStyle(name='data_wrap',
-                        border=Border(left=bd, right=bd, top=bd, bottom=bd),
-                        alignment=Alignment(vertical='center', horizontal='center', wrap_text=True),
-                        )
-
-
-    wb.add_named_style(fmt_data)
-    wb.add_named_style(fmt_data_wrap)
-    wb.add_named_style(fmt_header)
-    wb.add_named_style(fmt_sv_type)
-
-
-
-    d = pd.read_excel(fn_selected_genes, engine='openpyxl')
+    # read the raw data
+    d = pd.read_excel(fn_selected_genes)
     header = d.columns
-    family_info = header[21:]
+    family_info = list(header[21:])
     # data = [_.strip().split('\t') for _ in fh]
 
     for i in d.itertuples(False, None):
@@ -103,23 +69,57 @@ def main(prj, pw=None, fn_selected_genes=None):
             sv_selected[sv_type_long].append(i[1:])
         except:
             sv_selected[sv_type_long] = [i[1:]]
-    # set the width
-    set_column_width(len(family_info))
 
-    # row1
-    row = 1
-    ws.merge_cells('A1:O1')
-    ws['A1'] = prj
-    ws['A1'].font = Font(sz=16, bold=True)
+    n_family = len(family_info)
+    total_col = 11 + n_family
+
+
+    # define formats
+    formats = {}
+    header1 = wb.add_format({'font_size': 16, 'bold': True, })
+    header2 = wb.add_format({'font_size': 14, 'bold': True, })
+    formats['header_sv'] = wb.add_format({'font_size': 14, 'bold': True, 'bg_color': '#d9d9d9', 'text_wrap': True})
+    formats['header_main'] = wb.add_format({'font_size': 11, 'bold': True, 'bg_color': '#dce6f1', 'border': 2, 'border_color': '#d9d9d9', 'text_wrap': True})
+    formats['header_main'].set_align('center')
+    formats['header_main'].set_align('vcenter')
+
+    formats['fmt_txt'] = wb.add_format({'font_size': 11, 'bold': False, 'border': 2, 'border_color': '#d9d9d9'})
+    formats['fmt_txt'].set_align('center')
+    formats['fmt_txt'].set_align('vcenter')
+
+    formats['fmt_comment'] = wb.add_format({'font_size': 11, 'bold': False, 'border': 2, 'border_color': '#d9d9d9', 'text_wrap': True})
+    formats['fmt_comment'].set_text_wrap()
+    formats['fmt_comment'].set_align('vcenter')
+    formats['fmt_comment'].set_align('left')
+
+    formats['bold'] = wb.add_format({'font_size': 11, 'bold': True, 'text_wrap': True})
+    formats['bold'].set_text_wrap()
+    formats['bold'].set_align('vcenter')
+
+    wrap = wb.add_format({'text_wrap': True, 'align': 'vcenter'})
+    # set column width
+
+    # ignore errors
+    ws.ignore_errors({'number_stored_as_text': 'A1:V200'})
+
+
+    width = [17, 16, 19.5, 10] + [10] * n_family + [12, 12, 12, 8, 9.5, 8, 13]
+    for n, v in enumerate(width):
+        ws.set_column(n, n, v)
+
+    ws.set_column(11 + n_family, 11 + n_family, 90, cell_format=wrap)
+
+    # first row
+    row = 0
+    ws.merge_range(row, 0, row, total_col, prj, cell_format=header1)
 
     note = 'Research Variants (need Sanger confirmation unless indicated under Comments)'
-    row = 2
-    ws.merge_cells('A2:O2')
-    ws['A2'] = note
-    ws['A2'].font = Font(sz=14, bold=True)
+    row += 1
+    ws.merge_range(row, 0, row, total_col, note, cell_format=header2)
 
-    # add real data
-    row = 3
+    note = 'new row'
+    row += 1
+    ws.merge_range(row, 0, row, total_col, note, cell_format=header2)
 
     # sort the rank with in he same sv type
     sv_selected_sorted = [(k, sorted(v, key=lambda _: int(_[0]))) for k, v in sv_selected.items()]
@@ -127,292 +127,117 @@ def main(prj, pw=None, fn_selected_genes=None):
     # sort the order of sv type
     sv_selected_sorted = sorted(sv_selected_sorted, key=lambda _: int(_[1][0][0]))
 
+    row += 1
     for sv_type_long, info in sv_selected_sorted:
         # sv_type_long = sv_type_conversion[sv_type]
-        row = add_header(row, sv_type_long, family_info)
-        for i_cnv in info:
-            row = add_data(row, i_cnv, family_info, ext)
+        row = add_header(row, sv_type_long, family_info, formats)
 
-    fnout = f'{pw}/{prj}.report.xlsx'
-    wb.save(fnout)
+        for info1 in info:
+
+            res = add_data(row, info1, n_family, formats)
+            if res is not None:
+                row = res
 
 
+def add_header(row, sv_type_long, family_info, formats):
+    n_family = len(family_info)
+    # sv_type line
+    ws.merge_range(row, 0, row, 11 + n_family, f'Structural Variants({sv_type_long})', cell_format=formats['header_sv'])
 
-def add_data(row, data, family_info, input_type):
+    row += 1
+    merged_cell_col_idx = [0, 2, 3] + [_ + 4 for _ in range(n_family)] + [_ + 7 + n_family for _ in [0, 1, 2, 3, 4]]
+    merged_cell_value = ['Gene', 'Change', 'Effect'] + family_info +['Baylor WGS', 'Emedgene', 'Yu Shyr', 'PreUDN Panel', 'Comments']
+    for col, v in zip(merged_cell_col_idx, merged_cell_value):
+        ws.merge_range(row, col, row + 3, col, v, cell_format=formats['header_main'])
+
+
+    # pos
+    col_idx = [1] + [4 + n_family + _ for _ in [0, 1, 2]]
+    values = [['Chr', 'Position', 'rs#', ''], ['Quality', 'GQ', 'Coverage', ''], ['GnomAD', 'DGV(dup/del)', 'GERP', 'CADD'], ['Missense Z', 'LoF pLI', '', '']]
+
+    for col, v in zip(col_idx, values):
+        for i_row, i in enumerate(v):
+            ws.write_string(row + i_row, col, i, cell_format=formats['header_main'])
+    return row + 4
+
+def add_data(row, data, n_family, formats):
     try:
         rank, _, chr_, s, e, sv_type, qual, exon_span_tag, gn, sv_len, exon_span, dgv_gain, dgv_loss, gnomad, _, ddd_disease, _, phenotype, inher = data[:19]
     except:
         print(len(data[:19]))
         print(data[:19])
     cn_proband = data[20]
-    cn_family = data[21:]
-    if len(cn_family) != len(family_info) - 1:
-        print(f'error, the family number count in file({len(cn_family)}) and Family info({len(family_info)}) list are differnet !')
+    cn_family = list(data[21:])
+
+    if len(cn_family) != n_family - 1:
+        print(f'error, the family number count in file({len(cn_family)}) and Family info({n_family}) list are differnet !')
         sys.exit(1)
 
     pos = f'{s}-{e}'
     dgv = f'{dgv_gain}/{dgv_loss}'
 
-    # build the comment
-    if input_type == 'txt':
-        inher_list = inher.split('/')
-        try:
-            phenotype_list = re.sub(r'(\W)/(\W)', '\g<1>\n', phenotype).split('\n')
-        except:
-            print(f'phenotype={phenotype}')
-            raise
+    comment = phenotype
 
-        phenotype_list = [re.sub('(^"+|"+$)', '', _) for _ in phenotype_list]
+    # write the pos
+    col = 1
+    try:
+        ws.write_string(row, col, chr_, cell_format=formats['fmt_txt'])
+    except:
+        print('wrong row, data = {data}, chr={chr_}')
+        return None
+    ws.merge_range(row + 1, col, row + 2, col, pos, cell_format=formats['fmt_txt'])
+    ws.write_string(row + 3, col, sv_len, cell_format=formats['fmt_txt'])
 
-        if len(inher_list) != len(phenotype_list):
-            if len(inher_list) == 1:
-                phenotype_list = [f'{_} {inher_list[0]}' for _ in phenotype_list]
-            else:
-                print(f'error: inher list count idfferent from phenotype count:\n{len(inher_list)} vs {len(phenotype_list)}\ninher={inher_list}, phenotyp={phenotype_list}')
+    # write merged cells
+    col_idx = [0, 3] + [4 + _ for _ in range(n_family)] + [4 + n_family + _ for _ in [3, 4, 6] ]
+    values = [gn, sv_type, cn_proband] + cn_family + ['', '', '']
+    for col, v in zip(col_idx, values):
+         ws.merge_range(row, col, row + 3, col, v, cell_format=formats['fmt_txt'])
+
+
+    # write the split cols
+    col_idx = [2] + [4 + n_family + _ for _ in [0, 1, 2, 5]]
+    values = [
+            ['', exon_span, exon_span_tag, ''],
+            [qual, '', '', ''],
+            [dgv, gnomad, '', ''],
+            ['', '', '', ''],
+            [rank, '✔', '', '']
+    ]
+    for col, v in zip(col_idx, values):
+       for n, iv in enumerate(v):
+           iv = str(iv)
+           ws.write_string(row + n, col, iv, cell_format=formats['fmt_txt'])
+
+    # write the comment
+    col = 11 + n_family
+    ws.merge_range(row, col, row + 3, col, '', cell_format=formats['fmt_comment'])
+    tmp = comment.split('**')
+    comment_list = []
+    bold = formats['bold']
+    for n, _ in enumerate(tmp):
+        if n % 2:
+            comment_list.append(bold)
+            comment_list.append(_)
+        elif not _:
+            continue
         else:
-            phenotype_list = [f'{a} {b}' for a, b in zip(phenotype_list, inher_list)]
+            comment_list.append(formats['fmt_comment'])
+            comment_list.append(_)
+    # print(comment_list)
+    ws.write_rich_string(row, col, *comment_list)
 
-        comment = '\n'.join(phenotype_list)
-    elif input_type == 'xlsx':
-        comment = phenotype
-    else:
-        print(f'ERROR: wrong selected.genes file format: {input_type}')
-        return 0
+    # prepare to set the row height
+    # each line is about 100 char, height = 15 px
+    tmp = comment.split('\n')
+    tmp = [int(len(_)/105) + 1 for _ in tmp]
+    height = sum(tmp) - 3 # exclude the 3 merged row height
+    print(f"expected_lines = {height}")
+    ws.set_row(row + 3, height * 14)
 
-    # build the header
-    col_raw = 0
-    # gene
-    col_raw += 1
-    col = get_column_letter(col_raw)
-    ws.merge_cells(f'{col}{row}:{col}{row+3}')
-    ws[f'{col}{row}'].value = gn
-
-    # pos
-    col_raw += 1
-    col = get_column_letter(col_raw)
-
-    ws[f'{col}{row}'].value = chr_
-
-    # pos
-    ws.merge_cells(f'{col}{row+1}:{col}{row+2}')
-    ws[f'{col}{row+1}'].value = pos
-
-
-    # overlap
-    ws[f'{col}{row+3}'].value = sv_len
-
-    # change
-    col_raw += 1
-    col = get_column_letter(col_raw)
-
-    ws[f'{col}{row+1}'].value = exon_span
-    ws[f'{col}{row+2}'].value = exon_span_tag
-
-    # effect
-    col_raw += 1
-    col = get_column_letter(col_raw)
-    ws.merge_cells(f'{col}{row}:{col}{row+3}')
-    ws[f'{col}{row}'].value = sv_type
-
-    # proband
-    col_raw += 1
-    col = get_column_letter(col_raw)
-    ws.merge_cells(f'{col}{row}:{col}{row+3}')
-    ws[f'{col}{row}'].value = cn_proband
-
-    # family member
-    for i_cn in cn_family:
-        col_raw += 1
-        col = get_column_letter(col_raw)
-        ws.merge_cells(f'{col}{row}:{col}{row+3}')
-        ws[f'{col}{row}'].value = i_cn
-
-    # quality
-    col_raw += 1
-    col = get_column_letter(col_raw)
-    ws[f'{col}{row}'].value = qual
-
-    # allele freq
-    col_raw += 1
-    col = get_column_letter(col_raw)
-    ws[f'{col}{row}'].value = gnomad
-    ws[f'{col}{row+1}'].value = dgv
-
-    # scores-2
-    col_raw += 1
-
-    # baylor
-    col_raw += 1
-    col = get_column_letter(col_raw)
-    ws.merge_cells(f'{col}{row+1}:{col}{row+3}')
-
-    # emedgene
-    col_raw += 1
-    col = get_column_letter(col_raw)
-    ws.merge_cells(f'{col}{row}:{col}{row+3}')
-
-    # yushyr
-    col_raw += 1
-    col = get_column_letter(col_raw)
-    ws[f'{col}{row}'].value = rank
-    ws[f'{col}{row + 1}'].value = '✔'
-
-    # panel
-    col_raw += 1
-    col = get_column_letter(col_raw)
-    ws.merge_cells(f'{col}{row}:{col}{row+3}')
-
-    # comments
-    col_raw += 1
-    col = get_column_letter(col_raw)
-    ws.merge_cells(f'{col}{row}:{col}{row+3}')
-    ws[f'{col}{row}'].value = comment
-
-    wrap_col = set([2, 15])
-    # apply the format
-    for irow in ws[f'A{row}:O{row+3}']:
-        for cell in irow:
-            if cell.column in wrap_col:
-                cell.style = 'data_wrap'
-            else:
-                cell.style = 'data'
     return row + 4
 
 
-def set_column_width(n_family):
-    """
-    specify the width, should be a list with 15 or moreelements
-    """
-    width = [17, 16, 17, 12] + [10] * n_family + [12, 12, 12, 8, 9.5, 8, 13, 95]
-    for n, v in enumerate(width):
-        ws.column_dimensions[get_column_letter(n+1)].width = v
-
-
-# add_header(5, 'De Novo', ['proband', 'Father', 'Mother'])
-def add_header(row, sv_type_long, family_info):
-    """
-    row = new row number
-    family_info is a list/tuple, stores the sample name for the header, e.g.
-    ['Proand 123456', 'Mother (unaff) 22222', 'Father(unaff) 33333']
-    """
-
-    # sv_type line
-    end_col_letter = get_column_letter(12 + len(family_info))
-    ws.merge_cells(f'A{row}:{end_col_letter}{row}')
-    cell = f'A{row}'
-    ws[cell].value = f'Structural Variants({sv_type_long})'
-    ws[cell].style = "sv_type"
-
-    # build the header
-    col_raw = 0
-    # gene
-    col_raw += 1
-    col = get_column_letter(col_raw)
-    v = 'Gene'
-    ws.merge_cells(f'{col}{row+1}:{col}{row+4}')
-    ws[f'{col}{row+1}'].value = v
-
-    # pos
-    col_raw += 1
-    col = get_column_letter(col_raw)
-    v_cells = ['Chr', 'Position', 'rs#', '']
-    for cell, v in zip(ws[f'{col}{row+1}:{col}{row+4}'], v_cells):
-        cell = cell[0]
-        cell.value = v
-
-    # change
-    col_raw += 1
-    col = get_column_letter(col_raw)
-    v = 'Change'
-    ws.merge_cells(f'{col}{row+1}:{col}{row+4}')
-    cell = f'{col}{row+1}'
-    ws[cell].value = v
-
-    # effect
-    col_raw += 1
-    col = get_column_letter(col_raw)
-    v = 'Effect'
-    ws.merge_cells(f'{col}{row+1}:{col}{row+4}')
-    cell = f'{col}{row+1}'
-    ws[cell].value = v
-
-    # family member
-    for isample in family_info:
-        col_raw += 1
-        col = get_column_letter(col_raw)
-        ws.merge_cells(f'{col}{row+1}:{col}{row+4}')
-        cell = f'{col}{row+1}'
-        ws[cell].value = isample
-
-    # quality
-    col_raw += 1
-    col = get_column_letter(col_raw)
-    v_cells = ['Quality', 'GQ', 'Coverage', '']
-    for cell, v in zip(ws[f'{col}{row+1}:{col}{row+4}'], v_cells):
-        cell = cell[0]
-        cell.value = v
-
-    # scores
-    col_raw += 1
-    col = get_column_letter(col_raw)
-    v_cells = ['GnomAD', 'DGV(dup/del)', 'GERP', 'CADD']
-    for cell, v in zip(ws[f'{col}{row+1}:{col}{row+4}'], v_cells):
-        cell = cell[0]
-        cell.value = v
-
-    # scores-2
-    col_raw += 1
-    col = get_column_letter(col_raw)
-    v_cells = ['Missense Z', 'LoF pLI', '', '']
-    for cell, v in zip(ws[f'{col}{row+1}:{col}{row+4}'], v_cells):
-        cell = cell[0]
-        cell.value = v
-
-    # baylor
-    col_raw += 1
-    col = get_column_letter(col_raw)
-    v = 'Baylor WGS'
-    ws.merge_cells(f'{col}{row+1}:{col}{row+4}')
-    cell = f'{col}{row+1}'
-    ws[cell].value = v
-
-    # emedgene
-    col_raw += 1
-    col = get_column_letter(col_raw)
-    v = 'Emedgene'
-    ws.merge_cells(f'{col}{row+1}:{col}{row+4}')
-    cell = f'{col}{row+1}'
-    ws[cell].value = v
-
-    # yushyr
-    col_raw += 1
-    col = get_column_letter(col_raw)
-    v = 'Yu Shyr'
-    ws.merge_cells(f'{col}{row+1}:{col}{row+4}')
-    cell = f'{col}{row+1}'
-    ws[cell].value = v
-
-    # panel
-    col_raw += 1
-    col = get_column_letter(col_raw)
-    v = 'PreUDN Panel'
-    ws.merge_cells(f'{col}{row+1}:{col}{row+4}')
-    cell = f'{col}{row+1}'
-    ws[cell].value = v
-
-    # comments
-    col_raw += 1
-    col = get_column_letter(col_raw)
-    v = 'Comments'
-    ws.merge_cells(f'{col}{row+1}:{col}{row+4}')
-    cell = f'{col}{row+1}'
-    ws[cell].value = v
-
-    # apply the format
-    for irow in ws[f'A{row+1}:{end_col_letter}{row+4}']:
-        for cell in irow:
-            cell.style = 'header'
-    return row + 5
 
 if __name__ == "__main__":
     import argparse as arg
@@ -422,22 +247,22 @@ if __name__ == "__main__":
     ps.add_argument('fn', help="""selected SV list, 1st column = SV type(denovo/heter/xlink)
     2nd column is the rank
     last 2/3 column (col 21-end) must be the copy number of proband and family members
-    """)
-    ps.add_argument('family', help="""family info, put in the header line. sep by comma
-    like  'Proand 123456', 'Mother (unaff) 22222', 'Father(unaff) 33333'""", nargs='+')
+    """, nargs='?')
+    # ps.add_argument('-family', help="""family info, put in the header line. sep by comma
+    # like  'Proand 123456', 'Mother (unaff) 22222', 'Father(unaff) 33333'""", nargs='+')
     args = ps.parse_args()
 
     fn = args.fn
     prj = args.prj
-    family_info = ' '.join(args.family)
-    family_info = family_info.split(',')
-    family_info = [_.strip() for _ in family_info if _.strip()]
-
-    if not os.path.exists(fn):
+    # family_info = ' '.join(args.family)
+    # family_info = family_info.split(',')
+    # family_info = [_.strip() for _ in family_info if _.strip()]
+    pw = os.getcwd()
+    if fn and not os.path.exists(fn):
         print(f'error, selected SV list file not exist ! {fn}')
         sys.exit(1)
+    wb = xlsxwriter.Workbook(f'{pw}/{prj}.reprot.xlsx')
+    ws = wb.add_worksheet('Original')
 
-    main(prj, fn)
-    fnout = f'{prj}.report.xlsx'
-    wb.save(fnout)
-    os.system(f'open {fnout}')
+    main(prj, pw, fn)
+    wb.close()
