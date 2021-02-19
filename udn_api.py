@@ -698,7 +698,7 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
 
 
     pw_raw = os.getcwd().rsplit('/', 1)[-1]
-    pw = f'/data/cqs/chenh19/udn/{pw_raw}'
+    # pw = f'/data/cqs/chenh19/udn/{pw_raw}'
     if not os.path.isdir('origin'):
         os.system('mkdir origin 2>/dev/null')
 
