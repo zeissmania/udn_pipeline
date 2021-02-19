@@ -61,23 +61,22 @@ def main(prj, pw=None, fn_selected_genes=None):
     prev_columns = list(header[:21])
 
     # sort the family
-    family_info = list(header[21:])
+    family_info_raw = list(header[21:])
     family_info_priority = []
     d_family_priority = {'proband': 1, 'mother': 2, 'father':3, 'sister': 4, 'brother': 5}
 
-    for i in family_info:
+    for i in family_info_raw:
         rel_to_proband = i.split(' ', 1)[0].lower()
         rel_to_proband = re.split('\W+', rel_to_proband)[0]
-
         try:
             family_info_priority.append(d_family_priority[rel_to_proband])
         except:
             family_info_priority.append(999)
 
-    family_info_new = sorted(zip(family_info, family_info_priority), key=lambda x: x[1])
-    family_info_new = [_[0] for _ in family_info_new]
+    family_info = sorted(zip(family_info_raw, family_info_priority), key=lambda x: x[1])
+    family_info = [_[0] for _ in family_info]
 
-    header = prev_columns + family_info_new
+    header = prev_columns + family_info
     d = d[header]
 
     # data = [_.strip().split('\t') for _ in fh]
@@ -304,4 +303,3 @@ if __name__ == "__main__":
         sys.exit(1)
 
     main(prj, pw, fn)
-    wb.close()
