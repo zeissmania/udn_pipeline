@@ -32,11 +32,12 @@ pw_code = os.path.dirname(os.path.realpath(f'{__file__}/..'))
 sys.path.append(pw_code)
 # print(pw_code)
 from udn import udn_utils
-from udn import amelie_api
+# from udn import amelie_api
 import argparse as arg
 from argparse import RawTextHelpFormatter
 ps = arg.ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
 ps.add_argument('config', help="""the config file, yaml format""")
+ps.add_argument('-omim', help="""force rerun the omim match report, no matter report exist or not""", action='store_true')
 args = ps.parse_args()
 
 config_file = args.config
@@ -56,7 +57,7 @@ elif case.done_phase2:
 elif case.done_phase1:
     # prj.merged.sortedtsv
     # query the amelie API, build the amelie result files
-    case.omim_query()
+    case.omim_query(force_rerun=args.omim)
     logger.info(f'FINAL STEP:  select the gene list manually, \n\t expected file = {case.pw}/{case.prj}.selected.genes.txt')
 else:
     # filter /extract annotation
@@ -68,7 +69,7 @@ else:
         # print(case.family[sample_id]['sv_dict'].keys())
 
     # query the amelie API, build the amelie result files
-    case.query_amelie(force=True)
+    case.query_amelie(force=False)
 
     # get amelie dict
     case.amelie_dict = case.get_amelie_dict()

@@ -29,6 +29,7 @@ def main(prj, pw=None, fn_selected_genes=None):
     # ['Proand 123456', 'Mother (unaff) 22222', 'Father(unaff) 33333']
     """
 
+
     pw = pw or os.getcwd()
     for fn_tmp in [fn_selected_genes, f'{pw}/{prj}.selected.genes.xlsx', f'{pw}/selected.genes.xlsx']:
         if fn_tmp and os.path.exists(fn_tmp):
@@ -49,8 +50,13 @@ def main(prj, pw=None, fn_selected_genes=None):
                         'x-link': 'X-linked',
                         }
 
+
+    wb = xlsxwriter.Workbook(f'{pw}/{prj}.report.xlsx')
+    ws = wb.add_worksheet('Original')
+
+
     # read the raw data
-    d = pd.read_excel(fn_selected_genes)
+    d = pd.read_excel(fn_selected_genes, keep_default_na=False)
     header = d.columns
     prev_columns = list(header[:21])
 
@@ -76,12 +82,16 @@ def main(prj, pw=None, fn_selected_genes=None):
 
     # data = [_.strip().split('\t') for _ in fh]
 
+    bad = 0
     for i in d.itertuples(False, None):
         sv_type = i[0]
         if sv_type.lower() not in sv_type_conversion:
+            if not sv_type.strip():
+                print(f'mut type not specified: {i}')
+                bad = 1
             try:
                 if i[1] != "AMELIE":
-                    print(f'wrong SV catergory found! {sv_type}')
+                    print(f'wrong SV catergory found! svtype={sv_type}')
             except:
                 print(f'wrong line: {i}')
             continue
@@ -91,6 +101,9 @@ def main(prj, pw=None, fn_selected_genes=None):
         except:
             sv_selected[sv_type_long] = [i[1:]]
 
+    if bad:
+        print('Fail to build report, add mut type of each SV in selected.genes first')
+        return 1
     n_family = len(family_info)
     total_col = 11 + n_family
 
@@ -138,9 +151,9 @@ def main(prj, pw=None, fn_selected_genes=None):
     row += 1
     ws.merge_range(row, 0, row, total_col, note, cell_format=header2)
 
-    note = 'new row'
-    row += 1
-    ws.merge_range(row, 0, row, total_col, note, cell_format=header2)
+    # note = 'new row'
+    # row += 1
+    # ws.merge_range(row, 0, row, total_col, note, cell_format=header2)
 
     # sort the rank with in he same sv type
     sv_selected_sorted = [(k, sorted(v, key=lambda _: int(_[0]))) for k, v in sv_selected.items()]
@@ -151,16 +164,18 @@ def main(prj, pw=None, fn_selected_genes=None):
     row += 1
     for sv_type_long, info in sv_selected_sorted:
         # sv_type_long = sv_type_conversion[sv_type]
-        row = add_header(row, sv_type_long, family_info, formats)
+        row = add_header(ws, row, sv_type_long, family_info, formats)
 
         for info1 in info:
 
-            res = add_data(row, info1, n_family, formats)
+            res = add_data(ws, row, info1, n_family, formats)
             if res is not None:
                 row = res
+    wb.close()
 
 
-def add_header(row, sv_type_long, family_info, formats):
+
+def add_header(ws, row, sv_type_long, family_info, formats):
     n_family = len(family_info)
     # sv_type line
     ws.merge_range(row, 0, row, 11 + n_family, f'Structural Variants({sv_type_long})', cell_format=formats['header_sv'])
@@ -181,12 +196,14 @@ def add_header(row, sv_type_long, family_info, formats):
             ws.write_string(row + i_row, col, i, cell_format=formats['header_main'])
     return row + 4
 
-def add_data(row, data, n_family, formats):
+def add_data(ws, row, data, n_family, formats):
     try:
         rank, _, chr_, s, e, sv_type, qual, exon_span_tag, gn, sv_len, exon_span, dgv_gain, dgv_loss, gnomad, _, ddd_disease, _, phenotype, inher = data[:19]
     except:
+        print('wrong line format! ')
         print(len(data[:19]))
         print(data[:19])
+    # exon_span_tag = '' if exon_span_tag == np.nan else exon_span_tag
     cn_proband = data[20]
     cn_family = list(data[21:])
 
@@ -246,14 +263,17 @@ def add_data(row, data, n_family, formats):
             comment_list.append(formats['fmt_comment'])
             comment_list.append(_)
     # print(comment_list)
-    ws.write_rich_string(row, col, *comment_list)
+    if len(comment_list) == 1:
+        ws.write(row, col, comment_list[0])
+    else:
+        ws.write_rich_string(row, col, *comment_list)
 
     # prepare to set the row height
     # each line is about 100 char, height = 15 px
     tmp = comment.split('\n')
     tmp = [int(len(_)/105) + 1 for _ in tmp]
     height = sum(tmp) - 3 # exclude the 3 merged row height
-    print(f"expected_lines = {height}")
+    # print(f"expected_lines = {height}")
     ws.set_row(row + 3, height * 14)
 
     return row + 4
@@ -282,8 +302,6 @@ if __name__ == "__main__":
     if fn and not os.path.exists(fn):
         print(f'error, selected SV list file not exist ! {fn}')
         sys.exit(1)
-    wb = xlsxwriter.Workbook(f'{pw}/{prj}.reprot.xlsx')
-    ws = wb.add_worksheet('Original')
 
     main(prj, pw, fn)
     wb.close()

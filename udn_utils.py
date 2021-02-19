@@ -18,12 +18,14 @@ import logging.config
 import requests
 from bs4 import BeautifulSoup as bs
 import pickle
+import pandas as pd
 
 # basic data
 pw_code = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(pw_code)
 from . import amelie_api
 
+redundant_words = set('am,is,in,the,are,to,for,of,a,an,one,two,three,four,at,on,type,activity,increased,decreased,low,level,high'.split(','))
 
 sv_type_convert = {'<DEL>': 'deletion', '<DUP>': 'duplication'}
 col_keep_new_name = [
@@ -75,6 +77,7 @@ def line_count(fn):
 
 
 intermediate_folder = 'intermediate'
+thres_quality_score = 40
 
 class UDN_case():
     def __init__(self, config_file):
@@ -156,7 +159,7 @@ class UDN_case():
             else:
                 self.done_phase3 = 1
 
-    def omim_query(self):
+    def omim_query(self, force_rerun=False):
         """
         the input is the merged.sorted.tsv file  and the phenotype keyword file
         1. build the gene comment dict based on the previous manual input
@@ -168,11 +171,25 @@ class UDN_case():
         udn = self.prj
         pw = self.pw
         logger = self.logger
-        if not os.path.exists(fn_pheno):
+
+        fn_gene_comment = f'{pw_code}/omim.gene_comment.txt'
+        fn_gene_description_omim = f'{pw_code}/omim.gene_description_omim.txt'
+
+        if os.path.exists(f'{pw}/{udn}.omim_match_gene.txt'):
+            logger.info(f'OMIM match already done')
+            return 0
+
+        if not force_rerun and os.path.exists(f'{pw}/omim_match_gene.{udn}.md'):
+            logger.debug(f'OMIM query report already done')
+            return 0
+
+
+        if not os.path.exists(fn_pheno) or os.path.getsize(fn_pheno) < 10:
             fn_pheno = f'{self.pw}/origin/{self.prj}.terms.txt'
             if not os.path.exists(fn_pheno):
                 logger.error(f'No phenotype file found for query')
                 return 1
+            logger.warning(f'OMIM pheno: pheno.keywords.txt not exist, use {fn_pheno} instead')
 
         # get the gene list with OMIM desease
         d_gene = {}
@@ -196,11 +213,7 @@ class UDN_case():
 
         # build the predefined gene list
 
-        fn_gene_comment = f'{pw_code}/omim.gene_comment.txt'
-        fn_gene_description_omim = f'{pw_code}/omim.gene_description_omim.txt'
 
-        if os.path.exists(f'{pw}/{udn}.omim_match_gene.txt'):
-            return 0
 
         d_gene_comment = {}
         d_gene_comment_scrapy = {}
@@ -234,8 +247,10 @@ class UDN_case():
                 with open(fn1, 'w') as out:
                     pass
 
+        gene_with_omim = set(d_gene) & set(list(d_gene_comment_scrapy) + list(d_gene_comment))
+        logger.info(f'gene count in merged.sorted.tsv: {len(d_gene)}')
+        logger.info(f'gene count in with OMIM description: {len(gene_with_omim)}')
 
-        logger.info(f'OMIM gene description.txt entry={len(d_gene_comment_scrapy)}')
 
         # build the phenotype keyword list
         # if 2 words link together, use +, if match the exact word, add a prefix @
@@ -250,7 +265,6 @@ class UDN_case():
 
                 if len(a) == 0:
                     continue
-
                 l_pheno.append([_.replace('+', ' ') for _ in a])
 
         # res , key=gene, value = [0, 0]  first int = count of exact match phenotype, second int = count of partial match phenotype
@@ -281,31 +295,62 @@ class UDN_case():
                     continue
 
             comment = comment.strip()
-            res[gn][2] = comment
+            comment = re.sub('\n\*\*', "\n" + '_'*50+'\n\n\n**', comment)
+            comment_list = comment.split('\n')
 
             # query the phenotype
+            highlighted_words = set()
+            highlighted_words |= redundant_words
+            # print(highlighted_words)
             for ipheno in l_pheno:
-                n_word_match = 0
+                n_word_match_meaning = 0  # for not exporting the items match of, is and to export into partial match file
+                n_matched_word = 0
+
                 matched_word = []
                 n_total_word = len(ipheno)
                 for _ in ipheno:
                     _ = _.lower()
                     if _[0] == '@':
-                        if re.match(f'.*\b{ipheno[1:]}\b', comment.lower()):
-                            n_word_match += 1
-                            matched_word.append(_[1:])
-                    elif _[0] == '-':  # negative match, exclude
-                        if comment.lower().find(_[1:]) < 0:
-                            n_word_match += 1
-                            matched_word.append(_[1:])
-                    elif comment.lower().find(_) > -1:
-                        n_word_match += 1
-                        matched_word.append(_)
+                        word = _[1:]
+                        if re.match(f'.*\b{word}\b', comment.lower()):
+                            n_matched_word += 1
+                            matched_word.append(word)
+                            # avoid the highligh of meaningless single letter or pure number
+                            if len(word) == 1 or re.match(r'^\d+$', word):
+                                continue
 
-                if n_word_match == n_total_word:
+                            if word not in redundant_words:
+                                n_word_match_meaning += 1
+
+                            if word not in highlighted_words:
+                                highlighted_words.add(word)
+                                comment_list = [re.sub(word, f'**{word}**', icomment, flags=re.I) if icomment[:2] != '**' else icomment for icomment in comment_list]
+                    elif _[0] == '-':  # negative match, exclude
+                        word = _[1:]
+                        if comment.lower().find(word) < 0:
+                            n_matched_word += 1
+                            matched_word.append(_)
+                    elif comment.lower().find(_) > -1:
+                        word = _
+                        n_matched_word += 1
+
+                        # avoid the highligh of meaningless single letter or pure number
+                        if len(word) == 1 or re.match(r'^\d+$', word):
+                            continue
+
+                        if word not in redundant_words:
+                            n_word_match_meaning += 1
+                        matched_word.append(word)
+                        if word not in highlighted_words:
+                            highlighted_words.add(word)
+                            comment_list = [re.sub(word, f'**{word}**', icomment, flags=re.I) if icomment[:2] != '**' else icomment for icomment in comment_list]
+
+                if n_matched_word == n_total_word:
                     res[gn][0].append(ipheno)
-                elif n_word_match > 0:
+                elif n_word_match_meaning > 0:
                     res[gn][1].append(matched_word)
+
+            res[gn][2] = '\n'.join(comment_list)
 
         if len(d_gene_comment_scrapy_new) > 0:
             with open(fn_gene_description_omim, 'a') as out:
@@ -317,30 +362,54 @@ class UDN_case():
 
         # logger.info(f'OMIM query count={len(res)}')
 
+        logger.info(f'gene number with OMIM description={len(d_gene_comment_scrapy)}')
+
         # tally the result
-        out1 = open(f'{pw}/omim_match_gene.{udn}.txt', 'w')
-        out2 = open(f'{pw}/omim_partial_match_gene.{udn}.txt', 'w')
+        out1 = open(f'{pw}/omim_match_gene.{udn}.md', 'w')
+        out2 = open(f'{pw}/omim_partial_match_gene.{udn}.md', 'w')
+        out3 = open(f'{pw}/omim_all_genes.{udn}.md', 'w')
         # test = next(iter(res.items()))
         # logger.info(f'res_entry_len={len(test[1])}')
-        res1 = sorted(res.items(), key=lambda _: (len(_[1][0]), _[1][3], _[1][4]), reverse=True)
-        res2 = sorted(res.items(), key=lambda _: (len(_[1][1]), _[1][3], _[1][4]), reverse=True)
+        # res 0 = matched phenotype, 1=partial matched phenotype, 2 = comment. 3 = exon_flag, 4=amelie score
+        res1 = sorted(res.items(), key=lambda _: (_[1][3], len(_[1][0]), _[1][4]), reverse=True)
+        res2 = sorted(res.items(), key=lambda _: (_[1][3], len(_[1][1]), _[1][4]), reverse=True)
 
         n1 = 0
         n2 = 0
-        for gn, v in res1:
+        n3 = 0
+        gene_match = set()
+        for gn, v in res.items():
             match, partial_match, comment, cover_exon_flag, amelie_score = v
+            if comment.strip() == '':
+                logger.debug(f'gene with no OMIM description: {gn}')
+                continue
+            n3 += 1
+            print(f'## {n3}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}', file=out3)
+            print(comment, file=out3)
+            print('#' * 50 + '\n\n\n', file=out3)
+
+
+        for v in res1:
+            gn = v[0]
+
+            match, partial_match, comment, cover_exon_flag, amelie_score = v[1]
             if len(match) > 0:
+                gene_match.add(gn)
                 n1 += 1
-                print(f'{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\t{match}', file=out1)
+                # print('#' * 20, file=out1)
+                print(f'## {n1}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\t{match}', file=out1)
                 print(comment, file=out1)
-                print('\n\n', file=out1)
-        for gn, v in res2:
-            match, partial_match, comment, cover_exon_flag, amelie_score = v
+                print('#' * 50 + '\n\n\n', file=out1)
+        for v in res2:
+            gn = v[0]
+            if gn in gene_match:
+                continue
+            match, partial_match, comment, cover_exon_flag, amelie_score = v[1]
             if len(partial_match) > 0:
                 n2 += 1
-                print(f'{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\t{partial_match}', file=out2)
+                print(f'## {n2}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\t{partial_match}', file=out2)
                 print(comment, file=out2)
-                print('\n\n', file=out2)
+                print('#' * 50 + '\n\n\n', file=out2)
         out1.close()
         out2.close()
         logger.info(f'gene with OMIM match= {n1}')
@@ -571,7 +640,7 @@ class UDN_case():
         vcf_file_path = self.vcf_file_path
 
         # if the vcf not exist, try to download it
-        vcfs = os.popen(f'find {vcf_file_path} -type f -iname "*.cnv.vcf"  -o -iname "*.cnv.vcf.gz 2>/dev/null"').read().strip().split('\n')
+        vcfs = os.popen(f'find {vcf_file_path} -type f -iname "*.cnv.vcf"  -o -iname "*.cnv.vcf.gz" 2>/dev/null').read().strip().split('\n')
         if len(vcfs) == 0:
             try:
                 os.system('find . -iname "*.download_cnv.sh" -exec bash {} \\; 2>/dev.null')
@@ -662,7 +731,7 @@ class UDN_case():
 
 
         if len(tmp1) > 0:
-            logger.info('HPO file already exist')
+            # logger.debug('HPO file already exist')
             os.system(f'ln -sf {tmp1[0]} {fl_result}')
             if len(tmp2) == 0:
                 os.system(f'cut -f2 "{tmp1[0]}" > {fl_result1}')
@@ -791,9 +860,10 @@ class UDN_case():
             col_annot_sv_ranking = col_keep['annot_ranking'] + 1
             col_filter = col_keep['filter'] + 1
             col_gn = col_keep['gn'] + 1
+            col_quality = col_keep['QUAL'] + 1
 
             if type_short == 'P':  # proband
-                extra_filter = f' && ${col_gnomad_AF}<{thres_gnomad_maf} && ${col_annot_sv_ranking}>={thres_annot_sv_ranking}'
+                extra_filter = f' && ${col_gnomad_AF}<{thres_gnomad_maf} && ${col_annot_sv_ranking}>={thres_annot_sv_ranking} && ${col_quality}>{thres_quality_score}'
                 cmd = f"""head -1 {f_anno_exp} > {f_anno_filter};awk -F $'\\t'  '${col_filter}=="PASS" {extra_filter}' {f_anno_exp} >> {f_anno_filter} """
                 logger.info(f'{lb}:  filter criteria = FILTER==PASS {extra_filter}')
             else:
@@ -873,7 +943,7 @@ class UDN_case():
                     try:
                         data = int(data.split(':')[1])  # CN
                         if data == 0:
-                            copy_number = '-'
+                            copy_number = "'-"
                         else:
                             copy_number = 'o' * data
                     except:
@@ -955,7 +1025,7 @@ class UDN_case():
                                 if head == 'txStart':
                                     exon_span_tag = 'covered multiple exons'
                                 else:
-                                    exon_span_tag = 'please check the exon_span'
+                                    exon_span_tag = 'covered multiple exons'
                             elif head == 'txStart':
                                 try:
                                     tail_num = int(tail_num)
@@ -1111,7 +1181,7 @@ class UDN_case():
         # total_hpo = line_count(fn_hop_pure_id)
 
         if total_genes > 1000:
-            logger.warning(f'the gene list for AMELIE is larger than 1000, ({total_genes}), would split the genelist, not deployed yet...')
+            logger.warning(f'the gene list for AMELIE is larger than 1000, ({total_genes}), would split the genelist')
 
         amelie_api.main(prj, fn_genelist, fn_hop_pure_id, self.pheno_file_select, f'{pw}/{intermediate_folder}', pw_main=pw, force=force)
         self.check_amelie_missing()
@@ -1131,8 +1201,9 @@ class UDN_case():
         fn = f'{pw}/{prj}.amelie.lite.txt'
 
         if not os.path.exists(fn):
-            logger.error(f'amelie result not found: {fn}')
-            sys.exit(1)
+            logger.error(f'amelie result not found: {fn}, would use dummy amelie score')
+            fn_genelist = f'{pw}/{intermediate_folder}/{prj}.genelist'
+            return {gn.strip(): 0 for gn in open(fn_genelist) if gn.strip()}
 
         d_amelie = [_.strip().split('\t') for _ in open(fn)]
         d_amelie = {k: v for k, v in d_amelie}
@@ -1368,10 +1439,14 @@ class UDN_case():
         final.close()
 
         # sort the result by amelie score
-        col_amelie = header.split('\t').index('AMELIE') + 1
         sorted_file = f'{pw}/{prj}.merged.sorted.tsv'
-        os.system(f"head -1 {merged_table} > {sorted_file};sed '1d' {merged_table} |sort -t $'\\t' -k {col_amelie}nr  >> {sorted_file}")
+        sorted_excel = f'{pw}/{prj}.merged.sorted.xlsx'
 
+        df = pd.read_csv(merged_table, sep='\t')
+        # df.drop(['match_strong', 'match_weak', 'match_count_udn'], axis=1, inplace=True)
+        df.sort_values('AMELIE', ascending=False, inplace=True)
+        df.to_csv(sorted_file, index=False, na_rep='', sep='\t')
+        df.to_excel(sorted_excel, index=False, na_rep='')
 
 def get_omim_map(logger):
     """
@@ -1511,7 +1586,7 @@ def run_omim_scrapy(gn, gn_omim_id, logger, res_prev=None):
             clin = '\n'.join([_.text.strip() for _ in clin.find_all('p')])
         except:
             clin = ''
-        tmp = f'**{pheno_desc}**' + '\n' + '\n'.join([desc, clin]).strip()
+        tmp = f'\n\n**{pheno_desc}**\n' + '\n'.join([desc, clin]).strip()
         tmp = tmp.strip()
         res[pheno_id] = tmp
     return res_prev.update(res) if res_prev else res
