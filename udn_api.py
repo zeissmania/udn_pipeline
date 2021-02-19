@@ -46,6 +46,10 @@ from bs4 import BeautifulSoup as bs
 base_url = 'https://gateway.undiagnosed.hms.harvard.edu/api'
 platform = sys.platform
 
+ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'vcf', 'fq': 'fastq'}
+ft_convert.update({_: _ for _ in ft_convert.values()})
+
+
 class Credential():
     def __init__(self, password, fn_pickle=None):
         """
@@ -227,6 +231,24 @@ def dump_json(obj, fn):
         pickle.dump(obj, out)
 
 
+def get_file_extension(fn):
+    tmp = re.sub(r'.tbi$', '', fn)
+    tmp = re.sub(r'.gz$', '', tmp)
+    ext = tmp.rsplit('.', 1)[-1].lower()
+    ext = tmp.rsplit('.', 2)[-2] if ext in ['gz', 'tbi', 'bai'] else ext
+    try:
+        ext = 'cnv' if tmp.endswith('cnv.vcf') else ft_convert[ext]
+    except:
+        logger.warning(f'wrong file extension: {ext}, fn={fn}, tmp={tmp}')
+
+    return ext
+
+def format_comment(comment):
+    tmp = [_.strip() for _ in comment.split('\n') if _.strip()]
+    tmp = [f'#### {_}' if len(_) < 50 and _[-1] == ':' else _ for _ in tmp]
+    return '\n\n'.join(tmp)
+
+
 def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=None, sequence_type_desired=None, demo=False, get_aws_ft=None, udn_raw=None):
     """
     rel_to_proband, if run as proband, this is None, otherwize, this func is called during geting the relatives of proband, and specified
@@ -336,9 +358,19 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
 
         res['phenotip'] = json['patient']['phenotipsid']
         res['alive'] = not json['deceased']
-        res['comment'] = json['comment']
+
         res['simpleid'] = json['patient']['simpleid']
-        res['similar_symp'] = json['patient'].get('similarsymptomsexplain')
+        try:
+            res['similar_symp'] = format_comment(json['patient'].get('similarsymptomsexplain'))
+            res['comment'] = format_comment(json['comment'])
+        except:
+            res['similar_symp'] = None
+
+        try:
+            res['comment'] = format_comment(json['comment'])
+        except:
+            res['comment'] = None
+
 
     # patien info
     # url = "https://gateway.undiagnosed.hms.harvard.edu/api/patient/{uuid}/"
@@ -415,8 +447,11 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
         if json:
             review = json[0]['application_review_set']
             if len(review) > 0:
-                res['summary'] = review[0]['summary']
-                res['evaluation'] = review[0]['evaluations']
+                res['summary'] = format_comment(review[0]['summary'])
+                res['evaluation'] = format_comment(review[0]['evaluations'])
+            else:
+                res['summary'] = res['evaluation'] = None
+
 
         # pehnotip
         try:
@@ -545,15 +580,7 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
             # {"messages": [], "download_url": "https://udnarchive.s3.amazonaws.com:443/db488479-8923-4a60-9779-48f58b2f1dad/921192-UDN830680-P.bam?Signature=iZaOBprDz69DFzCZ%2BF0Pn9qEjDk%3D&Expires=1600299340&AWSAccessKeyId=AKIAZNIVXXYEAPHA7BGD", "success": true}
 
             # which include the amazon presigned URL
-            tmp = re.sub(r'.tbi$', '', fn)
-            tmp = re.sub(r'.gz$', '', tmp)
-            ext = tmp.rsplit('.', 1)[-1].lower()
-            ext = tmp.rsplit('.', 2)[-2] if ext in ['gz', 'tbi', 'bai'] else ext
-            try:
-                ext = 'cnv' if tmp.endswith('cnv.vcf') else ft_convert[ext]
-            except:
-                logger.warning(f'wrong file extension: {ext}, fn={fn}, tmp={tmp}')
-
+            ext = get_file_extension(fn)
             if get_aws_ft and len(get_aws_ft) > 0 and ext not in get_aws_ft:
                 logger.info(f'skip update amazon link due to file type limit: {fn}')
                 download = 'NA'
@@ -691,8 +718,6 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
     un-used = .vcf.gz, .joint.vcf,  .gvcf.gz,
     """
 
-    ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'vcf', 'fq': 'fastq'}
-    ft_convert.update({_: _ for _ in ft_convert.values()})
 
     update_aws_ft = set([ft_convert[_] for _ in update_aws_ft]) if update_aws_ft else None
 
@@ -724,21 +749,19 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
                 file_uuid = ifl['file_uuid']
 
                 if update_aws_ft and len(update_aws_ft) > 0:
-                    tmp = re.sub('.gz$', '', fn)
-                    ext = tmp.rsplit('.', 1)[-1].lower()
-                    ext = 'cnv' if tmp.endswith('cnv.vcf') else ft_convert[ext]
+                    ext = get_file_extension(fn)
 
                     if ext not in update_aws_ft:
-                        logger.info(f'skipp update amazon link due to file type limit: {fn}')
+                        logger.debug(f'      skipp update amazon link due to file type limit: {fn}')
                         continue
 
                 res_amazon_url = get_amazon_download_link(fn, file_uuid, header_cookie, demo=demo)
                 try:
                     header_cookie, download = res_amazon_url
                 except:
-                    logger.error(f'get_amazon_download_link return = {res_amazon_url} \nfn="{fn}"\nfile_uuid="{file_uuid}"\nheader_cookie="{header_cookie}"')
+                    logger.error(f'      get_amazon_download_link return = {res_amazon_url} \nfn="{fn}"\nfile_uuid="{file_uuid}"\nheader_cookie="{header_cookie}"')
                     continue
-                logger.info(f'{fn}: update amazon_link done')
+                logger.info(f'      {fn}: update amazon_link done')
                 ifl['download'] = download
 
         pkl_fn = pkl_fn or f'{proband_id}.udn_api_query.pkl'
@@ -754,7 +777,7 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
     # logger.info(f'Proband files = {proband["files"]}')
 
     with open(f'{udn}.basic_info.md', 'w') as out:
-        out.write(f'## 1. Basic Info\n- UDN\t{udn}\n')
+        out.write(f'# {udn}\n## 1. Basic Info\n- UDN\t{udn}\n')
         for k, v in zip('firstname,lastname,gender,race,dob,alive,affect_final,uuid_case,phenotip'.split(','), 'FirstName,LastName,Gender,Race,DateBirth,Alive,Affect_state,UUID_case,Phenotip_ID'.split(',')):
             out.write(f'- {v}\t{proband[k]}\n')
         out.write('\n\n')
@@ -778,23 +801,29 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
         for k, v in hpo:
             out.write(f'- {k}\t{v}\n')
         out.write('\n\n')
-
-        for k, v in hpo:
-            out.write(f'- {v}\n')
-        out.write('\n\n')
-
+        # for k, v in hpo:
+        #     out.write(f'- {v}\n')
+        # out.write('\n\n')
 
         # symp,uuid_case
         out.write('## 4. Summary and diagnosis\n')
         for k, v in zip('similar_symp,comment,summary,evaluation'.split(','), 'Similar_Sympt,Comment,Summary,Evaluation'.split(',')):
-            out.write(f'### {v}\n{proband[k]}\n')
+            if proband[k]:
+                out.write(f'### {v}\n\n{proband[k]}\n')
         out.write('\n\n')
 
+    fn_pdf = f'{udn}.basic_info.pdf'
+    if not os.path.exists(fn_pdf):
+        os.system(f"pandoc  -t pdf {udn}.basic_info.md --pdf-engine pdflatex -o {fn_pdf}")
 
     # build the HPO terms file
     with open(f'origin/{udn}.terms.txt', 'w') as out:
         for k, v in hpo:
             out.write(v+'\n')
+
+    if not os.path.exists(f'pheno.keywords.txt'):
+        os.system(f'cp origin/{udn}.terms.txt pheno.keywords.txt')
+
 
     with open(f'origin/{udn}.terms_hpo.txt', 'w') as out:
         for k, v in hpo:
@@ -910,7 +939,7 @@ default:
     out_cnv.write('mkdir origin 2>/dev/null\n')
 
     tmp = udn_raw or udn
-    remote_pw = re.sub(r'\d+_', '', tmp, 1)
+    remote_pw = re.sub(r'^\d+_', '', tmp, 1)
     m = re.match(r'(.*_)?(UDN\d+)(_.*)?', remote_pw).groups()
     if not m:
         logger.warning(f'wrong project name fromat: {remote_pw}')
@@ -932,14 +961,17 @@ default:
         remote_pw = m[1] + p_trailing
 
     pw_upload = f'/scratch/h_vangard_1/chenh19/udn/upload/{tmp}'
+    upload_cmd = f'udn_upload emedgene  download.info.{udn}.txt -remote {remote_pw} -ft fastq'
     out_fastq_sh.write(f"""#! /usr/bin/env bash
 mkdir -p {pw_upload}
 cp download.fastq.{udn}.txt {pw_upload}
 cp download.info.{udn}.txt {pw_upload}
 cp download.{udn}.md5 {pw_upload}
+cp download.fastq.{udn}.sh {pw_upload}
 echo {pw_upload}
 cd {pw_upload}
-udn_upload emedgene {remote_pw} download.info.{udn}.txt -ft fastq
+{upload_cmd}
+echo "{upload_cmd}" >upload_command.sh
 cd -
     """)
 
@@ -967,7 +999,7 @@ cd -
                 out_bam.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
                 print(f'<span><b>{rel_to_proband}:    </b></span><a href="{url}">{fn}</a></br></br>', file=html_bam)
             elif re.match(r'.+\.cnv\.vcf(\.gz)?$', fn):
-                out_cnv.write(f'wget "{url}" -c -O "origin/{fn}"\n')
+                out_cnv.write(f'if [ ! -s "origin/{fn}" ];then wget "{url}" -c -O "origin/{fn}";\nelse echo already exist: "origin/{fn}";fi\n')
             elif re.match(r'.+\.fastq.gz', fn):
                 out.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
             else:
@@ -1100,9 +1132,7 @@ if __name__ == "__main__":
     for udn_raw, udn in validated:
         os.system(f'mkdir -p {root}/{udn_raw}/origin 2>/dev/null')
         os.chdir(f'{root}/{udn_raw}')
-        if not os.path.exists(f'{root}/{udn_raw}/pheno.keywords.txt'):
-            with open(f'{root}/{udn_raw}/pheno.keywords.txt', 'w') as out:
-                pass
+
 
         logger = get_logger(f'{root}/{udn_raw}/{udn}.udn_api')
         logger.info(os.getcwd())
@@ -1122,4 +1152,7 @@ if __name__ == "__main__":
             res = get_all_info(udn, cookie=cookie, demo=demo, get_aws_ft=update_aws_ft, udn_raw=udn_raw)
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
+
+        print(f'downloading CNV vcf file')
+        os.system(f'bash download.cnv.{udn}.sh')
         print('\n########################\n\n')

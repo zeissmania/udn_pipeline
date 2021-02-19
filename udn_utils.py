@@ -452,7 +452,7 @@ class UDN_case():
                 sys.exit(1)
 
             if len(v) == 3:
-                rel_to_proband = v[2]
+                rel_to_proband = re.sub('\s+', '_', v[2].strip())
             else:
                 rel_to_proband = None
 

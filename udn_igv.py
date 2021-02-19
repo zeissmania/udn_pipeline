@@ -6,6 +6,7 @@ https://github.com/igvteam/igv/blob/master/src/main/resources/org/broad/igv/pref
 input 1 = igv download file
 input 2 = {udn}.selected.genes.txt. first column = mut_type
 """
+
 import argparse as arg
 from argparse import RawTextHelpFormatter
 ps = arg.ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
@@ -83,50 +84,62 @@ with open(fn_in) as fp:
 
 
 # read-in the region/ genes
-fn_in = f'{pw}/{udn}.selected.genes.txt'
-if not os.path.exists(fn_in):
-    logger.error(f'{fn_in} file not found')
+for fn_in in [f'{pw}/{udn}.selected.genes.txt', f'{pw}/{udn}.selected.genes.xlsx', f'{pw}/selected.genes.txt', f'{pw}/selected.genes.xlsx']:
+    if os.path.exists(fn_in):
+        break
+else:
+    logger.error(f'selected.genes.txt/xlsx file not found')
     sys.exit(1)
 
 d_genes = {}
-with open(fn_in) as fp:
-    for i in fp:
-        i = i.rstrip()
-        if not i:
-            continue
-        a = i.split('\t')
-        if len(a) < 9:
-            print(f'error split: {a}')
-            continue
-        gn = a[9]
+
+ext = fn_in.rsplit('.', 1)[-1]
+if ext == 'txt':
+    with open(fn_in) as fp:
+        data = [i.strip() for i in fp if i.strip()]
+        data = [i.split('\t') for i in data]
+elif ext == 'xlsx':
+    import pandas as pd
+    data = pd.read_excel(fn_in, keep_default_na=False)
+    data = data.itertuples(False, None)
+
+
+for a in data:
+    if len(a) < 9:
+        print(f'error split: {a}')
+        continue
+    gn = a[9]
+    try:
+        s = a[4] + 0
+        e = a[5] + 0
+    except:
         try:
             s = int(re.sub(r"[,\s\"']+", '', a[4]))
             e = int(re.sub(r"[,\s\"']+", '', a[5]))
         except:
-            if i.find('mut_type') < 0:
-                print(f'wrong format: {a}')
-            # raise
+
+            print(f'fail to convert start/end to int: {a}')
             continue
-        chr_ = a[3]
-        try:
-            chr_ = {'chrx': 'chrX', 'chry': 'chrY'}[chr_]
-        except:
-            pass
-            # continue
+    chr_ = a[3]
+    try:
+        chr_ = {'chrx': 'chrX', 'chry': 'chrY'}[chr_]
+    except:
+        pass
+        # continue
 
-        len_sv = e - s
-        try:
-            _ = d_genes[gn]
-        except:
-            d_genes[gn] = []   # do not add gn as the first element, because they are too big, no valid screenshot
+    len_sv = e - s
+    try:
+        _ = d_genes[gn]
+    except:
+        d_genes[gn] = []   # do not add gn as the first element, because they are too big, no valid screenshot
 
-        if len_sv > 20000:
-            n = int(len_sv/10000)
-            for _ in range(n-1):
-                d_genes[gn].append(f'{chr_}:{s-2000 + _*10000}-{s + 2000 + (_ + 1)*10000}')
-            d_genes[gn].append(f'{chr_}:{s-1000 + (n-1) *10000}-{e + 2000}')
-        else:
-            d_genes[gn].append(f'{chr_}:{s-2000}-{e+2000}')
+    if len_sv > 20000:
+        n = int(len_sv/10000)
+        for _ in range(n-1):
+            d_genes[gn].append(f'{chr_}:{s-2000 + _*10000}-{s + 2000 + (_ + 1)*10000}')
+        d_genes[gn].append(f'{chr_}:{s-1000 + (n-1) *10000}-{e + 2000}')
+    else:
+        d_genes[gn].append(f'{chr_}:{s-2000}-{e+2000}')
 
 # output igv batch script
 with open(f'{pw}/igv.script.{udn}.txt', 'w') as out:

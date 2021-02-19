@@ -240,7 +240,7 @@ if os.path.exists(fn_md5) and fn_md5 not in d_exist:
         if dest == 'dropbox':
             print(f'{dock} dbxcli put {pw}/{fn_md5} /{remote_pw}/{udn}_all_files.md5 > {pw}/log/upload.{dest}.{fn_md5}.log 2>&1', file=out)
         elif dest == 'emedgene':
-            print(f'{dock} aws s3 cp {pw}/{fn_md5} s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{udn}_all_files.md5 > {pw}/log/upload.{dest}.{fn}.log 2>&1', file=out)
+            print(f'{dock} aws s3 cp {pw}/{fn_md5} s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{udn}_all_files.md5 > {pw}/log/upload.{dest}.{fn_md5}.log 2>&1', file=out)
 
 with open(info_file) as fp:
     n_all = 0
