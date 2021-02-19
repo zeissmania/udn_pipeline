@@ -1,7 +1,5 @@
 #! /usr/bin/env python3
 
-#! /usr/bin/env python3
-
 import sys
 import requests
 import os
@@ -46,12 +44,39 @@ def create_patient(taskname, genelist, pheno_hpo_list):
 
 
 def wait_for_processing(patient_id, timeout=120):
-    for _ in range(timeout):
-        response = requests.get('%s/patient/%s' % (url, patient_id),)
+    interval = 10
+    s = time.time()
+    fail = 0
+    for _ in range(int(timeout/interval)):
+        if fail > 5:
+            print(f'max fail time reached: {fail}, would skip AMELIE')
+        s1 = time.time()
+        print(f'\twait round {_}: {s1-s:.1f}')
+        try:
+            response = requests.get('%s/patient/%s' % (url, patient_id),)
                                 # verify=False)
-        if response.json()['processing'] != 1:
-            return response
-        time.sleep(1)
+        except:
+            print(f'fail to run requests')
+            time.sleep(10)
+            fail += 1
+            continue
+        time_response = time.time() - s1
+
+        try:
+            json = response.json()
+        except:
+            time_consumed = time.time() - s
+            print(f'Fail to decode response json from AMELIE: time={time_consumed:.1f} s, response=\n\n{response.text}\n\n')
+            fail += 1
+            time.sleep(10)
+            continue
+        else:
+            if json['processing'] != 1:
+                return response
+            time_consumed = time.time() - s
+            print(f'\tamelie processing... retry-{_},  time_response={time_response:.1f}, elapsed time={time_consumed:.1f}s. processing={json["processing"]}')
+            time.sleep(interval)
+
     return 0
 
 
@@ -62,92 +87,95 @@ def parse_json(prj, json_pdict, pw=None, pw_main=None, force=0):
     """
     pw = pw or os.getcwd()
     pw_main = pw_main or pw
-    r = json_pdict
+    if isinstance(json_pdict, dict):
+        json_pdict = [json_pdict]
+    res_all = []
+    for r in json_pdict:
+        # useless key = ['created_on', 'email_subscription', 'has_dad', 'has_mom', 'has_user', 'has_variants', 'incidental_findings', 'is_vcf_patient', 'processing', 'swiper_cutoff',]
+        # meta info keys = ['patient_id', 'patient_name', 'patient_sex']
 
-    # useless key = ['created_on', 'email_subscription', 'has_dad', 'has_mom', 'has_user', 'has_variants', 'incidental_findings', 'is_vcf_patient', 'processing', 'swiper_cutoff',]
-    # meta info keys = ['patient_id', 'patient_name', 'patient_sex']
+        # keys in use:
+        #  r ['not_added_genes', 'not_added_hpo_codes', 'gene_data', 'system_list']
+        #  r['not_added_genes'] -> str, sep by comma. 'LOC646652, LOC100133077, FAM197Y2, LOC102724219, '
+        #  r['not_added_hpo_codes'] -> str or None
 
-    # keys in use:
-    #  r ['not_added_genes', 'not_added_hpo_codes', 'gene_data', 'system_list']
-    #  r['not_added_genes'] -> str, sep by comma. 'LOC646652, LOC100133077, FAM197Y2, LOC102724219, '
-    #  r['not_added_hpo_codes'] -> str or None
+        # r['gene_data'][0]
+                # gene_name -> str
+                # omim_link -> str
+                # solutions -> list
+                    # item[0]  -> dict  # a single paper
+                        # 'hpo_ids'  -> list , all HPOs matched in this paper
+                        # 'journal', 'pmid', 'pubmed_year', 'title'   -> str,  the information for the paper
+                        # score -> float , the actual amelie score
 
-    # r['gene_data'][0]
-            # gene_name -> str
-            # omim_link -> str
-            # solutions -> list
-                # item[0]  -> dict  # a single paper
-                    # 'hpo_ids'  -> list , all HPOs matched in this paper
-                    # 'journal', 'pmid', 'pubmed_year', 'title'   -> str,  the information for the paper
-                    # score -> float , the actual amelie score
+        # r['system_list']  -> list, each item is a disease group. will group the input HPO into these groups
+            # item[0]  -> dict, diseae category 1
+                # phenotype -> list, each item is as hpo id-name match
+                    # hpo_id -> str
+                    # name  -> str
+                # system -> str, the category name
 
-    # r['system_list']  -> list, each item is a disease group. will group the input HPO into these groups
-        # item[0]  -> dict, diseae category 1
-            # phenotype -> list, each item is as hpo id-name match
-                # hpo_id -> str
-                # name  -> str
-            # system -> str, the category name
+        # write the error, not included HPO / gene
+        missing_genes = r['not_added_genes']
+        missing_hpo = r['not_added_hpo_codes']
+        if missing_genes:
+            with open(f'{pw_main}/err_amelie.{prj}.genes_not_added.txt', 'w') as out:
+                print(missing_genes.replace(', ', '\n'), file=out)
 
-    # write the error, not included HPO / gene
-    missing_genes = r['not_added_genes']
-    missing_hpo = r['not_added_hpo_codes']
-    if missing_genes:
-        with open(f'{pw_main}/err_amelie.{prj}.genes_not_added.txt', 'w') as out:
-            print(missing_genes.replace(', ', '\n'), file=out)
+        if missing_hpo:
+            with open(f'{pw_main}/err_amelie.{prj}.HPO_not_added.txt', 'w') as out:
+                print(missing_hpo.replace(', ', '\n'), file=out)
 
-    if missing_hpo:
-        with open(f'{pw_main}/err_amelie.{prj}.HPO_not_added.txt', 'w') as out:
-            print(missing_hpo.replace(', ', '\n'), file=out)
+        # hpo_q = r['system_list'][0]['phenotypes']
+        hpo_q_raw = [_['phenotypes'] for _ in r['system_list']]
+        hpo_q = []
+        for _ in hpo_q_raw:
+            hpo_q.extend(_)
 
-    # hpo_q = r['system_list'][0]['phenotypes']
-    hpo_q_raw = [_['phenotypes'] for _ in r['system_list']]
-    hpo_q = []
-    for _ in hpo_q_raw:
-        hpo_q.extend(_)
+        hpo_q = [_['hpo_id']+ "\t" + _['name'] for _ in hpo_q]
 
-    hpo_q = [_['hpo_id']+ "\t" + _['name'] for _ in hpo_q]
+        # res['query_hpo'] = hpo_q
+        res = []
+        genes = r['gene_data']
+        for ign in genes:
+            genename = ign['gene_name']
+            ires = [genename]
+            ires.append(ign.get('omim_link'))
+            max_score = -1
+            for paper in ign['solutions']:
+                try:
+                    del paper['id']
+                    del paper['authors']
+                except:
+                    pass
+                ihpo = []
+                if paper['score'] > max_score:
+                    max_score = paper['score']
+                for _ in paper['hpo_ids']:
+                    ihpo.append('')
+                    ihpo.append(_)
+                    ihpo.extend(d_hpo[_])
+                paper['hpo'] = ihpo
+                try:
+                    del paper['hpo_ids']
+                except:
+                    pass
 
-    # res['query_hpo'] = hpo_q
-    res = []
-    genes = r['gene_data']
-    for ign in genes:
-        genename = ign['gene_name']
-        ires = [genename]
-        ires.append(ign.get('omim_link'))
-        max_score = -1
-        for paper in ign['solutions']:
-            try:
-                del paper['id']
-                del paper['authors']
-            except:
-                pass
-            ihpo = []
-            if paper['score'] > max_score:
-                max_score = paper['score']
-            for _ in paper['hpo_ids']:
-                ihpo.append('')
-                ihpo.append(_)
-                ihpo.extend(d_hpo[_])
-            paper['hpo'] = ihpo
-            try:
-                del paper['hpo_ids']
-            except:
-                pass
+                ires.append(paper)
+            ires.insert(0, max_score)
+            res.append(ires)
 
-            ires.append(paper)
-        ires.insert(0, max_score)
-        res.append(ires)
-
-    res = sorted(res, key=lambda x: x[0], reverse=True)
+        res = sorted(res, key=lambda x: x[0], reverse=True)
+        res_all.extend(res)
 
     with open(f'{pw_main}/{prj}.amelie.lite.txt', 'w') as out:
-        for ign in res:
+        for ign in res_all:
             print(f'{ign[1]}\t{ign[0]:.2f}', file=out)
 
     # export the tsv file
 
     with gzip.open(f'{pw}/{prj}.amelie.parsed.raw.txt', 'wb') as out:
-        for i in res:
+        for i in res_all:
             score, gn, omim, *papers = i
             out.write(f'{gn}\t{score}\n'.encode())
             for ipaper in papers:
@@ -158,11 +186,10 @@ def parse_json(prj, json_pdict, pw=None, pw_main=None, force=0):
                 out.write(f'\t{hpo}\n\n'.encode())
 
     with open(f'{pw}/{prj}.amelie.parsed.pkl', 'wb') as out:
-        pickle.dump(res, out)
+        pickle.dump(res_all, out)
 
-    return res
+    return res_all
 
-    # return res
 def re_group_hpo(hpo_list):
     """
     currently, the hpo is in a same list, no hierarchy,
@@ -285,8 +312,8 @@ def get_response(prj, genelist, pheno_hpo_list):
     if response:
         res = response.json()
         # dump the result
-        with open(f'{prj}.amelie.pkl', 'wb') as out:
-            pickle.dump(res, out)
+        # with open(f'{prj}.amelie.pkl', 'wb') as out:
+        #     pickle.dump(res, out)
         return res
     print(f'Fail to get response from AMELIE. timeout={timeout}s')
     return 0
@@ -314,12 +341,26 @@ def main(prj, genelist, pheno_hpo_list, pheno_for_match, pw=None, pw_main=None, 
         pheno_for_match = open(pheno_for_match).read().strip().split('\n')
         pheno_for_match = [_.strip() for _ in pheno_for_match if _.strip()]
 
+    n_genes = len(genelist)
 
     # print(f'\tlen HPO list = {len(pheno_hpo_list)}')
     json_pdict = f'{prj}.amelie.pkl'
+    json_res = []  # is a list of multiple amelie response
     if not os.path.exists(json_pdict):
-        json_res = get_response(prj, genelist, pheno_hpo_list)
+        # deal with the situation that gene list larger than 1000
+        n_gene_k = int(n_genes/1000)
+        genelist_new = []
+        for i in range(n_gene_k):
+            genelist_new.append(genelist[1000 * i: 1000 * (i+1)])
+        if n_genes % 1000 > 0:
+            genelist_new.append(genelist[n_gene_k * 1000:])
+
+        for igenelist in genelist_new:
+            tmp = get_response(prj, igenelist, pheno_hpo_list)
+            if tmp:
+                json_res.append(tmp)
     else:
+        print('amelie.pkl exist: {json_pdict}')
         # json_res = eval(open(json_pdict).read())
         json_res = pickle.load(open(json_pdict, 'rb'))
 
@@ -330,7 +371,7 @@ def main(prj, genelist, pheno_hpo_list, pheno_for_match, pw=None, pw_main=None, 
             parsed_pdict = parse_json(prj, json_res, pw, pw_main)
         else:
             print('json result from AMILIE not available, quit')
-            sys.exit(1)
+            return 0
     else:
         parsed_pdict = pickle.load(open(f_parsed_pdict, 'rb'))
 
