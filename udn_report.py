@@ -43,11 +43,17 @@ def main(prj, pw=None, fn_selected_genes=None):
     sv_selected = {}
     sv_type_conversion = {'denovo': 'De Novo',
                         'de novo': 'De Novo',
+                        'd': 'De Novo',
+                        'de': 'De Novo',
                         'heter': 'Heterozygous',
+                        'he': 'Heterozygous',
+                        'h': 'Heterozygous',
                         'hetero': 'Heterozygous',
                         'het': 'Heterozygous',
                         'xlink': 'X-linked',
                         'x-link': 'X-linked',
+                        'x': 'X-linked',
+                        'xl': 'X-linked',
                         }
 
 

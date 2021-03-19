@@ -13,16 +13,18 @@ ps.add_argument('-remote', '-r', '-remote_pw', dest='remote_pw', help="""the rem
 ps.add_argument('-ft', help="""the file type to upload, could be multiple types sep by space, such as fastq, fq, vcf, bam, default = fastq""", nargs='*')
 ps.add_argument('-pw', help="""download file output path, default is pwd""")
 ps.add_argument('-demo', help="""demo mode would not actually download or upload, or create remote folder""", action='store_true')
+ps.add_argument('-rm', '-delete', help="""flag, if set, would delete the downloaded file from local disk when uploading is done""", action='store_true')
 ps.add_argument('-asis', help="""use the remote_pw in the cmd line input, do not do the re-format, default is False""", action='store_true')
 
 args = ps.parse_args()
-print(args)
+
 demo = args.demo
 asis = args.asis  # use the remote_pw in the cmd line input, do not do the re-format
-
+rm = args.rm
 pw = args.pw or os.getcwd()
 # os.chdir(pw)
-
+print(args)
+print(f'current pw={pw}')
 import logging
 prefix = 'download_upload_udn'
 fn_log = f'{prefix}.log'
@@ -112,7 +114,7 @@ if not asis:
     remote_pw = re.sub(r'^\d+_', '', remote_pw, 1)
     m = re.match(r'(.*_)?(UDN\d+)(_.*)?', remote_pw)
     if not m:
-        logger.warning(f'wrong remote path name: {remote_pw}, would use the UDN number: {udn}')
+        logger.warning(f'****** wrong remote path name: {remote_pw}, would use the UDN number: {udn}')
         remote_pw = udn
     else:
         m = m.groups()
@@ -178,7 +180,7 @@ with open(info_file) as fp:
         a = i.split('\t')
         rel, fn, url, fl_udn = a[:4]
         if a[0].strip() == 'rel_to_proband':
-            a = [_.strip() for _ in a ]
+            a = [_.strip() for _ in a]
             try:
                 idx_size = a.index('size')
             except:
@@ -253,7 +255,7 @@ elif dest == 'emedgene':
                 d_file_size_exp[fn]
             except:
                 if fn and fn[-4:] != '.md5':
-                    logger.warning(f'remote file not found locally line={i}, fn={fn}, file_size={file_size}')
+                    logger.warning(f'****** file only found on remote server: line={i}, fn={fn}, file_size={file_size}')
             else:
                 if file_size == d_file_size_exp[fn]:
                     d_exist[fn] = a[-1]
@@ -276,7 +278,7 @@ elif dest == 'emedgene':
                     else:
                         logger.info(f'subfolder_without_UDN_ID: {sub_full_path}')
                 else:
-                    logger.warning(f'path not found under remote pw: {sub_full_path}')
+                    logger.warning(f'****** path not found under remote pw: {sub_full_path}')
 
 logger.info(f'\n\tremote_dest={dest}\n\tremote_pw={remote_pw}\n\tfile_type_for_upload={ft}\n\tsubfolder={subfolders}')
 
@@ -307,6 +309,7 @@ with open(info_file) as fp:
         if a[0] == 'rel_to_proband':
             continue
         rel, fn, url, fl_udn = a[:4]
+
         size_exp = int(a[idx_size])
         n_all += 1
 
@@ -323,7 +326,7 @@ with open(info_file) as fp:
         i_ft = ft_convert.get(ext)
 
         if not i_ft:
-            logger.warning(f'unkown file type: {fn}')
+            logger.warning(f'****** unkown file type: {fn}')
             continue
 
         if i_ft not in ft and ft != 'all':
@@ -332,11 +335,15 @@ with open(info_file) as fp:
 
         n_desired += 1
 
+        if url == 'NA':
+            logger.error(f'url not available: {fn}')
+            continue
+
         if not os.path.exists(f'{pw}/{fn}'):
             if fn in d_exist:
                 n_uploaded += 1
                 n_downloaded += 1
-                logger.info(f'File already uploaded! {fn}: {d_exist[fn]}')
+                logger.info(f'File already uploaded! {fn}: {d_exist[fn]}, size={size_exp:,}')
                 os.system(f'mv {pw}/shell/{fn}.download_upload.{dest}.sh {pw}/shell_done/{fn}.download_upload.{dest}.sh 2>/dev/null')
                 continue
 
@@ -346,30 +353,46 @@ with open(info_file) as fp:
             if os.path.exists(fn_download):
                 size = os.path.getsize(fn_download)
                 if size == size_exp:
-                    logger.info(f'file already downloaded, size match with expected {size_exp}: {fn}')
+                    logger.info(f'file already downloaded, size match with expected {size_exp:,}: {fn}')
                     n_downloaded += 1
                     skip_download = 1
                 else:
-                    logger.warning(f'file already downloaded, but size not match: exp={size_exp} real={size} : {fn}')
+                    logger.warning(f'****** file already downloaded, but size not match: exp={size_exp:,} real={size} : {fn}')
                     # n_downloaded += 1
-                    os.system(f'mv {fn_download} {fn_download}.bad 2>/dev/null')
+                    # if not demo:
+                    #     os.system(f'ln -s {fn_download} {fn_download}.bad 2>/dev/null')
             if not skip_download:
                 print(f'wget "{url}" -c -O "{fn_download}" > {pw}/log/download.{fn}.log 2>&1', file=out)
 
-            print(f"""local_size=$(stat {fn_download} -c %s 2>/dev/null)\nif [ "$local_size" -ne {size_exp} ];then\necho file size not match: {fn_download}: size=$local_size, expected={size_exp}\nmv {fn_download} {fn_download}.bad 2>/dev/null;\nexit;\nfi""", file=out)
+            print(f"""local_size=$(stat {fn_download} -c %s 2>/dev/null)\nif [ -z "$local_size" ];then\n\techo fail to get file size {fn_download} >&2\nelif [ "$local_size" -ne {size_exp} ];then\n\techo file size not match: {fn_download}: size=$local_size, expected={size_exp:,} >&2\n\tln -s {fn_download} {fn_download}.bad 2>/dev/null;\n\texit;\nfi""", file=out)
+
+            rm_cmd = ''
+
+            if rm:
+                rm_cmd = f'\trm {fn_download}\n\trm {pw}/log/upload.{dest}.{fn}.log\n\trm {pw}/log/download.{fn}.log'
 
             if dest == 'dropbox':
                 print(f'{dock} dbxcli put {pw}/download/{fn} /{remote_pw}{folder_extended}/{fn} > {pw}/log/upload.{dest}.{fn}.log 2>&1', file=out)
             elif dest == 'emedgene':
-                print(f'{dock} aws s3 cp {pw}/download/{fn} s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}{folder_extended}/{fn} > {pw}/log/upload.{dest}.{fn}.log 2>&1', file=out)
-                print(f'remote_file_size=$({dock} aws s3 ls emg-auto-samples/Vanderbilt/upload/{remote_pw}{folder_extended}/{fn}|cut -d " " -f 3)\nif [[ $remote_file_size -eq {size_exp} ]];then\n\techo {fn} successfully uploaded;\nmv {pw}/shell/{fn}.download_upload.{dest}.sh {pw}/shell_done/{fn}.download_upload.{dest}.sh\nelse\n\techo file size not match: actual=$remote_file_size, real={size_exp}: {fn};\nfi', file=out)
+                print(f'date +"%m-%d  %T"> {pw}/log/upload.{dest}.{fn}.log\n{dock} aws s3 cp {pw}/download/{fn} s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}{folder_extended}/{fn} > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T"> {pw}/log/upload.{dest}.{fn}.log', file=out)
+                print(f"""
+sleep 10
+remote_file_size=$({dock} aws s3 ls emg-auto-samples/Vanderbilt/upload/{remote_pw}{folder_extended}/{fn}|cut -d " " -f 3)
+if [[ $remote_file_size -eq {size_exp} ]];then
+    echo {fn} successfully uploaded to {remote_pw}{folder_extended}/  filesize={size_exp:,};
+    mv {pw}/shell/{fn}.download_upload.{dest}.sh {pw}/shell_done/{fn}.download_upload.{dest}.sh
+    {rm_cmd}
+else
+    echo file size not match: actual=$remote_file_size, expected={size_exp:,}: {fn} >&2
+fi""", file=out)
 
     n_need_upload = n_desired - n_uploaded
     logger.info(f'total files = {n_all}, need_to_upload={n_need_upload}, already exist in server = {n_uploaded}, already downloaded = {n_downloaded}')
 
     if n_need_upload > 0:
         print('\n', '!' * 50)
-        print(f'{n_need_upload} files need to upload')
+        print(f'{n_need_upload} files need to be uploaded')
     else:
         print('\n', '*' * 50)
         print('Done, all files already uploaded')
+    print('\n\n\n')

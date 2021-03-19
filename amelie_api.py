@@ -260,7 +260,7 @@ def query(prj, pheno, pdict, pw, pw_main):
         if len(hit) > 0:
             res[ign] = [score, omim, hit]
         elif score > 10:
-            print(f'\tWARNING: amelie query no match with the input HPO terms: gene={ign}, score={score}')
+            print(f'\tWARNING: high amelie score, but phenotype not found in AMELIE description: gene={ign}, score={score}')
 
 
     # struc =
