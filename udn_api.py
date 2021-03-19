@@ -30,6 +30,7 @@ add chromedriver path when running under ACCRE
 
 """
 import sys
+# import pprint
 import os
 import time
 import re
@@ -118,7 +119,7 @@ def get_cookie():
         option.binary_location = '/home/chenh19/tools/chrome/chrome'
     driver = webdriver.Chrome(executable_path=path_chromedriver, options=option)
     driver.get(url)
-    logger.info('driver is set')
+    logger.debug('driver is set')
     driver.save_screenshot('test.png')
     # sys.exit(1)
 
@@ -232,16 +233,18 @@ def dump_json(obj, fn):
 
 
 def get_file_extension(fn):
-    tmp = re.sub(r'.tbi$', '', fn)
-    tmp = re.sub(r'.gz$', '', tmp)
-    ext = tmp.rsplit('.', 1)[-1].lower()
-    ext = tmp.rsplit('.', 2)[-2] if ext in ['gz', 'tbi', 'bai'] else ext
-    try:
-        ext = 'cnv' if tmp.endswith('cnv.vcf') else ft_convert[ext]
-    except:
-        logger.warning(f'wrong file extension: {ext}, fn={fn}, tmp={tmp}')
 
-    return ext
+    m = re.match(r'.*?\.(bam|bai|cnv|fastq|fq|gvcf|vcf)\b', fn.lower())
+    convert = {'bai': 'bam', 'fq': 'fastq'}
+    if m:
+        try:
+            return convert[m.group(1)]
+        except:
+            return m.group(1)
+    else:
+        logger.warning(f'unclear file type: {fn}')
+        return None
+
 
 def format_comment(comment):
     tmp = [_.strip() for _ in comment.split('\n') if _.strip()]
@@ -249,7 +252,7 @@ def format_comment(comment):
     return '\n\n'.join(tmp)
 
 
-def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=None, sequence_type_desired=None, demo=False, get_aws_ft=None, udn_raw=None):
+def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=None, sequence_type_desired=None, demo=False, get_aws_ft=None, udn_raw=None, valid_family=None, lite_mode=None):
     """
     rel_to_proband, if run as proband, this is None, otherwize, this func is called during geting the relatives of proband, and specified
     info_passed_in,  {'affected': rel_aff, 'seq_status': have_seq}   include the affect state, sequenced_state, only valid when called during geting the relatives of proband, and specified
@@ -315,12 +318,12 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
                 res['followup'].append(json['file'])
             except KeyError:
                 logger.warning(f'fail to get followup file: {udn} - json={json}')
-
-        for n, ifl in enumerate(res['followup']):
-            logger.info(f'downloading followup file: {udn}-{n+1}')
-            r = requests.request('GET', ifl, headers=header_cookie)
-            with open(f'origin/{udn}.followup-{n}.pdf', 'wb') as out:
-                out.write(r.content)
+        if not lite_mode:
+            for n, ifl in enumerate(res['followup']):
+                logger.info(f'downloading followup file: {udn}-{n+1}')
+                r = requests.request('GET', ifl, headers=header_cookie)
+                with open(f'origin/{udn}.followup-{n}.pdf', 'wb') as out:
+                    out.write(r.content)
 
     # basic patient info
     action = 'patientrecord'
@@ -332,9 +335,14 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
     # pickle.dump(json, open(f'{udn}.patientrecord.json.pkl', 'wb'))
 
     if json:
-        res['gender'] = json['patient']['gender']['name']
+        try:
+            res['gender'] = json['patient']['gender']['name']
+        except:
+            res['gender'] = json['patient']['sex']['name']
+
         res['firstname'] = json['patient']['patientfirst']
         res['lastname'] = json['patient']['patientlast']
+
         try:
             res['race'] = json['patient']['race'][0]['name']  # 1=male
         except:
@@ -413,10 +421,22 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
                 logger.warning(f'fail to get the sequence uploaded info from relative: {i}')
                 continue
 
+            rel_udn = i.find(attrs={'class': 'patientsimpleid'}).text
+            rel_aff = i.find(attrs={'class': 'affected'}).text.strip()
+            rel_aff = aff_convert[rel_aff]
             rel_to_proband_tmp = i.find(attrs={'class': 'relative'}).text
+
+            if valid_family is not None:
+                if rel_udn not in valid_family:
+                    logger.warning(f'family member skipped due to not in valid family list: {rel_to_proband_tmp} - @{rel_udn}@ {valid_family}')
+                    logger.info('\n\n****************')
+
+                    continue
+
             # avoid the overwritten of res_all keys, such as multipel siters /brothers
             rel_in_prev_run = [_.split('#')[-1] for _ in res_all if re.match(rel_to_proband_tmp, _)]
 
+            # incase multiple sister, multiple brother ...
             rel_seq = 0
             for _ in rel_in_prev_run:
                 try:
@@ -430,11 +450,8 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
                 rel_seq += 1
                 rel_to_proband_tmp = f'{rel_to_proband_tmp}#{rel_seq}'
 
-            rel_udn = i.find(attrs={'class': 'patientsimpleid'}).text
-            rel_aff = i.find(attrs={'class': 'affected'}).text.strip()
-            rel_aff = aff_convert[rel_aff]
 
-            res_all = get_all_info(rel_udn, cookie, rel_to_proband=rel_to_proband_tmp, res_all=res_all, info_passed_in={'affected': rel_aff, 'seq_status': have_seq}, demo=demo, get_aws_ft=get_aws_ft)
+            res_all = get_all_info(rel_udn, cookie, rel_to_proband=rel_to_proband_tmp, res_all=res_all, info_passed_in={'affected': rel_aff, 'seq_status': have_seq}, demo=demo, get_aws_ft=get_aws_ft, valid_family=valid_family, lite_mode=lite_mode)
             # logger.info(res_all.keys())
 
         # patient dignosis
@@ -475,7 +492,7 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
     dump_json(d_json, fn_json_pk)
 
     logger.info('\n\n****************')
-    logger.info(f'now getting information of {rel_to_proband} : {udn}')
+    logger.info(f'\tnow getting information of {rel_to_proband} : {udn}')
     # if rel_to_proband.find('#') > -1:
     #     logger.warning(f'Family member with same relative to proband: {rel_to_proband}')
 
@@ -490,7 +507,7 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
     # {'id': 1984,
 #   'patient': {'simpleid': 'UDN139529'},
 #   'sequencingfiles': [...]}
-    seq_type_convert = {2: 'wes', 3: 'wgs', 4: 'rna', 5: 'reanalysis'}
+    seq_type_convert = {2: 'wes', 3: 'wgs', 4: 'rna', 5: 'reanalysis', 1: 'targeted variant'}
     seq_type_convert.update({str(k): v for k, v in seq_type_convert.items()})
     files = []
     res['bayler_report'] = []
@@ -513,7 +530,7 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
             for _ in json['sequencereports']]
 
         files_raw = json['sequencingfiles']
-        logger.info(f'{rel_to_proband}: {sequence_type} seq_id={json["id"]}  total files={len(files_raw)} ')
+        logger.info(f'\t{rel_to_proband}: {sequence_type} seq_id={json["id"]}  total files={len(files_raw)} ')
         for n_fl, ifl in enumerate(files_raw):
             # each file is like
             # {'udn_id': ['UDN139529'],
@@ -582,7 +599,7 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
             # which include the amazon presigned URL
             ext = get_file_extension(fn)
             if get_aws_ft and len(get_aws_ft) > 0 and ext not in get_aws_ft:
-                logger.info(f'skip update amazon link due to file type limit: {fn}')
+                logger.debug(f'skip update amazon link due to file type limit: {fn} ext={ext}, valid ft={get_aws_ft}')
                 download = 'NA'
             else:
                 res_amazon_url = get_amazon_download_link(fn, file_uuid, header_cookie, demo=demo)
@@ -602,7 +619,8 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
 
     if rel_to_proband == 'Proband':
         try:
-            parse_api_res(res_all, cookie=cookie, udn_raw=udn_raw)
+            parse_api_res(res_all, cookie=cookie, udn_raw=udn_raw, valid_family=valid_family)
+            # parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None, demo=False, udn_raw=None, valid_family=None)
         except:
             logger.error(f'fail to parse the result dict, try again')
             raise
@@ -702,7 +720,7 @@ def create_cred():
     return cred
 
 
-def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None, demo=False, udn_raw=None):
+def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None, demo=False, udn_raw=None, valid_family=None):
     """
     res = {proband: {}, relative: [{family1}, {family2}]}
     1. build a report for the proband
@@ -719,16 +737,27 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
     """
 
 
-    update_aws_ft = set([ft_convert[_] for _ in update_aws_ft]) if update_aws_ft else None
+    update_aws_ft = set([ft_convert[_] for _ in update_aws_ft]) if update_aws_ft else set(['fastq', 'cnv'])
 
 
-    pw_raw = os.getcwd().rsplit('/', 1)[-1]
+    # pw_raw = os.getcwd().rsplit('/', 1)[-1]
     # pw = f'/data/cqs/chenh19/udn/{pw_raw}'
     if not os.path.isdir('origin'):
         os.system('mkdir origin 2>/dev/null')
 
     logger.info(f'keys for the result: {res.keys()}')
     proband_id = res['Proband']['simpleid']
+
+    # filter on the valid_family
+    if valid_family is not None:
+        for irel in list(res.keys()):
+            if irel == 'Proband':
+                continue
+            iudn = res[irel]['simpleid']
+            if iudn not in valid_family:
+                logger.warning(f'family member not in select family list, excluded: {irel} - {iudn}')
+                del res[irel]
+
 
     affect_convert_to_01 = {'Affected': 1, 'Unaffected': 0, '3 / Unaffected': 0, '2 / Affected': 1, 'Unaffected / 3': 0, 'Affected / 2': 1, 'Unknown': -1}
     if renew_amazon_link:
@@ -750,11 +779,9 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
 
                 if update_aws_ft and len(update_aws_ft) > 0:
                     ext = get_file_extension(fn)
-
                     if ext not in update_aws_ft:
-                        logger.debug(f'      skipp update amazon link due to file type limit: {fn}')
+                        logger.debug(f'      skipp update amazon link due to file type limit: {fn} - ext={ext}, selected file type={update_aws_ft}')
                         continue
-
                 res_amazon_url = get_amazon_download_link(fn, file_uuid, header_cookie, demo=demo)
                 try:
                     header_cookie, download = res_amazon_url
@@ -809,12 +836,12 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
         out.write('## 4. Summary and diagnosis\n')
         for k, v in zip('similar_symp,comment,summary,evaluation'.split(','), 'Similar_Sympt,Comment,Summary,Evaluation'.split(',')):
             if proband[k]:
-                out.write(f'### {v}\n\n{proband[k]}\n')
+                out.write(f'\n\n### {v}\n\n{proband[k]}\n')
         out.write('\n\n')
 
     fn_pdf = f'{udn}.basic_info.pdf'
-    if not os.path.exists(fn_pdf):
-        os.system(f"pandoc  -t pdf {udn}.basic_info.md --pdf-engine pdflatex -o {fn_pdf}")
+    # if not os.path.exists(fn_pdf):
+    os.system(f"pandoc  -t pdf {udn}.basic_info.md --pdf-engine pdflatex -o {fn_pdf}")
 
     # build the HPO terms file
     with open(f'origin/{udn}.terms.txt', 'w') as out:
@@ -915,28 +942,39 @@ default:
 
 
     # download file script
-    out = open(f'download.fastq.{udn}.txt', 'w')
-    out_fastq_sh = open(f'download.fastq.{udn}.sh', 'w')
-    out_bam = open(f'download.bam.{udn}.download_bam.sh', 'w')
-
     out_info = open(f'download.info.{udn}.txt', 'w')
-    out_cnv = open(f'download.cnv.{udn}.sh', 'w')
-    out_other = open(f'download.other.{udn}.sh', 'w')
     out_md5 = open(f'download.{udn}.md5', 'w')
-    out_igv = open(f'{udn}.igv.files.txt', 'w')
-    html_bam = open(f'download.bam.{udn}.html', 'w')
-    html_bam.write(f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{udn} - bam </title>
-</head>
-<body>
 
-    """)
+    if 'fastq' in update_aws_ft:
+        out = open(f'download.fastq.{udn}.txt', 'w')
+        out_fastq_sh = open(f'download.fastq.{udn}.sh', 'w')
 
-    out_cnv.write('mkdir origin 2>/dev/null\n')
+    if 'bam' in update_aws_ft:
+        out_bam = open(f'download.bam.{udn}.download_bam.sh', 'w')
+        out_igv = open(f'{udn}.igv.files.txt', 'w')
+        html_bam = open(f'download.bam.{udn}.html', 'w')
+        html_bam.write(f"""<!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{udn} - bam </title>
+    </head>
+    <body>
+
+        """)
+
+    if 'cnv' in update_aws_ft:
+        out_cnv = open(f'download.cnv.{udn}.sh', 'w')
+        # out_other = open(f'download.other.{udn}.sh', 'w')
+        out_cnv.write('mkdir origin 2>/dev/null\n')
+
+    other_download = 0
+    if len(set(update_aws_ft) - set(['bam', 'fastq', 'cnv'])) > 0:
+        other_download = 1
+        out_other = open(f'download.other.{udn}.sh', 'w')
+
+
 
     tmp = udn_raw or udn
     remote_pw = re.sub(r'^\d+_', '', tmp, 1)
@@ -961,7 +999,7 @@ default:
         remote_pw = m[1] + p_trailing
 
     pw_upload = f'/scratch/h_vangard_1/chenh19/udn/upload/{tmp}'
-    upload_cmd = f'udn_upload emedgene  download.info.{udn}.txt -remote {remote_pw} -ft fastq'
+    upload_cmd = f'udn_upload emedgene  download.info.{udn}.txt -remote {remote_pw} -ft fastq $@'
     out_fastq_sh.write(f"""#! /usr/bin/env bash
 mkdir -p {pw_upload}
 cp download.fastq.{udn}.txt {pw_upload}
@@ -972,7 +1010,7 @@ echo {pw_upload}
 cd {pw_upload}
 {upload_cmd}
 echo "{upload_cmd}" >upload_command.sh
-cd -
+cd - 2>/dev/null >/dev/null
     """)
 
     out_info.write('rel_to_proband\tfn\turl\tudn\tseq_type\tsize\tbuild\tmd5\turl_s3\n')
@@ -990,34 +1028,87 @@ cd -
             md5 = ifl['md5']
             seq_type = ifl.get('seq_type')
 
-            if re.match(r'.+\.bai$', fn):
+            if re.match(r'.+\.bai$', fn) and 'bam' in update_aws_ft:
                 out_igv.write(f'{url}\t{fn}\n')
                 out_bam.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
                 print(f'<span><b>{rel_to_proband}:    </b></span><a href="{url}">{fn}</a></br></br>', file=html_bam)
-            elif re.match(r'.+\.bam$', fn):
+            elif re.match(r'.+\.bam$', fn) and 'bam' in update_aws_ft:
                 out_igv.write(f'{url}\t{fn}\n')
                 out_bam.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
                 print(f'<span><b>{rel_to_proband}:    </b></span><a href="{url}">{fn}</a></br></br>', file=html_bam)
-            elif re.match(r'.+\.cnv\.vcf(\.gz)?$', fn):
+            elif re.match(r'.+\.cnv\.vcf(\.gz)?$', fn) and 'cnv' in update_aws_ft:
                 out_cnv.write(f'if [ ! -s "origin/{fn}" ];then wget "{url}" -c -O "origin/{fn}";\nelse echo already exist: "origin/{fn}";fi\n')
-            elif re.match(r'.+\.fastq.gz', fn):
+            elif re.match(r'.+\.fastq.gz', fn) and 'fastq' in update_aws_ft:
                 out.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
-            else:
+            elif other_download:
                 out_other.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
 
             out_info.write(f'{rel_to_proband}\t{fn}\t{url}\t{udn}\t{seq_type}\t{size}\t{build}\t{md5}\t{url_s3}\n')
             out_md5.write(f'{md5}  {fn}\n')
 
-    html_bam.write("""</body>
-</html>""")
+    try:
+        html_bam.write("""</body>
+    </html>""")
+        html_bam.close()
+    except:
+        pass
 
-    html_bam.close()
-    out.close()
-    out_bam.close()
+    try:
+        out.close()
+    except:
+        pass
+    try:
+        out_bam.close()
+    except:
+        pass
     out_md5.close()
     out_info.close()
-    out_igv.close()
-    out_fastq_sh.close()
+
+    try:
+        out_igv.close()
+    except:
+        pass
+    try:
+        out_fastq_sh.close()
+    except:
+        pass
+
+
+def resolve_udn_id(s):
+    """
+    extract the UDN number from the string
+    """
+    s = s.upper()
+    return re.findall(r'(UDN\d+)', s)
+
+
+def resolve_upload_list():
+    """
+    just a demo of a task
+    """
+    s = """
+UDN117150_Proband, UDN482847_Father, UDN976077_Mother (Case 123)
+UDN508581_Proband (Case 218)
+UDN079252_Proband, UDN258649_Father, UDN260402_Mother (Case 50)
+UDN991897_Proband UDN187507_Mother, UDN464491_Father (Case 206)
+UDN527443_Proband, UDN414554_Father, UDN822987_Mother (case solved no need to reupload)
+UDN320766_Proband, UDN230088_Father, UDN710646_Mother (Case 201)
+UDN956557_Proband, UDN367189_Mother, UDN648275_Father, UDN036509_Afected Brother (Case 85)
+UDN335667_Proband, UDN388209_Mother, UDN757864_Father (Case 124)
+UDN279217_Proband, UDN197070_Father, UDN281869_Mother (Case 228)
+UDN327145_Proband, UDN316269_Mother, UDN430357_Father (Case 216)
+UDN179293_Proband, UDN216310_Mother, UDN027382_Father (Case 222)"""
+    s = s.split('\n')
+    res = []
+    for i in s:
+        udns = re.findall(r'UDN\d+', i)
+        case = re.search(r'\(Case (\d+)\)', i)
+        if not case:
+            continue
+        proband = f'{udns[0]}_case{case.group(1)}'
+        res.append('@'.join([proband, *udns[1:]]))
+    return ' '.join(res)
+
 
 if __name__ == "__main__":
     root = os.getcwd()
@@ -1026,7 +1117,7 @@ if __name__ == "__main__":
     import argparse as arg
     from argparse import RawTextHelpFormatter
     ps = arg.ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
-    ps.add_argument('udn', help="""one or multiple UDN ID, sep by space, could also contain the prefix, eg. 11_UDN123456""", nargs='*')
+    ps.add_argument('udn', help="""one or multiple UDN ID, sep by space, could also contain the prefix, eg. 11_UDN123456.  if only selected family number are needed, append with @, eg. UDN123@UDN456_father@UDN_789@mother, in this case, other family member would not be resolved""", nargs='*')
     ps.add_argument(
         '-fn_cred', '-cred',
         help="""filename for the credential file, must include the UDN token, login email, login username(vunetID), login_password""")
@@ -1034,11 +1125,13 @@ if __name__ == "__main__":
     ps.add_argument('-pw', help="""specify the output pw, default is create a folder same as UDN_ID""", default=None)
     ps.add_argument('-demo', help="""do not resolve the amazon link, just check the raw link. apply to both post and new query""", action='store_true')
     ps.add_argument('-ft', help="""could be multiple, if specified, would only update the amazon URL for these file types""", nargs='*', choices=['bam', 'vcf', 'cnv', 'fastq', 'fq'])
-    ps.add_argument('-no_renew', '-norenew', help="""flag, if the pickle file already exist, renew the amazon link or not, default is renew""", action='store_true')
+    ps.add_argument('-no_renew', '-norenew', '-dry', help="""flag, if the pickle file already exist, renew the amazon link or not, default is renew""", action='store_true')
+    ps.add_argument('-lite', help="""flag, donot download the cnv files and the bayler report""", action='store_true')
     args = ps.parse_args()
     print(args)
 
     pw_script = os.path.realpath(__file__).rsplit('/', 1)[0]
+    lite = args.lite
 
     if not args.fn_cred and os.path.exists('udn.credential.pkl.encrypt'):
 
@@ -1052,8 +1145,7 @@ if __name__ == "__main__":
     ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'vcf', 'fq': 'fastq'}
     ft_convert.update({_: _ for _ in ft_convert.values()})
 
-    update_aws_ft = set([ft_convert[_] for _ in args.ft]) if args.ft else None
-
+    update_aws_ft = set([ft_convert[_] for _ in args.ft]) if args.ft else ['cnv', 'fastq']
 
     passcode = getpass('Input the passcode for the encrypted credential file: ')
     if not fn_cred:
@@ -1064,7 +1156,6 @@ if __name__ == "__main__":
     key = Credential(passcode, fn_cred)
 
     logger.info(fn_cred)
-
 
     if args.create:
         cred = create_cred()
@@ -1119,17 +1210,31 @@ if __name__ == "__main__":
     udn_list = [_.strip().upper() for _ in udn_list if _.strip()]
 
     # validate udn
-    p = re.compile(r'(?:.*)?(UDN\d+)$')
+    p = re.compile(r'(?:.*)?(UDN\d+)')
     validated = []
-    for udn_raw in udn_list:
+    for i in udn_list:
+        i = [_.strip() for _ in i.split('@')]
+        udn_raw = i[0]
+
+        if len(i) == 1:
+            valid_family = None
+        else:
+            valid_family = i[1:]
+            valid_family = [resolve_udn_id(_) for _ in valid_family]
+            valid_family = [_[0] for _ in valid_family if _]
+            logger.info(f'valid family={valid_family}')
+
         m = re.match(p, udn_raw)
         if not m:
             logger.warning(f'Invalid UDN_ID: {udn_raw}')
             continue
         udn = m.group(1)
-        validated.append([udn_raw, udn])
+        validated.append([udn_raw, udn, valid_family])
 
-    for udn_raw, udn in validated:
+    # sys.exit(1)
+    logger.info('\n\n\n'+'#' *30)
+
+    for udn_raw, udn, valid_family in validated:
         os.system(f'mkdir -p {root}/{udn_raw}/origin 2>/dev/null')
         os.chdir(f'{root}/{udn_raw}')
 
@@ -1147,12 +1252,12 @@ if __name__ == "__main__":
             else:
                 renew_amazon_link = not args.no_renew
 
-            parse_api_res(res, cookie=cookie, update_aws_ft=update_aws_ft, renew_amazon_link=renew_amazon_link, demo=demo, udn_raw=udn_raw)
+            parse_api_res(res, cookie=cookie, update_aws_ft=update_aws_ft, renew_amazon_link=renew_amazon_link, demo=demo, udn_raw=udn_raw, valid_family=valid_family)
         else:
-            res = get_all_info(udn, cookie=cookie, demo=demo, get_aws_ft=update_aws_ft, udn_raw=udn_raw)
+            res = get_all_info(udn, cookie=cookie, demo=demo, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite)
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
-
-        print(f'downloading CNV vcf file')
-        os.system(f'bash download.cnv.{udn}.sh')
+        if not lite:
+            logger.info(f'downloading CNV vcf file')
+            os.system(f'bash download.cnv.{udn}.sh')
         print('\n########################\n\n')
