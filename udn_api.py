@@ -26,8 +26,7 @@ the res dict, the key may be duplicate, such as sister, brother, before changing
 
 update 2020-11-03
 add chromedriver path when running under ACCRE
-
-
+update 2021-03-24  add uploading to ACCRE option
 """
 import sys
 # import pprint
@@ -46,6 +45,7 @@ from bs4 import BeautifulSoup as bs
 # basic settings
 base_url = 'https://gateway.undiagnosed.hms.harvard.edu/api'
 platform = sys.platform
+pw_accre = '/home/chenh19/data/udn'
 
 ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'vcf', 'fq': 'fastq'}
 ft_convert.update({_: _ for _ in ft_convert.values()})
@@ -620,7 +620,6 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
     if rel_to_proband == 'Proband':
         try:
             parse_api_res(res_all, cookie=cookie, udn_raw=udn_raw, valid_family=valid_family)
-            # parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None, demo=False, udn_raw=None, valid_family=None)
         except:
             logger.error(f'fail to parse the result dict, try again')
             raise
@@ -840,7 +839,6 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
         out.write('\n\n')
 
     fn_pdf = f'{udn}.basic_info.pdf'
-    # if not os.path.exists(fn_pdf):
     os.system(f"pandoc  -t pdf {udn}.basic_info.md --pdf-engine pdflatex -o {fn_pdf}")
 
     # build the HPO terms file
@@ -1037,7 +1035,8 @@ cd - 2>/dev/null >/dev/null
                 out_bam.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
                 print(f'<span><b>{rel_to_proband}:    </b></span><a href="{url}">{fn}</a></br></br>', file=html_bam)
             elif re.match(r'.+\.cnv\.vcf(\.gz)?$', fn) and 'cnv' in update_aws_ft:
-                out_cnv.write(f'if [ ! -s "origin/{fn}" ];then wget "{url}" -c -O "origin/{fn}";\nelse echo already exist: "origin/{fn}";fi\n')
+
+                out_cnv.write(f'size=$(stat -c %s origin/{fn} 2>/dev/null);if [ $size -lt 1000 ];then wget "{url}" -c -O "origin/{fn}";\nelse echo already exist: "origin/{fn}";fi\n')
             elif re.match(r'.+\.fastq.gz', fn) and 'fastq' in update_aws_ft:
                 out.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
             elif other_download:
@@ -1110,6 +1109,8 @@ UDN179293_Proband, UDN216310_Mother, UDN027382_Father (Case 222)"""
     return ' '.join(res)
 
 
+
+
 if __name__ == "__main__":
     root = os.getcwd()
     logger = get_logger()
@@ -1125,13 +1126,15 @@ if __name__ == "__main__":
     ps.add_argument('-pw', help="""specify the output pw, default is create a folder same as UDN_ID""", default=None)
     ps.add_argument('-demo', help="""do not resolve the amazon link, just check the raw link. apply to both post and new query""", action='store_true')
     ps.add_argument('-ft', help="""could be multiple, if specified, would only update the amazon URL for these file types""", nargs='*', choices=['bam', 'vcf', 'cnv', 'fastq', 'fq'])
-    ps.add_argument('-no_renew', '-norenew', '-dry', help="""flag, if the pickle file already exist, renew the amazon link or not, default is renew""", action='store_true')
+    ps.add_argument('-renew', '-new', '-update', help="""flag, update the amazon shared link. default is not renew""", action='store_true')
     ps.add_argument('-lite', help="""flag, donot download the cnv files and the bayler report""", action='store_true')
+    ps.add_argument('-noupload', '-noup', help="""don't upload the files to ACCRE""", action='store_true')
     args = ps.parse_args()
     print(args)
 
     pw_script = os.path.realpath(__file__).rsplit('/', 1)[0]
     lite = args.lite
+    upload = not args.noupload
 
     if not args.fn_cred and os.path.exists('udn.credential.pkl.encrypt'):
 
@@ -1250,13 +1253,25 @@ if __name__ == "__main__":
             if demo:
                 renew_amazon_link = False
             else:
-                renew_amazon_link = not args.no_renew
+                renew_amazon_link = args.renew
 
             parse_api_res(res, cookie=cookie, update_aws_ft=update_aws_ft, renew_amazon_link=renew_amazon_link, demo=demo, udn_raw=udn_raw, valid_family=valid_family)
+
+            if upload:
+                logger.info(f'update files to  ACCRE: {udn_raw}')
+                os.system(f"""sftp va <<< $'mkdir {pw_accre}/{udn_raw}'  2>/dev/null >&2""")
+                for ifl in ['pheno.keywords.txt', 'download.info.*.txt']:  # file name can't contain space
+                    os.system(f"""sftp va:{pw_accre}/{udn_raw} <<< $'put {ifl}' >/dev/null""")
         else:
             res = get_all_info(udn, cookie=cookie, demo=demo, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite)
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
+            if upload:
+                logger.info(f'initial uploading to ACCRE: {udn_raw}')
+                os.system(f"""sftp va <<< $'mkdir {pw_accre}/{udn_raw}'  2>/dev/null >&2""")
+                os.system(f"""sftp va:{pw_accre}/{udn_raw} <<< $'put -r *' >/dev/null""")
+
+
         if not lite:
             logger.info(f'downloading CNV vcf file')
             os.system(f'bash download.cnv.{udn}.sh')
