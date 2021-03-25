@@ -28,6 +28,7 @@ report = f'{proband}.report.xlsx'
 """
 import sys
 import os
+import glob
 pw_code = os.path.dirname(os.path.realpath(f'{__file__}/..'))
 sys.path.append(pw_code)
 # print(pw_code)
@@ -36,11 +37,18 @@ from udn import udn_utils
 import argparse as arg
 from argparse import RawTextHelpFormatter
 ps = arg.ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
-ps.add_argument('config', help="""the config file, yaml format""")
+ps.add_argument('config', help="""the config file, yaml format""", nargs='?', default=None)
 ps.add_argument('-omim', help="""force rerun the omim match report, no matter report exist or not""", action='store_true')
 args = ps.parse_args()
 
 config_file = args.config
+
+if config_file is None:
+    config_file = glob.glob('*.yaml')
+    if len(config_file) == 0:
+        print('ERROR: no yaml config file is found, exit')
+        sys.exit(1)
+    config_file = config_file[0]
 
 case = udn_utils.UDN_case(config_file)
 

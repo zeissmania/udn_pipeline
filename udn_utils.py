@@ -165,6 +165,11 @@ class UDN_case():
         1. build the gene comment dict based on the previous manual input
         2. read the local OMIM disease discription, if not found, would run the online scrapy
         3. query the keyword file for each gene in the merged.sorted.tsv file, and rate(hit number) as reference for selecting
+
+        the phenotype file, accept keyword in 3 mode
+        word1+word2  this 2 word come together
+        @word1 match exact word, would add \b at both side
+        -word  do not include this word
         """
         fn = f'{self.pw}/{self.prj}.merged.sorted.tsv'
         fn_pheno = f'{self.pw}/pheno.keywords.txt'
@@ -207,13 +212,12 @@ class UDN_case():
 
                 cover_exon_flag = 1 if a[11].strip() else 0
 
-
                 if omim_id:
                     d_gene[gn] = [omim_id, cover_exon_flag, amelie_score]
 
         # build the predefined gene list
 
-
+        # logger.warning(f'POU6F2:{d_gene["POU6F2"]}')
 
         d_gene_comment = {}
         d_gene_comment_scrapy = {}
@@ -269,6 +273,16 @@ class UDN_case():
 
         # res , key=gene, value = [0, 0]  first int = count of exact match phenotype, second int = count of partial match phenotype
         res = {}
+
+        # logger.info(f'l_pheno={l_pheno}')
+
+        def refine_comment(s):
+            s = re.sub(r'\*\*\*\*', '**', s)
+            s = re.sub(r'\*\*([^* ][^*]*?[^* ])\*\*([^* ][^*]*?[^* ])\*\*', r'**\g<1>\g<2>**', s)
+            s = re.sub(r'\*\*([^* ][^*]*?[^* ])\*\*([^* ][^*]*?[^* ])\*\*', r'**\g<1>\g<2>**', s)
+            return s
+
+        # debug = 1
         for gn, v in d_gene.items():
             omim_id, cover_exon_flag, amelie_score = v
             if gn in res:
@@ -312,7 +326,13 @@ class UDN_case():
                     _ = _.lower()
                     if _[0] == '@':
                         word = _[1:]
-                        if re.match(f'.*\b{word}\b', comment.lower()):
+                        m = re.match(fr'.*\b({word})\b', comment.lower())
+                        # if debug:
+                        #     logger.info(m)
+                        #     logger.info(fr'.*\b({word})\b')
+                        debug = 0
+                        if m:
+                            word = m.group(1)
                             n_matched_word += 1
                             matched_word.append(word)
                             # avoid the highligh of meaningless single letter or pure number
@@ -349,6 +369,8 @@ class UDN_case():
                     res[gn][0].append(ipheno)
                 elif n_word_match_meaning > 0:
                     res[gn][1].append(matched_word)
+
+            comment_list = [refine_comment(_) for _ in comment_list]
 
             res[gn][2] = '\n'.join(comment_list)
 
@@ -943,7 +965,7 @@ class UDN_case():
                     try:
                         data = int(data.split(':')[1])  # CN
                         if data == 0:
-                            copy_number = "'-"
+                            copy_number = "-"
                         else:
                             copy_number = 'o' * data
                     except:
@@ -1504,12 +1526,12 @@ def run_omim_scrapy(gn, gn_omim_id, logger, res_prev=None):
         logger.warning(f'multiple OMIM id find, gn={gn}, omim_id={gn_omim_id}')
         res = {}
         for omim_id_tmp  in omim_id_list:
-            res_tmp = run_omim_scrapy(gn, omim_id_tmp.strip(), logger, res_prev=res)
+            res_tmp = run_omim_scrapy(gn, omim_id_tmp.strip().split('.', 1)[0], logger, res_prev=res)
             if res_tmp:
                 res.update(res_tmp)
         return res
     else:
-        gn_omim_id = list(omim_id_list)[0]
+        gn_omim_id = list(omim_id_list)[0].strip().split('.', 1)[0]
 
     # if gn == 'PKHD1':
     #     logger.error(f'gn=PKHD1, omim_id_list={omim_id_list}, gn_omim_id={gn_omim_id}')
@@ -1519,7 +1541,7 @@ def run_omim_scrapy(gn, gn_omim_id, logger, res_prev=None):
             pheno_list = d_omim_map[gn_omim_id]
             gene_page_scrapy = 0
         except:
-            logger.warning(f'gene not found in d_omim_map dict: {gn} omim_id={gn_omim_id}')
+            logger.warning(f'gene not found in d_omim_map dict: {gn} omim_id={gn_omim_id}, gn_omim_id={gn_omim_id}')
 
     if gene_page_scrapy:
         r = requests.request('GET', f'https://www.omim.org/entry/{gn_omim_id}', headers=headers)
