@@ -2,6 +2,7 @@
 2020-08-18
 1. add the UDN gateway API, allow to download the VCF file/ phenotip
 2. add the encrypt / decrypt module for the API token
+3. pheno.keywords.txt allow comment using #
 
 to-do
 add the downloading data / uploading data to AWS server
@@ -18,7 +19,7 @@ import logging.config
 import requests
 from bs4 import BeautifulSoup as bs
 import pickle
-import pandas as pd
+# import pandas as pd
 
 # basic data
 pw_code = os.path.dirname(os.path.realpath(__file__))
@@ -263,13 +264,17 @@ class UDN_case():
 
         with open(fn_pheno) as fp:
             for i in fp:
-                i = i.strip()
+                i = i.lower().split('#', 1)[0].strip()
                 a = re.split(r'\s+', i)
                 a = [_.strip() for _ in a if _.strip()]
 
                 if len(a) == 0:
                     continue
                 l_pheno.append([_.replace('+', ' ') for _ in a])
+
+
+        # refine the l_pheno,
+
 
         # res , key=gene, value = [0, 0]  first int = count of exact match phenotype, second int = count of partial match phenotype
         res = {}
@@ -278,6 +283,9 @@ class UDN_case():
 
         def refine_comment(s):
             s = re.sub(r'\*\*\*\*', '**', s)
+            # **developmental **delay**,
+            s = re.sub(r'\*\*(\w[^*]*?\s)\*\*(\w[^*]*?)\w\*\*', r' **\g<1>\g<2>**', s)
+            # s = re.sub(r'\*\*\s+\*\*', ' ', s)
             s = re.sub(r'\*\*([^* ][^*]*?[^* ])\*\*([^* ][^*]*?[^* ])\*\*', r'**\g<1>\g<2>**', s)
             s = re.sub(r'\*\*([^* ][^*]*?[^* ])\*\*([^* ][^*]*?[^* ])\*\*', r'**\g<1>\g<2>**', s)
             return s
@@ -309,8 +317,9 @@ class UDN_case():
                     continue
 
             comment = comment.strip()
-            comment = re.sub('\n\*\*', "\n" + '_'*50+'\n\n\n**', comment)
+            comment = re.sub(r'\n\*\*', "\n" + '_'*50+'\n\n\n**', comment)
             comment_list = comment.split('\n')
+            comment_list = [_.strip() for _ in comment_list]
 
             # query the phenotype
             highlighted_words = set()
@@ -326,11 +335,15 @@ class UDN_case():
                     _ = _.lower()
                     if _[0] == '@':
                         word = _[1:]
-                        m = re.match(fr'.*\b({word})\b', comment.lower())
+                        if word.find('|') > -1 and word.find('(') < 0:
+                            word = re.sub(r'\b((?:\w+\|)+\w+)', r'(\g<1>)', word)
+
+                        m = re.match(fr'.*\b({word})\b', comment.lower().replace('\n', ''))
+
                         # if debug:
                         #     logger.info(m)
                         #     logger.info(fr'.*\b({word})\b')
-                        debug = 0
+                        # debug = 0
                         if m:
                             word = m.group(1)
                             n_matched_word += 1
@@ -343,8 +356,10 @@ class UDN_case():
                                 n_word_match_meaning += 1
 
                             if word not in highlighted_words:
+
                                 highlighted_words.add(word)
-                                comment_list = [re.sub(word, f'**{word}**', icomment, flags=re.I) if icomment[:2] != '**' else icomment for icomment in comment_list]
+                                comment_list = [re.sub(fr'(?<!\*\*){word}', f'**{word}**', icomment, flags=re.I) if icomment[:2] != '**' and icomment[-2:] != '**' else icomment for icomment in comment_list]
+
                     elif _[0] == '-':  # negative match, exclude
                         word = _[1:]
                         if comment.lower().find(word) < 0:
@@ -523,6 +538,7 @@ class UDN_case():
         family = {}
         family[proband_id] = {
                 'lb': f'{proband_id}_P',
+                'rel': 'proband',
                 'type': 'Proband',
                 'sex': proband_sex,
                 'type_short': 'P',
@@ -561,6 +577,7 @@ class UDN_case():
             if k == 'father':
                 family[sample_id] = {
                 'lb': f'{sample_id}_F',
+                'rel': k,
                 'type': 'Father',
                 'sex': 1,
                 'type_short': 'F',
@@ -571,6 +588,7 @@ class UDN_case():
             elif k == 'mother':
                 family[sample_id] = {
                 'lb': f'{sample_id}_M',
+                'rel': k,
                 'type': 'Mother',
                 'sex': 2,
                 'type_short': 'M',
@@ -581,6 +599,7 @@ class UDN_case():
             elif k.lower().startswith('male'):
                 family[sample_id] = {
                 'lb': f'{sample_id}_S',
+                'rel': 'male',
                 'type': rel_to_proband or k.title(),
                 'sex': 1,
                 'type_short': 'S',
@@ -591,6 +610,7 @@ class UDN_case():
             elif k.lower().startswith('female'):
                 family[sample_id] = {
                 'lb': f'{sample_id}_S',
+                'rel': 'female',
                 'type': rel_to_proband or k.title(),
                 'sex': 2,
                 'type_short': 'S',
@@ -919,6 +939,7 @@ class UDN_case():
         lb = self.family[sample_id]['lb']
         sex = self.family[sample_id]['sex']  # 1 or 2 for male and female
         col_keep = self.cols
+        rel = self.family[sample_id]['type'].lower()
 
         f_anno_filter = f'{pw}/{intermediate_folder}/{lb}.filtered.txt'
         f_anno_extract = f'{pw}/{intermediate_folder}/{lb}.extracted.txt'
@@ -1082,6 +1103,9 @@ class UDN_case():
                         else:
                             exon_span_tag = 'error, no pattern matched'
 
+
+                    if rel != 'proband':
+                        copy_number = f'{copy_number}\nQUAL={qual}'
                     print('\t'.join([anno_id, chr_, pos_s, pos_e, sv_type, qual, exon_span_tag, gn,
                                     sv_len, exon_span, af_dgv_gain, af_dgv_loss, af_gnomad,
                                     ddd_mode, ddd_disease, omim, phenotype, inheritance, annot_ranking, copy_number]), file=out)
@@ -1464,6 +1488,7 @@ class UDN_case():
         sorted_file = f'{pw}/{prj}.merged.sorted.tsv'
         sorted_excel = f'{pw}/{prj}.merged.sorted.xlsx'
 
+        import pandas as pd
         df = pd.read_csv(merged_table, sep='\t')
         # df.drop(['match_strong', 'match_weak', 'match_count_udn'], axis=1, inplace=True)
         df.sort_values('AMELIE', ascending=False, inplace=True)

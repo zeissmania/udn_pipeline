@@ -31,6 +31,7 @@ ps.add_argument('-pw', help="""download file output path, default is pwd""")
 ps.add_argument('-demo', help="""demo mode would not actually download or upload, or create remote folder""", action='store_true')
 ps.add_argument('-rm', '-delete', help="""flag, if set, would delete the downloaded file from local disk when uploading is done""", action='store_true')
 ps.add_argument('-asis', help="""use the remote_pw in the cmd line input, do not do the re-format, default is False""", action='store_true')
+ps.add_argument('-lite', '-ck', help="""toggle, just check, donot build script""", action='store_true')
 args = ps.parse_args()
 
 # ps.add_argument('-prj', help="""project name for this run, if not set, would use the UDN infered from info file or current folder name""")
@@ -280,7 +281,7 @@ def parse_info_file(info_file, remote_pw_in=None, ft=None):
         fn_exist_complete = f'{pw}/remote.existing_files.{remote_pw_plain}.completed.txt'
         all_uploaded = 1 if all([_['uploaded'] for _ in v.values()]) else 0
         if all_uploaded:
-            logger.info(f'All files were uploaded!')
+            # logger.info(f'All files were uploaded!')
             with open(fn_exist_complete, 'w') as out:
                 print('done', file=out)
 
@@ -291,14 +292,14 @@ def parse_info_file(info_file, remote_pw_in=None, ft=None):
         i = set([f'{remote_pw}/{name}' for name in v[1]])
         sub_folders_exist |= i
 
-    logger.info(f'remote existing subfolders = {sub_folders_exist}')
+    logger.debug(f'remote existing subfolders = {sub_folders_exist}')
 
     sub_folders_exp = set()
     for v1 in d.values():
         for v2 in v1.values():
             sub_folders_exp.add(v2['remote'])
 
-    logger.info(f'subfolder exp = {sub_folders_exp}')
+    logger.debug(f'subfolder exp = {sub_folders_exp}')
 
     sub_folder_to_build = sub_folders_exp - sub_folders_exist
     if not demo:
@@ -308,6 +309,41 @@ def parse_info_file(info_file, remote_pw_in=None, ft=None):
         logger.info(f'demo build remote subfolder {sub_folder_to_build}')
     else:
         logger.info(f'all remote subfolder are ready')
+
+
+    # check the status
+    n_downloaded = 0
+    n_uploaded = 0
+    n_desired = 0
+    n_need_upload = 0
+
+    for _, v1 in d.items():
+        for fn, v in v1.items():
+            n_desired += 1
+            if v['uploaded']:
+                logger.info(f'file already uploaded: {fn}')
+                n_uploaded += 1
+                n_downloaded += 1
+                continue
+
+            if not v['downloaded']:
+                n_need_upload += 1
+            else:
+                n_downloaded += 1
+                n_need_upload += 1
+
+    logger.info(f'total files = {n_desired}, need_to_upload={n_need_upload}, already exist in server = {n_uploaded}, already downloaded = {n_downloaded}')
+
+    if n_need_upload > 0:
+        print('\n', '!' * 50)
+        print(f'{n_need_upload}/{n_desired} files need to be uploaded')
+        print(f'{n_downloaded}/{n_desired} files already downloaded')
+    else:
+        print('\n', '*' * 50)
+        print('Done, all files already uploaded')
+    print('\n\n\n')
+
+
 
     return d
 
@@ -341,14 +377,9 @@ def refine_remote_pw(remote_pw):
 
 
 def build_script(d):
-    n_downloaded = 0
-    n_uploaded = 0
-    n_desired = 0
-    n_need_upload = 0
-    for k, v1 in d.items():
+    for _, v1 in d.items():
         for fn, v in v1.items():
             # {'size': size_exp, 'remote': f'{remote_pw}/{name}', 'url': url, 'downloaded': downloaded, 'uploaded': uploaded}
-            n_desired += 1
             url = v['url']
             size_exp = v['size']
             remote_pw = v['remote']
@@ -358,24 +389,16 @@ def build_script(d):
             fn_script = f'{pw}/shell/{fn}.download_upload.{dest}.sh'
             fn_status = f'{pw}/log/status.{fn}.txt'
 
-
             if v['uploaded']:
-                logger.info(f'file already uploaded: {fn}')
-                n_uploaded += 1
-                n_downloaded += 1
                 os.system(f'mv  {fn_script} {pw}/shell_done/{fn}.download_upload.{dest}.sh 2>/dev/null')
                 continue
 
             with open(fn_script, 'w') as out:
                 if not v['downloaded']:
-                    n_need_upload += 1
                     if download_type == 'dropbox':
                         print(f'dbxcli get "{url}"  "{fn_download}" > {pw}/log/download.{fn}.log 2>&1', file=out)
                     else:
                         print(f'wget "{url}" -c -O "{fn_download}" > {pw}/log/download.{fn}.log 2>&1', file=out)
-                else:
-                    n_downloaded += 1
-                    n_need_upload += 1
 
                 print(f"""echo -n "" > {fn_status}""", file=out)
                 rm_cmd = ''
@@ -415,7 +438,8 @@ fi
 echo start uploading >> {fn_status}
 date +"%m-%d  %T">> {fn_status}
 {dock} aws s3 cp {pw}/download/{fn} s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn} > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log
-
+echo upload completed
+date +"%m-%d  %T">> {fn_status}
 remote_file_size=$({dock} aws s3 ls emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn}|tr -s " "|cut -d " " -f 3)
 if [[ "$remote_file_size" -eq "{size_exp}" ]];then
     echo {fn} successfully uploaded to {remote_pw}/  filesize={size_exp} >> {fn_status}
@@ -434,18 +458,6 @@ elif [[ "{size_exp}" = "na" ]];then
 else
     echo after uploading, file size not match: local=$local_size , remote actual=$remote_file_size, expected={size_exp}: {fn} >> {fn_status}
 fi""", file=out)
-
-    # echo "{fn}  file_exp_size not specifed, size remote = $remote_file_size"
-    logger.info(f'total files = {n_desired}, need_to_upload={n_need_upload}, already exist in server = {n_uploaded}, already downloaded = {n_downloaded}')
-
-    if n_need_upload > 0:
-        print('\n', '!' * 50)
-        print(f'{n_need_upload}/{n_desired} files need to be uploaded')
-        print(f'{n_downloaded}/{n_desired} files already downloaded')
-    else:
-        print('\n', '*' * 50)
-        print('Done, all files already uploaded')
-    print('\n\n\n')
 
 def get_prj_name():
     # get project name, not used
@@ -471,6 +483,7 @@ if __name__ == "__main__":
 
     dest = {'dropbox': 'dropbox', 'db': 'dropbox', 'emedgene': 'emedgene', 'em': 'emedgene', 'ed':'emedgene'}[args.dest]
     demo = args.demo
+    lite = args.lite
     asis = args.asis  # use the remote_pw in the cmd line input, do not do the re-format
     rm = args.rm
     pw = args.pw or os.getcwd()
@@ -535,4 +548,5 @@ if __name__ == "__main__":
 
     # parse the info file
     d = parse_info_file(info_file, remote_pw_in=remote_pw_in, ft=ft)
-    build_script(d)
+    if not lite:
+        build_script(d)
