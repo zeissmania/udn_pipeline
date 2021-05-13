@@ -264,6 +264,7 @@ class UDN_case():
         with open(fn_pheno) as fp:
             for i in fp:
                 i = i.strip()
+                i = i.split('#')[0]
                 a = re.split(r'\s+', i)
                 a = [_.strip() for _ in a if _.strip()]
 
