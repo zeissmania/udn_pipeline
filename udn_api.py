@@ -44,8 +44,8 @@ import requests
 from bs4 import BeautifulSoup as bs
 # basic settings
 base_url = 'https://gateway.undiagnosed.hms.harvard.edu/api'
-platform = sys.platform
-pw_accre = '/home/chenh19/data/udn'
+platform = sys.platform.lower()
+
 
 ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'vcf', 'fq': 'fastq'}
 ft_convert.update({_: _ for _ in ft_convert.values()})
@@ -105,6 +105,7 @@ def get_cookie():
     timeout = 30
 
     from selenium import webdriver
+    import selenium.common.exceptions as sel_exp
     from selenium.webdriver.support.ui import WebDriverWait as wait
 
     if platform == 'darwin':
@@ -119,14 +120,23 @@ def get_cookie():
         option.binary_location = '/home/chenh19/tools/chrome/chrome'
     driver = webdriver.Chrome(executable_path=path_chromedriver, options=option)
     driver.get(url)
-    logger.debug('driver is set')
-    driver.save_screenshot('test.png')
+
     # sys.exit(1)
 
-    email = wait(driver, timeout).until(lambda x: x.find_element_by_xpath('//input[@type="email"]'))
+    email = wait(driver, timeout).until(lambda x: x.find_element_by_xpath('//input[@type="email" and @name="email"]'))
     password = driver.find_element_by_xpath('//input[@type="password"]')
     button = driver.find_element_by_xpath('//button[@class="auth0-lock-submit"]')
+
+    for _ in range(10):
+        if button.is_displayed():
+            break
+        time.sleep(1)
+    else:
+        logger.error('fail to display to UDN gateway interface')
+
     # driver.save_screenshot('udn_login_pre_sso.png')
+    logger.debug('driver is set')
+    driver.save_screenshot('test.png')
 
     run_sso = False
     for _ in range(10):
@@ -140,13 +150,18 @@ def get_cookie():
     else:
         logger.error(f'fail to input email, error')
 
+    # driver.save_screenshot('email_input.png')
+    time.sleep(2)
     try:
         password.click()
         password.send_keys(cred['password'])
     except webdriver.remote.errorhandler.ElementNotVisibleException:
         run_sso = True
+    except sel_exp.ElementNotInteractableException:
+        run_sso = True
 
     button.click()
+    driver.save_screenshot('password_input.png')
 
     if run_sso:
         username = wait(driver, timeout).until(lambda x: x.find_element_by_xpath('//input[@id="username"]'))
@@ -802,6 +817,7 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
     hpo = proband['symp']
     # logger.info(f'Proband files = {proband["files"]}')
 
+
     with open(f'{udn}.basic_info.md', 'w') as out:
         out.write(f'# {udn}\n## 1. Basic Info\n- UDN\t{udn}\n')
         for k, v in zip('firstname,lastname,gender,race,dob,alive,affect_final,uuid_case,phenotip'.split(','), 'FirstName,LastName,Gender,Race,DateBirth,Alive,Affect_state,UUID_case,Phenotip_ID'.split(',')):
@@ -839,9 +855,13 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
         out.write('\n\n')
 
     fn_pdf = f'{udn}.basic_info.pdf'
-    os.system(f"pandoc  -t pdf {udn}.basic_info.md --pdf-engine pdflatex -o {fn_pdf}")
+    # os.system(f"pandoc  -t pdf {udn}.basic_info.md --pdf-engine pdflatex -o {fn_pdf}")
+    if not os.path.exists(fn_pdf):
+        logger.info('converting basic info to pdf')
+        os.system(f"pandoc  -t pdf {udn}.basic_info.md --pdf-engine xelatex -o {fn_pdf}")
 
     # build the HPO terms file
+
     with open(f'origin/{udn}.terms.txt', 'w') as out:
         for k, v in hpo:
             out.write(v+'\n')
@@ -943,12 +963,11 @@ default:
     out_info = open(f'download.info.{udn}.txt', 'w')
     out_md5 = open(f'download.{udn}.md5', 'w')
 
-    if 'fastq' in update_aws_ft:
-        out = open(f'download.fastq.{udn}.txt', 'w')
-        out_fastq_sh = open(f'download.fastq.{udn}.sh', 'w')
+    out = open(f'download.fastq.{udn}.txt', 'w')
+    out_fastq_sh = open(f'download.fastq.{udn}.sh', 'w')
 
     if 'bam' in update_aws_ft:
-        out_bam = open(f'download.bam.{udn}.download_bam.sh', 'w')
+        out_bam = open(f'download.bam.{udn}.sh', 'w')
         out_igv = open(f'{udn}.igv.files.txt', 'w')
         html_bam = open(f'download.bam.{udn}.html', 'w')
         html_bam.write(f"""<!DOCTYPE html>
@@ -1036,7 +1055,7 @@ cd - 2>/dev/null >/dev/null
                 print(f'<span><b>{rel_to_proband}:    </b></span><a href="{url}">{fn}</a></br></br>', file=html_bam)
             elif re.match(r'.+\.cnv\.vcf(\.gz)?$', fn) and 'cnv' in update_aws_ft:
 
-                out_cnv.write(f'size=$(stat -c %s origin/{fn} 2>/dev/null);if [ $size -lt 1000 ];then wget "{url}" -c -O "origin/{fn}";\nelse echo already exist: "origin/{fn}";fi\n')
+                out_cnv.write(f'size=$(stat -c %s origin/{fn} 2>/dev/null);if [[ "$size" -lt 1000 ]];then wget "{url}" -c -O "origin/{fn}";\nelse echo already exist: "origin/{fn}";fi\n')
             elif re.match(r'.+\.fastq.gz', fn) and 'fastq' in update_aws_ft:
                 out.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
             elif other_download:
@@ -1112,8 +1131,6 @@ UDN179293_Proband, UDN216310_Mother, UDN027382_Father (Case 222)"""
 
 
 if __name__ == "__main__":
-    root = os.getcwd()
-    logger = get_logger()
 
     import argparse as arg
     from argparse import RawTextHelpFormatter
@@ -1123,7 +1140,6 @@ if __name__ == "__main__":
         '-fn_cred', '-cred',
         help="""filename for the credential file, must include the UDN token, login email, login username(vunetID), login_password""")
     ps.add_argument('-create', '-encry', '-enc', help="""enter into create credential mode""", action='store_true')
-    ps.add_argument('-pw', help="""specify the output pw, default is create a folder same as UDN_ID""", default=None)
     ps.add_argument('-demo', help="""do not resolve the amazon link, just check the raw link. apply to both post and new query""", action='store_true')
     ps.add_argument('-ft', help="""could be multiple, if specified, would only update the amazon URL for these file types""", nargs='*', choices=['bam', 'vcf', 'cnv', 'fastq', 'fq'])
     ps.add_argument('-renew', '-new', '-update', help="""flag, update the amazon shared link. default is not renew""", action='store_true')
@@ -1132,9 +1148,21 @@ if __name__ == "__main__":
     args = ps.parse_args()
     print(args)
 
+
+    if platform == 'darwin':
+        root = '/Users/files/work/cooperate/udn/cases'
+        os.chdir(root)
+    else:
+        logger.info('platform= {platform}')
+        root = os.getcwd()
+    logger = get_logger()
+
+
     pw_script = os.path.realpath(__file__).rsplit('/', 1)[0]
     lite = args.lite
     upload = not args.noupload
+
+
 
     if not args.fn_cred and os.path.exists('udn.credential.pkl.encrypt'):
 
@@ -1145,8 +1173,14 @@ if __name__ == "__main__":
     demo = args.demo
     pw_script = os.path.realpath(__file__).rsplit('/', 1)[0]
 
+
+    pw_accre_data = '/home/chenh19/data/udn'
+    pw_accre_scratch = '/home/chenh19/s/udn/upload'
+
     ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'vcf', 'fq': 'fastq'}
     ft_convert.update({_: _ for _ in ft_convert.values()})
+
+    upload_file_list = ['pheno.keywords.txt', 'download.info.*.txt']  # upload these files to scratch and data of ACCRE
 
     update_aws_ft = set([ft_convert[_] for _ in args.ft]) if args.ft else ['cnv', 'fastq']
 
@@ -1241,8 +1275,7 @@ if __name__ == "__main__":
         os.system(f'mkdir -p {root}/{udn_raw}/origin 2>/dev/null')
         os.chdir(f'{root}/{udn_raw}')
 
-
-        logger = get_logger(f'{root}/{udn_raw}/{udn}.udn_api')
+        logger = get_logger(f'{root}/{udn_raw}/{udn_raw}')
         logger.info(os.getcwd())
 
         fn_udn_api_pkl = f'{root}/{udn_raw}/{udn}.udn_api_query.pkl'
@@ -1258,19 +1291,25 @@ if __name__ == "__main__":
             parse_api_res(res, cookie=cookie, update_aws_ft=update_aws_ft, renew_amazon_link=renew_amazon_link, demo=demo, udn_raw=udn_raw, valid_family=valid_family)
 
             if upload:
-                logger.info(f'update files to  ACCRE: {udn_raw}')
-                os.system(f"""sftp va <<< $'mkdir {pw_accre}/{udn_raw}'  2>/dev/null >&2""")
-                for ifl in ['pheno.keywords.txt', 'download.info.*.txt']:  # file name can't contain space
-                    os.system(f"""sftp va:{pw_accre}/{udn_raw} <<< $'put {ifl}' >/dev/null""")
+                for ifl in upload_file_list:  # file name can't contain space
+                    logger.info(f'update {ifl} to  ACCRE: {udn_raw}')
+                    os.system(f"""sftp va:{pw_accre_data}/{udn_raw} <<< $'put {ifl}' >/dev/null""")
+                    os.system(f"""sftp va:{pw_accre_scratch}/{udn_raw} <<< $'put {ifl}' >/dev/null""")
         else:
             res = get_all_info(udn, cookie=cookie, demo=demo, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite)
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
             if upload:
-                logger.info(f'initial uploading to ACCRE: {udn_raw}')
-                os.system(f"""sftp va <<< $'mkdir {pw_accre}/{udn_raw}'  2>/dev/null >&2""")
-                os.system(f"""sftp va:{pw_accre}/{udn_raw} <<< $'put -r *' >/dev/null""")
 
+                os.system(f"""sftp va <<< $'mkdir {pw_accre_data}/{udn_raw}'  2>/dev/null >&2""")
+                os.system(f"""sftp va <<< $'mkdir {pw_accre_scratch}/{udn_raw}'  2>/dev/null >&2""")
+
+                logger.info(f'initial uploading to ACCRE: {udn_raw}')
+                os.system(f"""sftp va:{pw_accre_data}/{udn_raw} <<< $'put -r *' >/dev/null""")
+
+                for ifl in upload_file_list:  # file name can't contain space
+                    logger.info(f'update {ifl} to  ACCRE: {udn_raw}')
+                    os.system(f"""sftp va:{pw_accre_scratch}/{udn_raw} <<< $'put {ifl}' >/dev/null""")
 
         if not lite:
             logger.info(f'downloading CNV vcf file')
