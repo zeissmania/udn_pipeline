@@ -46,10 +46,8 @@ from bs4 import BeautifulSoup as bs
 base_url = 'https://gateway.undiagnosed.hms.harvard.edu/api'
 platform = sys.platform.lower()
 
-
 ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'vcf', 'fq': 'fastq'}
 ft_convert.update({_: _ for _ in ft_convert.values()})
-
 
 class Credential():
     def __init__(self, password, fn_pickle=None):
@@ -109,7 +107,7 @@ def get_cookie():
     from selenium.webdriver.support.ui import WebDriverWait as wait
 
     if platform == 'darwin':
-        path_chromedriver = '/Users/files/work/package/chromedriver'
+        path_chromedriver = '/Users/files/work/package/chrome_v90/chromedriver'
     else:
         path_chromedriver = '/home/chenh19/tools/chromedriver2.35'
     option = webdriver.ChromeOptions()
@@ -248,12 +246,10 @@ def dump_json(obj, fn):
 
 
 def get_file_extension(fn):
-
     m = re.match(r'.*?\.(bam|bai|cnv|fastq|fq|gvcf|vcf)\b', fn.lower())
-    convert = {'bai': 'bam', 'fq': 'fastq'}
     if m:
         try:
-            return convert[m.group(1)]
+            return ft_convert[m.group(1)]
         except:
             return m.group(1)
     else:
@@ -613,6 +609,10 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
 
             # which include the amazon presigned URL
             ext = get_file_extension(fn)
+            try:
+                ext = ft_convert[ext]
+            except:
+                raise
             if get_aws_ft and len(get_aws_ft) > 0 and ext not in get_aws_ft:
                 logger.debug(f'skip update amazon link due to file type limit: {fn} ext={ext}, valid ft={get_aws_ft}')
                 download = 'NA'
@@ -1054,7 +1054,6 @@ cd - 2>/dev/null >/dev/null
                 out_bam.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
                 print(f'<span><b>{rel_to_proband}:    </b></span><a href="{url}">{fn}</a></br></br>', file=html_bam)
             elif re.match(r'.+\.cnv\.vcf(\.gz)?$', fn) and 'cnv' in update_aws_ft:
-
                 out_cnv.write(f'size=$(stat -c %s origin/{fn} 2>/dev/null);if [[ "$size" -lt 1000 ]];then wget "{url}" -c -O "origin/{fn}";\nelse echo already exist: "origin/{fn}";fi\n')
             elif re.match(r'.+\.fastq.gz', fn) and 'fastq' in update_aws_ft:
                 out.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
@@ -1177,8 +1176,6 @@ if __name__ == "__main__":
     pw_accre_data = '/home/chenh19/data/udn'
     pw_accre_scratch = '/home/chenh19/s/udn/upload'
 
-    ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'vcf', 'fq': 'fastq'}
-    ft_convert.update({_: _ for _ in ft_convert.values()})
 
     upload_file_list = ['pheno.keywords.txt', 'download.info.*.txt']  # upload these files to scratch and data of ACCRE
 

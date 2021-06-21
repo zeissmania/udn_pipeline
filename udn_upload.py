@@ -28,6 +28,7 @@ ps.add_argument('info_file', help="""the file containing the amazon download lin
 ps.add_argument('-remote', '-r', '-remote_pw', dest='remote_pw', help="""the remote path, if not exist, would create one. start from the root path, donot include the leading and ending slash. dropbox is like UDN12345/proband_UDN12345  for emedgene is like UDN12345""", default=None, nargs='?')
 ps.add_argument('-ft', help="""the file type to upload, could be multiple types sep by space, such as fastq, fq, vcf, bam, default = fastq""", nargs='*')
 ps.add_argument('-pw', help="""download file output path, default is pwd""")
+ps.add_argument('-profile', help="""aws profile, default=emedgene, other valid could be pacbio""", default='emedgene')
 ps.add_argument('-demo', help="""demo mode would not actually download or upload, or create remote folder""", action='store_true')
 ps.add_argument('-rm', '-delete', help="""flag, if set, would delete the downloaded file from local disk when uploading is done""", action='store_true')
 ps.add_argument('-asis', help="""use the remote_pw in the cmd line input, do not do the re-format, default is False""", action='store_true')
@@ -68,7 +69,7 @@ def build_remote_subfolder(name):
     if dest == 'dropbox' and not demo:
         os.system(f'{dock} dbxcli mkdir {name}/ >>{dest}.create_folder.log 2>{dest}.create_folder.log')
     elif dest == 'emedgene' and not demo:
-        os.system(f'{dock} aws s3api put-object --bucket emg-auto-samples --key Vanderbilt/upload/{name}/ >>{dest}.create_folder.log 2>{dest}.create_folder.log')
+        os.system(f'{dock} aws s3api put-object --profile {profile} --bucket emg-auto-samples --key Vanderbilt/upload/{name}/ >>{dest}.create_folder.log 2>{dest}.create_folder.log')
 
 def get_file_extension(fn):
     m = re.match(r'.*?\.(bam|bai|cnv|fastq|fq|gvcf|vcf)\b', fn.lower())
@@ -481,9 +482,13 @@ if __name__ == "__main__":
 
     logger = getlogger()
 
-    dest = {'dropbox': 'dropbox', 'db': 'dropbox', 'emedgene': 'emedgene', 'em': 'emedgene', 'ed':'emedgene'}[args.dest]
+    convert1 = {'dropbox': 'dropbox', 'db': 'dropbox', 'emedgene': 'emedgene', 'em': 'emedgene', 'ed':'emedgene'}
+    convert2 = {'emedgene': 'emedgene', 'em': 'emedgene', 'ed':'emedgene', 'pacbio': 'pacbio', 'pac': 'pacbio'}
+    dest = convert1[args.dest]
     demo = args.demo
     lite = args.lite
+    profile = args.profile
+    profile = convert2[profile]
     asis = args.asis  # use the remote_pw in the cmd line input, do not do the re-format
     rm = args.rm
     pw = args.pw or os.getcwd()
