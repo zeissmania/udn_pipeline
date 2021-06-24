@@ -263,7 +263,7 @@ def format_comment(comment):
     return '\n\n'.join(tmp)
 
 
-def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=None, sequence_type_desired=None, demo=False, get_aws_ft=None, udn_raw=None, valid_family=None, lite_mode=None):
+def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=None, sequence_type_desired=None, demo=False, get_aws_ft=None, udn_raw=None, valid_family=None, lite_mode=None, udn_proband=None):
     """
     rel_to_proband, if run as proband, this is None, otherwize, this func is called during geting the relatives of proband, and specified
     info_passed_in,  {'affected': rel_aff, 'seq_status': have_seq}   include the affect state, sequenced_state, only valid when called during geting the relatives of proband, and specified
@@ -462,7 +462,7 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
                 rel_to_proband_tmp = f'{rel_to_proband_tmp}#{rel_seq}'
 
 
-            res_all = get_all_info(rel_udn, cookie, rel_to_proband=rel_to_proband_tmp, res_all=res_all, info_passed_in={'affected': rel_aff, 'seq_status': have_seq}, demo=demo, get_aws_ft=get_aws_ft, valid_family=valid_family, lite_mode=lite_mode)
+            res_all = get_all_info(rel_udn, cookie, rel_to_proband=rel_to_proband_tmp, res_all=res_all, info_passed_in={'affected': rel_aff, 'seq_status': have_seq}, demo=demo, get_aws_ft=get_aws_ft, valid_family=valid_family, lite_mode=lite_mode, udn_proband=udn_proband)
             # logger.info(res_all.keys())
 
         # patient dignosis
@@ -522,8 +522,10 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
     seq_type_convert.update({str(k): v for k, v in seq_type_convert.items()})
     files = []
     res['bayler_report'] = []
+    res['seq_id'] = []
 
     for json in json_all:
+        res['seq_id'].append([json["id"], rel_to_proband])
         sequence_type_raw = json['sequencing_type']
         try:
             sequence_type = seq_type_convert[sequence_type_raw]
@@ -542,34 +544,35 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
 
         files_raw = json['sequencingfiles']
         logger.info(f'\t{rel_to_proband}: {sequence_type} seq_id={json["id"]}  total files={len(files_raw)} ')
+
         for n_fl, ifl in enumerate(files_raw):
             # each file is like
-            # {'udn_id': ['UDN139529'],
+            # demo_format = {'udn_id': ['UDN139529'],
             #     'sequence_id': [1984],
             #     'uuid': '9636f625-4b3d-4888-82d5-0db65fd1fd39',
             #     'fileserviceuuid': '2e43d4af-80fe-48cc-83ac-ce38f06e393d',
             #     'filename': 'UDN139529-HHG3FCCXY_s7_SL285308-recal.bai',
             #     'sequencing_site': 'mcw',
             #     'complete': True,
-                #     'file_data': {'creationdate': '2018-01-30T16:25:49-05:00',
-                #     'modifydate': '2018-01-30T16:25:49-05:00',
-                #     'description': 'UDN139529 sequenced at HudsonAlpha Institute for Biotechnology',
-                #     'tags': [],
-                #     'locations': [{'url': 'S3://udnarchive/b3d1b663-ff21-4d3d-89dc-406fc2bd6169/UDN139529-HHG3FCCXY_s7_SL285308-recal.bai',
-                #     'storagetype': 's3',
-                #     'uploadComplete': '2018-01-30T16:25:56-05:00',
-                #     'id': 403269,
-                #     'filesize': 8843928}],
-                #     'uuid': '2e43d4af-80fe-48cc-83ac-ce38f06e393d',
-                #     'filename': 'UDN139529-HHG3FCCXY_s7_SL285308-recal.bai',
-                #     'expirationdate': '2018-08-18',
-                #     'owner': {'email': 'jharris@hudsonalpha.org'},
-                #     'permissions': ['udn'],
-                #     'id': 35655,
-                #     'metadata': {'md5': 'b6edcdb45a938fc781555918889af4e7',
-                #     'patientid': 'UDN139529',
-                #     'coverage': '84.1278688742',
-                #     'otherinfo': 'info'}}},
+            #     'file_data': {'creationdate': '2018-01-30T16:25:49-05:00',
+            #     'modifydate': '2018-01-30T16:25:49-05:00',
+            #     'description': 'UDN139529 sequenced at HudsonAlpha Institute for Biotechnology',
+            #     'tags': [],
+            #     'locations': [{'url': 'S3://udnarchive/b3d1b663-ff21-4d3d-89dc-406fc2bd6169/UDN139529-HHG3FCCXY_s7_SL285308-recal.bai',
+            #     'storagetype': 's3',
+            #     'uploadComplete': '2018-01-30T16:25:56-05:00',
+            #     'id': 403269,
+            #     'filesize': 8843928}],
+            #     'uuid': '2e43d4af-80fe-48cc-83ac-ce38f06e393d',
+            #     'filename': 'UDN139529-HHG3FCCXY_s7_SL285308-recal.bai',
+            #     'expirationdate': '2018-08-18',
+            #     'owner': {'email': 'jharris@hudsonalpha.org'},
+            #     'permissions': ['udn'],
+            #     'id': 35655,
+            #     'metadata': {'md5': 'b6edcdb45a938fc781555918889af4e7',
+            #     'patientid': 'UDN139529',
+            #     'coverage': '84.1278688742',
+            #     'otherinfo': 'info'}}},
 
             if n_fl % 5 == 1 and n_fl > 1:
                 time.sleep(5)
@@ -578,6 +581,7 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
             fl_size = ifl['file_data']['locations'][0]['filesize']
             fn = ifl['file_data']['filename']
             file_uuid = ifl['uuid']
+            date_upload = ifl['file_data']['locations'][0]['uploadComplete']
             fl_expire = ifl['file_data']['expirationdate']
             fl_assembly = ifl['file_data']['metadata'].get('assembly')
             fl_md5 = ifl['file_data']['metadata'].get('md5sum') or ifl['file_data']['metadata'].get('md5')
@@ -625,8 +629,7 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
                     sys.exit(1)
                 logger.info(f'{sequence_type} seq_id={json["id"]}: {fn} demo={demo}, amazon link resolved')
 
-
-            files.append({'download': download, 'relative': rel_to_proband, 'file_uuid': file_uuid, 'fn': fn, 'url': fl_url, 'complete': completed, 'size': fl_size,
+            files.append({'download': download, 'relative': rel_to_proband, 'file_uuid': file_uuid, 'fn': fn, 'url': fl_url, 'complete': completed, 'size': fl_size, 'date_upload': date_upload,
                           'expire': fl_expire, 'build': fl_assembly, 'assembly': fl_assembly, 'md5': fl_md5, 'type': fl_type, 'seq_type': sequence_type})
     res['files'] = files
 
@@ -639,6 +642,28 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
             logger.error(f'fail to parse the result dict, try again')
             raise
     return res_all
+
+
+def get_html_file_table(rel_to_proband, seq_id, headers, udn_proband):
+
+    url = f'https://gateway.undiagnosed.hms.harvard.edu/patient/sequence/{seq_id}/files/'
+    r = requests.request('GET', url, headers=headers)
+    r = bs(r.text, features='lxml')
+    tb = r.find('table')
+    tb = repr(tb)
+    fn = f'{udn_proband}_sequencing_file_list.html'
+    if not os.path.exists(fn):
+        o = open(fn, 'w')
+        o.write(f"<html>\n")
+    else:
+        o = open(fn, 'a')
+
+    o.write(f"<h1>{rel_to_proband} Seq_id = {seq_id}<h1>")
+    o.write(tb)
+    print('<br>' *3, file=o)
+    print('\n'*2, file=o)
+    o.close()
+
 
 def get_amazon_download_link(fn, file_uuid, header_cookie, n=0, demo=False):
     if demo:
@@ -750,7 +775,6 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
     un-used = .vcf.gz, .joint.vcf,  .gvcf.gz,
     """
 
-
     update_aws_ft = set([ft_convert[_] for _ in update_aws_ft]) if update_aws_ft else set(['fastq', 'cnv'])
 
 
@@ -761,6 +785,16 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
 
     logger.info(f'keys for the result: {res.keys()}')
     proband_id = res['Proband']['simpleid']
+
+
+    cookie = cookie or get_cookie()
+    header_cookie = get_header_cookie(cookie)
+    if not cookie:
+        logger.error('fail to get cookie, can\'t get the amazon s3 presigned URL, exit')
+        return 0
+
+    # export the sequencing html table
+
 
     # filter on the valid_family
     if valid_family is not None:
@@ -775,12 +809,6 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
 
     affect_convert_to_01 = {'Affected': 1, 'Unaffected': 0, '3 / Unaffected': 0, '2 / Affected': 1, 'Unaffected / 3': 0, 'Affected / 2': 1, 'Unknown': -1}
     if renew_amazon_link:
-        cookie = cookie or get_cookie()
-        header_cookie = get_header_cookie(cookie)
-        if not cookie:
-            logger.error('fail to get cookie, can\'t get the amazon s3 presigned URL, exit')
-            return 0
-
         for rel_to_proband, v in res.items():
             logger.info(f'renew amazon download link for {rel_to_proband}')
             if 'files' not in v:
@@ -884,6 +912,13 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
     cfg_info = {'father': '', 'mother':'', 'male':[], 'female':[], 'other': []}
 
     for rel_to_proband, irel in res.items():
+        if toggle_get_html_file_table:
+            for seq_id, rel_tmp in irel['seq_id']:
+                if rel_tmp != rel_to_proband:
+                    logger.error(f'not match: {rel_tmp} {rel_to_proband}')
+                    sys.exit(1)
+                get_html_file_table(rel_tmp, seq_id, headers=header_cookie, udn_proband=proband_id)
+
         if rel_to_proband == 'Proband':
             continue
         try:
@@ -891,7 +926,7 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
             rel_gender = irel['gender']
         except:
             tmp_set = set(['simpleid', 'affect', 'gender'])
-            logger.info(f'{rel_to_proband}: key not found: {[_ for _ in tmp_set if _ not in irel]}')
+            logger.info(f'{rel_to_proband}: key not found: {[_ for _ in tmp_set if _ not in irel]}, keys={irel.keys()}')
             continue
 
         if not irel.get('files'):
@@ -1043,6 +1078,7 @@ cd - 2>/dev/null >/dev/null
             size = ifl['size']
             build = ifl['build']
             md5 = ifl['md5']
+            # date_upload = ifl.get('date_upload') or 'NA'
             seq_type = ifl.get('seq_type')
 
             if re.match(r'.+\.bai$', fn) and 'bam' in update_aws_ft:
@@ -1147,6 +1183,7 @@ if __name__ == "__main__":
     args = ps.parse_args()
     print(args)
 
+    toggle_get_html_file_table = 0 if args.lite else 1
 
     if platform == 'darwin':
         root = '/Users/files/work/cooperate/udn/cases'
@@ -1277,6 +1314,12 @@ if __name__ == "__main__":
 
         fn_udn_api_pkl = f'{root}/{udn_raw}/{udn}.udn_api_query.pkl'
 
+        if toggle_get_html_file_table:
+            try:
+                os.unlink(f'{udn}_sequencing_file_list.html')
+            except:
+                pass
+
         if os.path.exists(fn_udn_api_pkl):
             logger.info('directly load API query result from pickle file')
             res = pickle.load(open(fn_udn_api_pkl, 'rb'))
@@ -1287,13 +1330,16 @@ if __name__ == "__main__":
 
             parse_api_res(res, cookie=cookie, update_aws_ft=update_aws_ft, renew_amazon_link=renew_amazon_link, demo=demo, udn_raw=udn_raw, valid_family=valid_family)
 
+            with open(fn_udn_api_pkl, 'wb') as out:
+                pickle.dump(res, out)
+
             if upload:
                 for ifl in upload_file_list:  # file name can't contain space
                     logger.info(f'update {ifl} to  ACCRE: {udn_raw}')
                     os.system(f"""sftp va:{pw_accre_data}/{udn_raw} <<< $'put {ifl}' >/dev/null""")
                     os.system(f"""sftp va:{pw_accre_scratch}/{udn_raw} <<< $'put {ifl}' >/dev/null""")
         else:
-            res = get_all_info(udn, cookie=cookie, demo=demo, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite)
+            res = get_all_info(udn, cookie=cookie, demo=demo, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite, udn_proband=udn)
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
             if upload:
