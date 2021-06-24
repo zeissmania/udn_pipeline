@@ -28,8 +28,10 @@ ps.add_argument('info_file', help="""the file containing the amazon download lin
 ps.add_argument('-remote', '-r', '-remote_pw', dest='remote_pw', help="""the remote path, if not exist, would create one. start from the root path, donot include the leading and ending slash. dropbox is like UDN12345/proband_UDN12345  for emedgene is like UDN12345""", default=None, nargs='?')
 ps.add_argument('-ft', help="""the file type to upload, could be multiple types sep by space, such as fastq, fq, vcf, bam, default = fastq""", nargs='*')
 ps.add_argument('-pw', help="""download file output path, default is pwd""")
+ps.add_argument('-profile', help="""aws profile, default=emedgene, other valid could be pacbio""", default='emedgene')
 ps.add_argument('-demo', help="""demo mode would not actually download or upload, or create remote folder""", action='store_true')
 ps.add_argument('-rm', '-delete', help="""flag, if set, would delete the downloaded file from local disk when uploading is done""", action='store_true')
+ps.add_argument('-noupload', '-noup', 'downonly', help="""download only, don't upload the files""", action='store_true')
 ps.add_argument('-asis', help="""use the remote_pw in the cmd line input, do not do the re-format, default is False""", action='store_true')
 ps.add_argument('-lite', '-ck', help="""toggle, just check, donot build script""", action='store_true')
 args = ps.parse_args()
@@ -68,7 +70,7 @@ def build_remote_subfolder(name):
     if dest == 'dropbox' and not demo:
         os.system(f'{dock} dbxcli mkdir {name}/ >>{dest}.create_folder.log 2>{dest}.create_folder.log')
     elif dest == 'emedgene' and not demo:
-        os.system(f'{dock} aws s3api put-object --bucket emg-auto-samples --key Vanderbilt/upload/{name}/ >>{dest}.create_folder.log 2>{dest}.create_folder.log')
+        os.system(f'{dock} aws s3api put-object --profile {profile} --bucket emg-auto-samples --key Vanderbilt/upload/{name}/ >>{dest}.create_folder.log 2>{dest}.create_folder.log')
 
 def get_file_extension(fn):
     m = re.match(r'.*?\.(bam|bai|cnv|fastq|fq|gvcf|vcf)\b', fn.lower())
@@ -159,7 +161,7 @@ def get_remote_file_list(dest, remote_pw):
 def parse_info_file(info_file, remote_pw_in=None, ft=None):
     """
     the info file is like
-    rel_to_proband	fn	url	udn	seq_type	size	build	md5	url_s3  remote_pw
+    rel_to_proband\tfn\turl\tudn\tseq_type\tsize\tbuild\tmd5\turl_s3\tdate_upload\tremote_pw\n
     the last column is optional
     return is a dict key = filename, value = dict,   url, remote_full_path, expected_size, download_type
     ft  - a list, the file type for keep, default is fastq
@@ -417,7 +419,7 @@ def build_script(d):
                 if dest == 'dropbox':
                     print(f'{dock} dbxcli put {pw}/download/{fn} /{remote_pw}/{fn} > {pw}/log/upload.{dest}.{fn}.log 2>&1', file=out)
                 elif dest == 'emedgene':
-                    print(f"""
+                    out.write(f"""
 local_size=$(stat -c "%s" {fn_download} 2>/dev/null)
 
 # determine need to upload or not
@@ -443,7 +445,9 @@ if [[ "{size_exp}" -ne "na" ]] & [[ "$local_size" -ne "{size_exp}" ]];then
     echo local file not match with exp actual remote size=$remote_file_size, local_size=$local_size,  expected={size_exp}. skip uploading >> {fn_status}
     exit
 fi
-
+""")
+                    if not no_upload:
+                        out.write(f"""
 echo start uploading >> {fn_status}
 date +"%m-%d  %T">> {fn_status}
 {dock} aws s3 cp {pw}/download/{fn} s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn} > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log
@@ -466,7 +470,7 @@ elif [[ "{size_exp}" = "na" ]];then
     fi
 else
     echo after uploading, file size not match: local=$local_size , remote actual=$remote_file_size, expected={size_exp}: {fn} >> {fn_status}
-fi""", file=out)
+fi""")
 
 def get_prj_name():
     # get project name, not used
@@ -490,9 +494,14 @@ if __name__ == "__main__":
 
     logger = getlogger()
 
-    dest = {'dropbox': 'dropbox', 'db': 'dropbox', 'emedgene': 'emedgene', 'em': 'emedgene', 'ed':'emedgene'}[args.dest]
+    convert1 = {'dropbox': 'dropbox', 'db': 'dropbox', 'emedgene': 'emedgene', 'em': 'emedgene', 'ed':'emedgene'}
+    convert2 = {'emedgene': 'emedgene', 'em': 'emedgene', 'ed':'emedgene', 'pacbio': 'pacbio', 'pac': 'pacbio'}
+    dest = convert1[args.dest]
     demo = args.demo
     lite = args.lite
+    no_upload = args.noupload
+    profile = args.profile
+    profile = convert2[profile]
     asis = args.asis  # use the remote_pw in the cmd line input, do not do the re-format
     rm = args.rm
     pw = args.pw or os.getcwd()

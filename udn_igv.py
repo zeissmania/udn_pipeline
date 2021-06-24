@@ -158,11 +158,11 @@ new
         except:
             logger.warning(f'bai file not found: {lb}')
             continue
-        out.write(f'load "{url_bam}" index="{url_bai}"\nsquish\n')
+        out.write(f'load "{url_bam}" index="{url_bai}"\n')
 
     out.write("""
 load http://hgdownload.cse.ucsc.edu/goldenPath/hg38/database/refGene.txt.gz
-collapse
+collapse refGene.txt.gz
 
 """)
 
