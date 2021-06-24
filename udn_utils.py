@@ -26,11 +26,11 @@ pw_code = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(pw_code)
 from . import amelie_api
 
-redundant_words = set('am,is,in,the,are,to,for,of,a,an,one,two,three,four,at,on,type,activity,increased,decreased,low,level,high'.split(','))
+redundant_words = set('and,am,is,in,the,are,to,for,of,a,an,one,two,three,four,at,on,type,activity,increased,decreased,low,level,high'.split(','))
 
 sv_type_convert = {'<DEL>': 'deletion', '<DUP>': 'duplication'}
 col_keep_new_name = [
-    "anno_id", "chr_", "pos_s", "pos_e", "sv_type", "filter", "QUAL", "data", "gn", "sv_len", "exon_span",
+    "anno_id", "chr_", "pos_s", "pos_e", "sv_len", "sv_type", "filter", "QUAL", "data", "gn", "exon_span",
     "af_dgv_gain", "af_dgv_loss", "af_gnomad", "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance",
     "annot_ranking"]
 
@@ -38,12 +38,12 @@ col_keep_raw_name = ['AnnotSV ID',
                      'SV chrom',
                      'SV start',
                      'SV end',
+                     'SV length',
                      'SV type',
                      'FILTER',
                      'QUAL',
                      'FORMAT',
                      'Gene name',
-                     'tx length',
                      'location',
                      'DGV_GAIN_Frequency',
                      'DGV_LOSS_Frequency',
@@ -271,7 +271,7 @@ class UDN_case():
                 if len(a) == 0:
                     continue
                 l_pheno.append([_.replace('+', ' ') for _ in a])
-
+        logger.warning(l_pheno)
 
         # refine the l_pheno,
 
@@ -281,16 +281,19 @@ class UDN_case():
 
         # logger.info(f'l_pheno={l_pheno}')
 
-        def refine_comment(s):
+        def refine_comment(s, symbol_to_word):
+            for symbol, word in symbol_to_word.items():
+                s = re.sub(symbol, f'**{word}**', s)
             s = re.sub(r'\*\*\*\*', '**', s)
-            # **developmental **delay**,
-            s = re.sub(r'\*\*(\w[^*]*?\s)\*\*(\w[^*]*?)\w\*\*', r' **\g<1>\g<2>**', s)
-            # s = re.sub(r'\*\*\s+\*\*', ' ', s)
-            s = re.sub(r'\*\*([^* ][^*]*?[^* ])\*\*([^* ][^*]*?[^* ])\*\*', r'**\g<1>\g<2>**', s)
-            s = re.sub(r'\*\*([^* ][^*]*?[^* ])\*\*([^* ][^*]*?[^* ])\*\*', r'**\g<1>\g<2>**', s)
+            # # **developmental **delay**,
+            # s = re.sub(r'\*\*(\w[^*]*?\s)\*\*(\w[^*]*?)\w\*\*', r' **\g<1>\g<2>**', s)
+            # # s = re.sub(r'\*\*\s+\*\*', ' ', s)
+            # s = re.sub(r'\*\*([^* ][^*]*?[^* ])\*\*([^* ][^*]*?[^* ])\*\*', r'**\g<1>\g<2>**', s)
+            # s = re.sub(r'\*\*([^* ][^*]*?[^* ])\*\*([^* ][^*]*?[^* ])\*\*', r'**\g<1>\g<2>**', s)
             return s
 
         # debug = 1
+        n_no_omim = 0
         for gn, v in d_gene.items():
             omim_id, cover_exon_flag, amelie_score = v
             if gn in res:
@@ -313,32 +316,38 @@ class UDN_case():
                     d_gene_comment_scrapy_new[gn] = comment.strip()
                     d_gene_comment_scrapy[gn] = comment.strip()
                 else:
+                    n_no_omim += 1
                     # logger.info(f'No pheno description found on OMIM: gn={gn}')
                     continue
 
             comment = comment.strip()
             comment = re.sub(r'\n\*\*', "\n" + '_'*50+'\n\n\n**', comment)
+            comment_compact = comment.lower().replace('\n', '')
             comment_list = comment.split('\n')
             comment_list = [_.strip() for _ in comment_list]
 
             # query the phenotype
-            highlighted_words = set()
-            highlighted_words |= redundant_words
+            highlighted_words = set() | redundant_words
+            symbol_to_word = {}
             # print(highlighted_words)
+            n_symbol = 0
             for ipheno in l_pheno:
                 n_word_match_meaning = 0  # for not exporting the items match of, is and to export into partial match file
                 n_matched_word = 0
-
                 matched_word = []
                 n_total_word = len(ipheno)
                 for _ in ipheno:
                     _ = _.lower()
-                    if _[0] == '@':
-                        word = _[1:]
+                    if _[0] == '@' or _.find('|') > 0:
+                        if _[0] == '@':
+                            word = _[1:]
+                        else:
+                            word = _
                         if word.find('|') > -1 and word.find('(') < 0:
                             word = re.sub(r'\b((?:\w+\|)+\w+)', r'(\g<1>)', word)
 
-                        m = re.match(fr'.*\b({word})\b', comment.lower().replace('\n', ''))
+                        #  {word}s  means that, the word could contain an extra s
+                        m = re.match(fr'.*\b({word}s?)\b', comment_compact)
 
                         # if debug:
                         #     logger.info(m)
@@ -354,11 +363,16 @@ class UDN_case():
 
                             if word not in redundant_words:
                                 n_word_match_meaning += 1
+                            else:
+                                continue
 
                             if word not in highlighted_words:
-
+                                n_symbol += 1
+                                symbol = f'@@{n_symbol}@@'
+                                # logger.info(f'{symbol}, {word} {gn}')
                                 highlighted_words.add(word)
-                                comment_list = [re.sub(fr'(?<!\*\*){word}', f'**{word}**', icomment, flags=re.I) if icomment[:2] != '**' and icomment[-2:] != '**' else icomment for icomment in comment_list]
+                                symbol_to_word[symbol] = word
+                                comment_list = [re.sub(word, symbol, icomment, flags=re.I) if icomment[:2] != '**' and icomment[-2:] != '**' else icomment for icomment in comment_list]
 
                     elif _[0] == '-':  # negative match, exclude
                         word = _[1:]
@@ -368,26 +382,36 @@ class UDN_case():
                     elif comment.lower().find(_) > -1:
                         word = _
                         n_matched_word += 1
+                        matched_word.append(word)
 
                         # avoid the highligh of meaningless single letter or pure number
                         if len(word) == 1 or re.match(r'^\d+$', word):
                             continue
 
+
                         if word not in redundant_words:
                             n_word_match_meaning += 1
-                        matched_word.append(word)
+                        else:
+                            continue
+
                         if word not in highlighted_words:
+                            n_symbol += 1
+                            symbol = f'@@{n_symbol}@@'
+                            # logger.info(f'{symbol}, {word} {gn}')
                             highlighted_words.add(word)
-                            comment_list = [re.sub(word, f'**{word}**', icomment, flags=re.I) if icomment[:2] != '**' else icomment for icomment in comment_list]
+                            symbol_to_word[symbol] = word
+                            comment_list = [re.sub(word, symbol, icomment, flags=re.I) if icomment[:2] != '**' and icomment[-2:] != '**' else icomment for icomment in comment_list]
 
                 if n_matched_word == n_total_word:
                     res[gn][0].append(ipheno)
                 elif n_word_match_meaning > 0:
                     res[gn][1].append(matched_word)
 
-            comment_list = [refine_comment(_) for _ in comment_list]
+            comment_list = [refine_comment(_, symbol_to_word) for _ in comment_list]
 
             res[gn][2] = '\n'.join(comment_list)
+
+        # logger.info(f'genes not found in OMIM: {n_no_omim} / {len(d_gene)}')
 
         if len(d_gene_comment_scrapy_new) > 0:
             with open(fn_gene_description_omim, 'a') as out:
@@ -709,9 +733,16 @@ class UDN_case():
             elif len(vcf) == 1:
                 v['vcf'] = vcf[0]
             else:
-                logger.error(
+
+                vcf1 = [_ for _ in vcf if _.find('update') > -1]
+                if len(vcf1) == 1:
+                    v['vcf'] = vcf[0]
+                    logger.warning(f'multiple vcf ({len(vcf)}) found, would use the file named as "updated" ')
+                else:
+                    logger.error(
                     f'multiple({len(vcf)}) VCF file for {v["lb"]}  {sample_id} under {vcf_file_path} found, please check ')
-                exit_flag = 1
+                    exit_flag = 1
+
 
             # get annotated file
             anno_exp = f'{pw}/{intermediate_folder}/{v["lb"]}.annotated.tsv'
@@ -846,6 +877,7 @@ class UDN_case():
             except:
                 logger.error('column not found in annot file: {raw} (for {new} ) ')
                 sys.exit(1)
+            # logger.info(f'{new} {raw} {cols.index(raw)}')
         # the actual "data" is the next column for "FORMAT"
         col_keep['data'] += 1
         return col_keep
@@ -868,6 +900,7 @@ class UDN_case():
         f_anno_exp = f'{pw}/{intermediate_folder}/{lb}.annotated'
 
         cmd = f'{self.annotsv_app} -genomeBuild GRCh38 -typeOfAnnotation split -outputFile {f_anno_exp} -SVinputFile {vcf} >{pw}/{intermediate_folder}/{lb}.annotsv.log 2>&1'
+
         logger.debug(cmd)
         os.system(cmd)
 
@@ -968,19 +1001,21 @@ class UDN_case():
                     fp.seek(0)
                 for i in fp:
                     a = i.strip().split('\t')
-                    anno_id, chr_, pos_s, pos_e, sv_type, _filter, qual, data, gn, \
-                        sv_len, exon_span, af_dgv_gain, af_dgv_loss, af_gnomad, \
+                    anno_id, chr_, pos_s, pos_e, sv_len, sv_type, _filter, qual, data, gn, \
+                        exon_span, af_dgv_gain, af_dgv_loss, af_gnomad, \
                         ddd_mode, ddd_disease, omim, phenotype, inheritance, annot_ranking = [a[col_keep[_]] for _ in col_keep_new_name]
 
                     # data = expon_span_tag/FORMAT
                     # sv_len = tx length (overlap of the SV and transcript)
                     # exon_span = location
+                    sv_len = int(pos_e) - int(pos_s)
+
 
                     chr_ = 'chr' + chr_.lower()
                     try:
                         sv_len = f'{int(sv_len)/1000:.1f}kbp'
                     except:
-                        logger.warning('wrong sv_len format: sv_len={sv_len}  : {gn}  {anno_id}')
+                        logger.warning(f'wrong sv_len format: sv_len={sv_len}  : {gn}  {anno_id}')
 
                     # copy number
                     try:
@@ -1105,12 +1140,11 @@ class UDN_case():
 
 
                     if rel != 'proband':
-                        copy_number = f'{copy_number}\nQUAL={qual}'
+                        copy_number = f'{copy_number}@QUAL={qual}'
                     print('\t'.join([anno_id, chr_, pos_s, pos_e, sv_type, qual, exon_span_tag, gn,
                                     sv_len, exon_span, af_dgv_gain, af_dgv_loss, af_gnomad,
                                     ddd_mode, ddd_disease, omim, phenotype, inheritance, annot_ranking, copy_number]), file=out)
             out.close()
-
 
     def group_sv_into_bin(self, sample_id) -> 'family[sample_id]["sv_dict"]':
         # read the father and mother annotation result, build a dict
@@ -1144,13 +1178,21 @@ class UDN_case():
             sys.exit(1)
 
         d_parent = {}
+        n = 0
         with open(fn) as fp:
             for i in fp:
+                n+=1
                 a = i.strip().split('\t')
                 # ["anno_id", "chr_", "pos_s", "pos_e", "sv_type", "qual", "exon_span_tag", "gn", "sv_len", "exon_span",
                 #     "af_dgv_gain", "af_dgv_loss", "af_gnomad", "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance",
                 #     "annot_ranking", 'copy_number']
-                chr_, s, e, sv_type, gn, cn = [a[_] for _ in [1, 2, 3, 4, 7, -1]]
+                try:
+                    chr_, s, e, sv_type, gn, cn = [a[_] for _ in [1, 2, 3, 4, 7, -1]]
+                except:
+                    logger.error(fn)
+                    logger.error(a)
+                    logger.error(n)
+                    sys.exit(1)
                 chr_ = chr_.lower()
                 try:
                     s = int(s)
