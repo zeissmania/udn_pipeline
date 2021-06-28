@@ -31,10 +31,14 @@ ps.add_argument('-pw', help="""download file output path, default is pwd""")
 ps.add_argument('-profile', help="""aws profile, default=emedgene, other valid could be pacbio""", default='emedgene')
 ps.add_argument('-demo', help="""demo mode would not actually download or upload, or create remote folder""", action='store_true')
 ps.add_argument('-rm', '-delete', help="""flag, if set, would delete the downloaded file from local disk when uploading is done""", action='store_true')
-ps.add_argument('-noupload', '-noup', 'downonly', help="""download only, don't upload the files""", action='store_true')
+ps.add_argument('-noupload', '-noup', '-downonly', '-no_upload', '-download_only', '-no_up', '-down_only', help="""download only, don't upload the files""", action='store_true')
 ps.add_argument('-asis', help="""use the remote_pw in the cmd line input, do not do the re-format, default is False""", action='store_true')
 ps.add_argument('-lite', '-ck', help="""toggle, just check, donot build script""", action='store_true')
+ps.add_argument('-force', '-f', help="""force create the shell file, even it already exist on the server""", action='store_true')
+
 args = ps.parse_args()
+args = ps.parse_args()
+
 
 # ps.add_argument('-prj', help="""project name for this run, if not set, would use the UDN infered from info file or current folder name""")
 
@@ -169,9 +173,24 @@ def parse_info_file(info_file, remote_pw_in=None, ft=None):
     d = {}
     d_exist_all = {}
 
-    ft = ft or ['fastq']
-    remote_base_pw = set()
 
+    # get the remote folder list
+    fn_all_folder = 'all_folders.txt'
+    os.system(f'{dock} aws s3 ls emg-auto-samples/Vanderbilt/upload/ > {fn_all_folder} ')
+    all_remote_folders = {}
+    pattern = re.compile(r'.*(UDN\d+)(.*|$)')
+    for i in open(fn_all_folder):
+        i = i.rsplit(' ', 1)[-1].strip()
+        i = re.sub('/$', '', i)
+        m = re.match(pattern, i)
+        if not m:
+            continue
+        all_remote_folders[m.group(1)] = i
+
+    ft = ft or ['fastq']
+    # remote_base_pw = set()
+
+    remote_pw_in = refine_remote_pw(remote_pw_in, all_remote_folders)
     logger.info(f'remote_pw_in={remote_pw_in}')
 
     with open(info_file) as fp:
@@ -201,15 +220,15 @@ def parse_info_file(info_file, remote_pw_in=None, ft=None):
             # get the remote_pw
             try:
                 remote_pw = a[9]
+                remote_pw = refine_remote_pw(remote_pw, all_remote_folders)
+
             except:
                 if not remote_pw_in:
                     logger.error('must specify the remote_pw, in info file or by parameter, exit..')
                     sys.exit(1)
                 remote_pw = remote_pw_in
 
-
-            remote_pw = refine_remote_pw(remote_pw)
-            remote_base_pw.add(remote_pw)
+            # remote_base_pw.add(remote_pw)
 
             try:
                 d_exist, sub_folders = d_exist_all[remote_pw]
@@ -360,7 +379,10 @@ def parse_info_file(info_file, remote_pw_in=None, ft=None):
 
 # udn
 
-def refine_remote_pw(remote_pw):
+def refine_remote_pw(remote_pw, all_remote_folders):
+    if asis:
+        return remote_pw
+
     remote_pw = re.sub('^/', '', remote_pw)
     remote_pw = re.sub('upload_?', '', remote_pw, flags=re.I)
     remote_pw = re.sub(r'^\d+_', '', remote_pw, 1)
@@ -369,6 +391,12 @@ def refine_remote_pw(remote_pw):
         return remote_pw
     else:
         m = m.groups()
+        udn_tmp = m[1]
+        if udn_tmp in all_remote_folders:
+            remote_pw = all_remote_folders[udn_tmp]
+            logger.info(f'remote folder already exist: {remote_pw}')
+            return remote_pw
+
         if m[0] is not None:
             p1 = re.sub('^_*', '', m[0])
             p1 = re.sub('_*$', '', p1)
@@ -400,12 +428,12 @@ def build_script(d):
             fn_script = f'{pw}/shell/{fn}.download_upload.{dest}.sh'
             fn_status = f'{pw}/log/status.{fn}.txt'
 
-            if v['uploaded']:
+            if v['uploaded'] and not  args.force:
                 os.system(f'mv  {fn_script} {pw}/shell_done/{fn}.download_upload.{dest}.sh 2>/dev/null')
                 continue
 
             with open(fn_script, 'w') as out:
-                if not v['downloaded']:
+                if args.force or not v['downloaded']:
                     if download_type == 'dropbox':
                         print(f'dbxcli get "{url}"  "{fn_download}" > {pw}/log/download.{fn}.log 2>&1', file=out)
                     else:
@@ -421,6 +449,15 @@ def build_script(d):
                 elif dest == 'emedgene':
                     out.write(f"""
 local_size=$(stat -c "%s" {fn_download} 2>/dev/null)
+
+# check local file
+if [[ "{size_exp}" -ne "na" ]] & [[ "$local_size" -ne "{size_exp}" ]];then
+    echo local file not match with exp actual remote size=$remote_file_size, local_size=$local_size,  expected={size_exp}. skip uploading >> {fn_status}
+    exit
+fi
+""")
+                    if not no_upload:
+                        out.write(f"""
 
 # determine need to upload or not
 remote_file_size=$({dock} aws s3 ls emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn}|tr -s " "|cut -d " " -f 3)
@@ -440,14 +477,7 @@ else
     echo before uploading, file size not match: actual remote size=$remote_file_size, local_size=$local_size,  expected={size_exp}: {fn} >> {fn_status}
 fi
 
-# check local file
-if [[ "{size_exp}" -ne "na" ]] & [[ "$local_size" -ne "{size_exp}" ]];then
-    echo local file not match with exp actual remote size=$remote_file_size, local_size=$local_size,  expected={size_exp}. skip uploading >> {fn_status}
-    exit
-fi
-""")
-                    if not no_upload:
-                        out.write(f"""
+
 echo start uploading >> {fn_status}
 date +"%m-%d  %T">> {fn_status}
 {dock} aws s3 cp {pw}/download/{fn} s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn} > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log
