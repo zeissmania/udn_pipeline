@@ -50,7 +50,7 @@ ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'vcf', 'fq': 'fastq'}
 ft_convert.update({_: _ for _ in ft_convert.values()})
 
 class Credential():
-    def __init__(self, password, fn_pickle=None):
+    def __init__(self, password, fn_pickle):
         """
         if fn_pickle == None, this could be used as dump the new credential
         """
@@ -1214,7 +1214,7 @@ if __name__ == "__main__":
     pw_accre_scratch = '/home/chenh19/s/udn/upload'
 
 
-    upload_file_list = ['pheno.keywords.txt', 'download.info.*.txt']  # upload these files to scratch and data of ACCRE
+    upload_file_list = ['pheno.keywords.txt', 'download.*']  # upload these files to scratch and data of ACCRE
 
     update_aws_ft = set([ft_convert[_] for _ in args.ft]) if args.ft else ['cnv', 'fastq']
 
