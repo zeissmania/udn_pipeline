@@ -69,6 +69,12 @@ def main(prj, pw=None, fn_selected_genes=None):
     header = d.columns
     prev_columns = list(header[:21])
 
+
+    # sort the rank
+    col_rank = d.columns[1]
+    d = d.sort_values(col_rank)
+    d[col_rank] = [_ + 1 for _ in range(len(d))]
+
     # sort the family
     family_info_raw = list(header[21:])
     family_info_priority = []
@@ -197,7 +203,7 @@ def add_header(ws, row, sv_type_long, family_info, formats):
 
     # pos
     col_idx = [1] + [4 + n_family + _ for _ in [0, 1, 2]]
-    values = [['Chr', 'Position', 'rs#', ''], ['Quality', 'GQ', 'Coverage', ''], ['GnomAD', 'DGV(dup/del)', 'GERP', 'CADD'], ['Missense Z', 'LoF pLI', '', '']]
+    values = [['Chr', 'Position', 'sv_len', ''], ['Quality', 'GQ', 'Coverage', ''], ['GnomAD', 'DGV(dup/del)', 'GERP', 'CADD'], ['Missense Z', 'LoF pLI', '', '']]
 
     for col, v in zip(col_idx, values):
         for i_row, i in enumerate(v):
@@ -213,7 +219,7 @@ def add_data(ws, row, data, n_family, formats):
         print(data[:19])
     # exon_span_tag = '' if exon_span_tag == np.nan else exon_span_tag
     cn_proband = data[20]
-    cn_family = list(data[21:])
+    cn_family = [_.replace('@', '\n') for _ in list(data[21:])]
 
     if len(cn_family) != n_family - 1:
         print(f'error, the family number count in file({len(cn_family)}) and Family info({n_family}) list are differnet !')
@@ -235,7 +241,7 @@ def add_data(ws, row, data, n_family, formats):
     ws.write_string(row + 3, col, sv_len, cell_format=formats['fmt_txt'])
 
     # write merged cells
-    col_idx = [0, 3] + [4 + _ for _ in range(n_family)] + [4 + n_family + _ for _ in [3, 4, 6] ]
+    col_idx = [0, 3] + [4 + _ for _ in range(n_family)] + [4 + n_family + _ for _ in [3, 4, 6]]
     values = [gn, sv_type, cn_proband] + cn_family + ['', '', '']
     for col, v in zip(col_idx, values):
          ws.merge_range(row, col, row + 3, col, v, cell_format=formats['fmt_txt'])

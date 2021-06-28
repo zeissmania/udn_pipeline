@@ -74,7 +74,8 @@ def build_remote_subfolder(name):
 
 def get_file_extension(fn):
     m = re.match(r'.*?\.(bam|bai|cnv|fastq|fq|gvcf|vcf)\b', fn.lower())
-    convert = {'bai': 'bam', 'fq': 'fastq', 'gvcf': 'vcf'}
+    convert = {'bai': 'bam', 'fq': 'fastq', 'gvcf': 'vcf', 'cnv.vcf': 'cnv'}
+    convert.update({_: _ for _ in convert.values()})
     if m:
         try:
             return convert[m.group(1)]
@@ -90,14 +91,14 @@ def get_remote_file_list(dest, remote_pw):
     """
     logger.info(f'remote_pw={remote_pw}, dest={dest}')
     remote_pw_plain = re.sub(r'\W+', '_', remote_pw)
-    fn_exist_complete = f'{pw}/remote.existing_files.{remote_pw_plain}.completed.txt'
+    # fn_exist_complete = f'{pw}/remote.existing_files.{remote_pw_plain}.completed.txt'
 
     fn_exist = f'{pw}/remote.existing_files.{remote_pw_plain}.txt'
-    if not os.path.exists(fn_exist_complete):
-        if dest == 'dropbox':
-            os.system(f'{dock} dbxcli ls -R /{remote_pw} -l > {fn_exist}')
-        elif dest == 'emedgene':
-            os.system(f'{dock} aws s3 ls emg-auto-samples/Vanderbilt/upload/{remote_pw}/ --recursive > {fn_exist}')
+    # if not os.path.exists(fn_exist_complete):
+    if dest == 'dropbox':
+        os.system(f'{dock} dbxcli ls -R /{remote_pw} -l > {fn_exist}')
+    elif dest == 'emedgene':
+        os.system(f'{dock} aws s3 ls emg-auto-samples/Vanderbilt/upload/{remote_pw}/ --recursive > {fn_exist}')
 
     d_exist = {}
     sub_folders = set()
@@ -163,7 +164,6 @@ def parse_info_file(info_file, remote_pw_in=None, ft=None):
     rel_to_proband\tfn\turl\tudn\tseq_type\tsize\tbuild\tmd5\turl_s3\tdate_upload\tremote_pw\n
     the last column is optional
     return is a dict key = filename, value = dict,   url, remote_full_path, expected_size, download_type
-
     ft  - a list, the file type for keep, default is fastq
     """
     d = {}
@@ -223,6 +223,7 @@ def parse_info_file(info_file, remote_pw_in=None, ft=None):
                 logger.debug(f'file skipped due to file type not selected: {ext}  - {fn}')
                 continue
 
+
             rel = re.sub(r'\W+', '_', rel)
             rel = '' if not rel or rel.lower() == 'na' else f'{rel}_'
 
@@ -238,9 +239,9 @@ def parse_info_file(info_file, remote_pw_in=None, ft=None):
             name = f'{rel}{iudn}'
             name = re.sub(r'^[\W_]*(.*?)[\W_]*$', '\g<1>', name)
 
-            if url.lower() == 'na':
-                logger.warning(f'download url not available: {fn}')
-                continue
+            # if url.lower() == 'na':
+            #     logger.warning(f'URL = NA : {fn}')
+
             fn_download = f'{pw}/download/{fn}'
 
             downloaded = 0
@@ -255,8 +256,10 @@ def parse_info_file(info_file, remote_pw_in=None, ft=None):
                     if size_local == 0:
                         os.remove(fn_download)
                     elif not demo:
-                        os.symlink(fn_download, f'{fn_download}.bad')
-
+                        try:
+                            os.symlink(fn_download, f'{fn_download}.bad')
+                        except:
+                            pass
             try:
                 size_remote = d_exist[fn][1]
             except:
@@ -278,17 +281,11 @@ def parse_info_file(info_file, remote_pw_in=None, ft=None):
                 d[remote_pw] = {fn: v}
 
     # check if all files have been uploaded
-    for remote_pw, v in d.items():
-        remote_pw_plain = re.sub(r'\W+', '_', remote_pw)
-        fn_exist_complete = f'{pw}/remote.existing_files.{remote_pw_plain}.completed.txt'
-        all_uploaded = 1 if all([_['uploaded'] for _ in v.values()]) else 0
-        if all_uploaded:
-            # logger.info(f'All files were uploaded!')
-            with open(fn_exist_complete, 'w') as out:
-                print('done', file=out)
+    # for remote_pw, v in d.items():
+    #     remote_pw_plain = re.sub(r'\W+', '_', remote_pw)
+    #     all_uploaded = 1 if all([_['uploaded'] for _ in v.values()]) else 0
 
     logger.debug(d)
-
     sub_folders_exist = set()
     for remote_pw, v in d_exist_all.items():
         i = set([f'{remote_pw}/{name}' for name in v[1]])
@@ -317,11 +314,15 @@ def parse_info_file(info_file, remote_pw_in=None, ft=None):
     n_downloaded = 0
     n_uploaded = 0
     n_desired = 0
-    n_need_upload = 0
+    need_upload = []
+    invalid_url = []
+
 
     for _, v1 in d.items():
         for fn, v in v1.items():
             n_desired += 1
+            if v['url'].lower() == 'na':
+                invalid_url.append(fn)
             if v['uploaded']:
                 logger.info(f'file already uploaded: {fn}')
                 n_uploaded += 1
@@ -329,17 +330,25 @@ def parse_info_file(info_file, remote_pw_in=None, ft=None):
                 continue
 
             if not v['downloaded']:
-                n_need_upload += 1
+                need_upload.append(fn)
+                # n_need_upload += 1
             else:
                 n_downloaded += 1
-                n_need_upload += 1
+                need_upload.append(fn)
+                # n_need_upload += 1
 
+    n_need_upload = len(need_upload)
     logger.info(f'total files = {n_desired}, need_to_upload={n_need_upload}, already exist in server = {n_uploaded}, already downloaded = {n_downloaded}')
 
-    if n_need_upload > 0:
+    n_invalid_url = len(invalid_url)
+    if n_need_upload > 0 or n_invalid_url > 0:
         print('\n', '!' * 50)
-        print(f'{n_need_upload}/{n_desired} files need to be uploaded')
         print(f'{n_downloaded}/{n_desired} files already downloaded')
+        print(f'{n_need_upload}/{n_desired} files need to be uploaded')
+        print('\t' + '\n\t'.join(need_upload))
+        if n_invalid_url > 0:
+            print(f'ERROR: {n_invalid_url} files with NA url:\n\t' + '\n\t'.join(invalid_url))
+
     else:
         print('\n', '*' * 50)
         print('Done, all files already uploaded')
@@ -444,7 +453,7 @@ date +"%m-%d  %T">> {fn_status}
 {dock} aws s3 cp {pw}/download/{fn} s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn} > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log
 echo upload completed
 date +"%m-%d  %T">> {fn_status}
-remote_file_size=$({dock} aws s3 ls emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn}|tr -s " "|cut -d " " -f 3)
+remote_file_size=$({dock} aws s3 ls emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn}|head -1|tr -s " "|cut -d " " -f 3)
 if [[ "$remote_file_size" -eq "{size_exp}" ]];then
     echo {fn} successfully uploaded to {remote_pw}/  filesize={size_exp} >> {fn_status}
     mv {pw}/shell/{fn}.download_upload.{dest}.sh {pw}/shell_done/{fn}.download_upload.{dest}.sh
