@@ -35,6 +35,8 @@ ps.add_argument('-noupload', '-noup', '-downonly', '-no_upload', '-download_only
 ps.add_argument('-asis', help="""use the remote_pw in the cmd line input, do not do the re-format, default is False""", action='store_true')
 ps.add_argument('-lite', '-ck', help="""toggle, just check, donot build script""", action='store_true')
 ps.add_argument('-force', '-f', help="""force create the shell file, even it already exist on the server""", action='store_true')
+ps.add_argument('-skip_download', '-skip', '-nodown', help="""skip download the files""", action='store_true')
+ps.add_argument('-force_upload', '-forceup', '-fu', help="""force upload the file to server, even the file size match with remote""", action='store_true')
 
 args = ps.parse_args()
 args = ps.parse_args()
@@ -70,11 +72,13 @@ def getlogger():
 
 
 def build_remote_subfolder(name):
-    logger.info(f'\tcreating subfolder: {name}')
     if dest == 'dropbox' and not demo:
+        logger.info(f'\tcreating subfolder: {name}')
         os.system(f'{dock} dbxcli mkdir {name}/ >>{dest}.create_folder.log 2>{dest}.create_folder.log')
     elif dest == 'emedgene' and not demo:
-        os.system(f'{dock} aws s3api put-object --profile {profile} --bucket emg-auto-samples --key Vanderbilt/upload/{name}/ >>{dest}.create_folder.log 2>{dest}.create_folder.log')
+        logger.info(f'building_subfolder Vanderbilt/upload/{name}/')
+        # os.system(f'{dock} aws s3api put-object --profile {profile} --bucket emg-auto-samples --key Vanderbilt/upload/{name}/ >>{dest}.create_folder.log 2>{dest}.create_folder.log')
+        os.system(f'{dock} aws s3api put-object --bucket emg-auto-samples --key Vanderbilt/upload/{name}/ >>{dest}.create_folder.log 2>{dest}.create_folder.log')
 
 def get_file_extension(fn):
     m = re.match(r'.*?\.(bam|bai|cnv|fastq|fq|gvcf|vcf)\b', fn.lower())
@@ -373,8 +377,6 @@ def parse_info_file(info_file, remote_pw_in=None, ft=None):
         print('Done, all files already uploaded')
     print('\n\n\n')
 
-
-
     return d
 
 # udn
@@ -425,6 +427,7 @@ def build_script(d):
             download_type = v['download_type']
 
             fn_download = f'{pw}/download/{fn}'
+            fn_download_chunk = fn_download.replace('.gz', '')
             fn_script = f'{pw}/shell/{fn}.download_upload.{dest}.sh'
             fn_status = f'{pw}/log/status.{fn}.txt'
 
@@ -433,7 +436,7 @@ def build_script(d):
                 continue
 
             with open(fn_script, 'w') as out:
-                if args.force or not v['downloaded']:
+                if not skip_download and (args.force or not v['downloaded']):
                     if download_type == 'dropbox':
                         print(f'dbxcli get "{url}"  "{fn_download}" > {pw}/log/download.{fn}.log 2>&1', file=out)
                     else:
@@ -449,14 +452,39 @@ def build_script(d):
                 elif dest == 'emedgene':
                     out.write(f"""
 local_size=$(stat -c "%s" {fn_download} 2>/dev/null)
-
+remote_file_size=$({dock} aws s3 ls emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn}|tr -s " "|cut -d " " -f 3)
+# echo $remote_file_size $local_size  >> {fn_status}
+# exit
 # check local file
 if [[ "{size_exp}" -ne "na" ]] & [[ "$local_size" -ne "{size_exp}" ]];then
     echo local file not match with exp actual remote size=$remote_file_size, local_size=$local_size,  expected={size_exp}. skip uploading >> {fn_status}
     exit
 fi
+
+# check md5sum
+if [[ ! -f {fn_download_chunk}.md5 ]];then
+    md5sum  {fn_download} >{fn_download_chunk}.md5 2>{fn_download_chunk}.md5.log
+fi
+
+# check file tail
+# if [[ ! -f {fn_download_chunk}.gztool.tail.txt ]];then
+#     gztool -t {fn_download} >{fn_download_chunk}.gztool.tail.txt 2>{fn_download_chunk}.gztool.log
+# fi
+
+if [[ ! -f {fn_download_chunk}.zcat.tail.txt ]];then
+    zcat {fn_download} |tail -20 >{fn_download_chunk}.zcat.tail.txt 2>{fn_download_chunk}.zcat.log
+fi
+
+# build the report
+udn_fq_report {fn_download}  -tofile
+
 """)
                     if not no_upload:
+                        cmd_tmp = '' if force_upload else f"""
+    mv {pw}/shell/{fn}.download_upload.{dest}.sh {pw}/shell_done/{fn}.download_upload.{dest}.sh
+    {rm_cmd}
+    exit
+"""
                         out.write(f"""
 
 # determine need to upload or not
@@ -465,16 +493,13 @@ if [[ -z $remote_file_size ]];then
    echo not uploaded yet  >> {fn_status}
 elif [[ "$remote_file_size" -eq "{size_exp}" ]];then
     echo {fn} successfully uploaded to {remote_pw}/  filesize={size_exp} >> {fn_status}
-    mv {pw}/shell/{fn}.download_upload.{dest}.sh {pw}/shell_done/{fn}.download_upload.{dest}.sh
-    {rm_cmd}
-    exit
+    {cmd_tmp}
 elif [[ "{size_exp}" = "na" ]] & [[ "$local_size" -eq "$remote_file_size" ]];then
     echo size check is not specified, remote_file_size=$remote_file_size local_filesize=$local_size >> {fn_status}
-    mv {pw}/shell/{fn}.download_upload.{dest}.sh {pw}/shell_done/{fn}.download_upload.{dest}.sh
-    {rm_cmd}
-    exit
+    {cmd_tmp}
 else
     echo before uploading, file size not match: actual remote size=$remote_file_size, local_size=$local_size,  expected={size_exp}: {fn} >> {fn_status}
+    exit
 fi
 
 
@@ -529,6 +554,10 @@ if __name__ == "__main__":
     dest = convert1[args.dest]
     demo = args.demo
     lite = args.lite
+    if lite:
+        demo=True
+    skip_download = args.skip_download
+    force_upload = args.force_upload
     no_upload = args.noupload
     profile = args.profile
     profile = convert2[profile]
@@ -583,8 +612,7 @@ if __name__ == "__main__":
     if node_name.find('viccbiostat120') > -1:
         dock = 'singularity exec /mnt/d/dock/centos.sif '
     elif node_name.find('vampire') > -1:
-        dock = 'singularity exec /data/cqs/chenh19/dock/centos.sif '
-
+        dock = 'singularity exec -B /fs0 /data/cqs/chenh19/dock/centos.sif '
 
     # remote path
     pw = re.sub('/$', '', pw)
