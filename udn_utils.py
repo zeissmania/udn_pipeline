@@ -1431,9 +1431,10 @@ class UDN_case():
                     if chr_ in bad_chr:
                         sv_in_bin = []
                     elif chr_ not in sv_dict:
-                        bad_chr.add(chr_)
-                        logger.warning(f'{chr_} not found in sv dict for {sample_type}')
-                        sv_in_bin = []
+                        if not (sex == 2 and chr_ == 'chry'):
+                            bad_chr.add(chr_)
+                            logger.warning(f'{chr_} not found in sv dict for {sample_type}')
+                            sv_in_bin = []
                     else:
                         # use try except
                         try:

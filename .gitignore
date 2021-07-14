@@ -1,2 +1,4 @@
+*.err
+*.log
 omim_map.pkl
 omim*.txt

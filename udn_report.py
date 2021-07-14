@@ -196,7 +196,7 @@ def add_header(ws, row, sv_type_long, family_info, formats):
 
     row += 1
     merged_cell_col_idx = [0, 2, 3] + [_ + 4 for _ in range(n_family)] + [_ + 7 + n_family for _ in [0, 1, 2, 3, 4]]
-    merged_cell_value = ['Gene', 'Change', 'Effect'] + family_info +['Baylor WGS', 'Emedgene', 'Yu Shyr', 'PreUDN Panel', 'Comments']
+    merged_cell_value = ['Gene', 'Change', 'Effect'] + family_info +['Baylor WGS', 'Emedgene/OPAL', 'Yu Shyr', 'PreUDN Panel', 'Comments']
     for col, v in zip(merged_cell_col_idx, merged_cell_value):
         ws.merge_range(row, col, row + 3, col, v, cell_format=formats['header_main'])
 
