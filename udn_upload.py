@@ -25,11 +25,11 @@ from argparse import RawTextHelpFormatter
 ps = arg.ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
 ps.add_argument('dest', help="""the destinition for the uploading, valid = dropbox/db, emedgene/em/ed""", choices=['emedgene', 'em', 'ed', 'dropbox', 'db'], nargs='?', default='emedgene')
 ps.add_argument('info_file', help="""the file containing the amazon download link, usually like download.info.UDN945671.txt""", nargs='?', default=None)
-ps.add_argument('-remote', '-r', '-remote_pw', dest='remote_pw', help="""the remote path, if not exist, would create one. start from the root path, donot include the leading and ending slash. dropbox is like UDN12345/proband_UDN12345  for emedgene is like UDN12345""", default=None, nargs='?')
+ps.add_argument('-remote', '-r', '-remote_pw', dest='remote_pw', help="""the remote path, if not exist, would create one. start from the root path, donot include the leading and ending slash. dropbox is like UDN12345/proband_UDN12345  for emedgene is like UDN12345, if the remote folder is not in the root path, include all the path from root, e.g. cases_202107/34_269_AA_UDN616750""", default=None, nargs='?')
 ps.add_argument('-ft', help="""the file type to upload, could be multiple types sep by space, such as fastq, fq, vcf, bam, default = fastq""", nargs='*')
 ps.add_argument('-pw', help="""download file output path, default is pwd""")
 ps.add_argument('-profile', help="""aws profile, default=emedgene, other valid could be pacbio""", default='emedgene')
-ps.add_argument('-demo', help="""demo mode would not actually download or upload, or create remote folder""", action='store_true')
+ps.add_argument('-demo', help="""demo mode, would not create remote folder, won't rename the local file with wrong file size""", action='store_true')
 ps.add_argument('-rm', '-delete', help="""flag, if set, would delete the downloaded file from local disk when uploading is done""", action='store_true')
 ps.add_argument('-noupload', '-noup', '-downonly', '-no_upload', '-download_only', '-no_up', '-down_only', help="""download only, don't upload the files""", action='store_true')
 ps.add_argument('-asis', help="""use the remote_pw in the cmd line input, do not do the re-format, default is False""", action='store_true')
@@ -40,6 +40,9 @@ ps.add_argument('-force_upload', '-forceup', '-fu', help="""force upload the fil
 
 args = ps.parse_args()
 args = ps.parse_args()
+
+ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'gvcf', 'fq': 'fastq', 'vcf': 'vcf'}
+ft_convert.update({_: _ for _ in ft_convert.values()})
 
 
 # ps.add_argument('-prj', help="""project name for this run, if not set, would use the UDN infered from info file or current folder name""")
@@ -72,26 +75,29 @@ def getlogger():
 
 
 def build_remote_subfolder(name):
-    if dest == 'dropbox' and not demo:
+    if demo:
+        logger.info(f'demo mode, skip building remote subfolder')
+        return 0
+    if dest == 'dropbox':
         logger.info(f'\tcreating subfolder: {name}')
         os.system(f'{dock} dbxcli mkdir {name}/ >>{dest}.create_folder.log 2>{dest}.create_folder.log')
-    elif dest == 'emedgene' and not demo:
+    elif dest == 'emedgene':
         logger.info(f'building_subfolder Vanderbilt/upload/{name}/')
         # os.system(f'{dock} aws s3api put-object --profile {profile} --bucket emg-auto-samples --key Vanderbilt/upload/{name}/ >>{dest}.create_folder.log 2>{dest}.create_folder.log')
         os.system(f'{dock} aws s3api put-object --bucket emg-auto-samples --key Vanderbilt/upload/{name}/ >>{dest}.create_folder.log 2>{dest}.create_folder.log')
 
 def get_file_extension(fn):
-    m = re.match(r'.*?\.(bam|bai|cnv|fastq|fq|gvcf|vcf)\b', fn.lower())
-    convert = {'bai': 'bam', 'fq': 'fastq', 'gvcf': 'vcf', 'cnv.vcf': 'cnv'}
-    convert.update({_: _ for _ in convert.values()})
+
+    m = re.match(r'.*?\.(bam|bai|cnv|fastq|fq|gvcf|vcf)\b(\.gz)?', fn.lower())
     if m:
         try:
-            return convert[m.group(1)]
+            return ft_convert[m.group(1)], m.group(2)
         except:
-            return m.group(1)
+            return m.group(1), m.group(2)
     else:
         logger.warning(f'unclear file type: {fn}')
-        return None
+        return None, None
+
 
 def get_remote_file_list(dest, remote_pw):
     """
@@ -166,36 +172,28 @@ def get_remote_file_list(dest, remote_pw):
 
     return d_exist, sub_folders
 
-def parse_info_file(info_file, remote_pw_in=None, ft=None):
+def parse_info_file(info_file, remote_pw_in=None, ft=None, gzip_only=None):
     """
     the info file is like
     rel_to_proband\tfn\turl\tudn\tseq_type\tsize\tbuild\tmd5\turl_s3\tdate_upload\tremote_pw\n
     the last column is optional
     return is a dict key = filename, value = dict,   url, remote_full_path, expected_size, download_type
     ft  - a list, the file type for keep, default is fastq
+    remote_base_dir, default is empty, would search from the root of the emedgen server , which is emg-auto-samples/Vanderbilt/upload/
+    gzip only, a set, if the ext is found in this set, then, the file must be gziped to get involved. e.g. if vcf in gzip_only, then,  the file named .vcf$ would not be included
     """
     d = {}
     d_exist_all = {}
 
-
-    # get the remote folder list
-    fn_all_folder = 'all_folders.txt'
-    os.system(f'{dock} aws s3 ls emg-auto-samples/Vanderbilt/upload/ > {fn_all_folder} ')
-    all_remote_folders = {}
-    pattern = re.compile(r'.*(UDN\d+)(.*|$)')
-    for i in open(fn_all_folder):
-        i = i.rsplit(' ', 1)[-1].strip()
-        i = re.sub('/$', '', i)
-        m = re.match(pattern, i)
-        if not m:
-            continue
-        all_remote_folders[m.group(1)] = i
+    if not isinstance(gzip_only, set):
+        gzip_only = set()
 
     ft = ft or ['fastq']
     # remote_base_pw = set()
 
-    remote_pw_in = refine_remote_pw(remote_pw_in, all_remote_folders)
     logger.info(f'remote_pw_in={remote_pw_in}')
+    remote_pw_in = refine_remote_pw(remote_pw_in)
+    logger.info(f'remote_pw afer refine={remote_pw_in}')
 
     with open(info_file) as fp:
         header = fp.readline()
@@ -224,7 +222,7 @@ def parse_info_file(info_file, remote_pw_in=None, ft=None):
             # get the remote_pw
             try:
                 remote_pw = a[9]
-                remote_pw = refine_remote_pw(remote_pw, all_remote_folders)
+                remote_pw = refine_remote_pw(remote_pw)
 
             except:
                 if not remote_pw_in:
@@ -241,11 +239,14 @@ def parse_info_file(info_file, remote_pw_in=None, ft=None):
                 d_exist_all[remote_pw] = (d_exist, sub_folders)
 
             # get the ext
-            ext = get_file_extension(fn)
+            ext, gz = get_file_extension(fn)
             if 'all' not in ft and ext not in ft:
                 logger.debug(f'file skipped due to file type not selected: {ext}  - {fn}')
                 continue
 
+            if ext in gzip_only and not gz:
+                logger.info(f'file skipped due to gzip file only: {fn}')
+                continue
 
             rel = re.sub(r'\W+', '_', rel)
             rel = '' if not rel or rel.lower() == 'na' else f'{rel}_'
@@ -270,15 +271,16 @@ def parse_info_file(info_file, remote_pw_in=None, ft=None):
             downloaded = 0
             if os.path.exists(fn_download):
                 size_local = os.path.getsize(fn_download)
-                if size_exp == 'na':
+                if size_local == 0:
+                    os.unlink(fn_download)
+                    logger.warning('empty file: {fn_download}')
+                elif size_exp == 'na':
                     downloaded = 1
                 elif size_local == size_exp:
                     downloaded = 1
                 else:
                     logger.warning(f'file downloaded, but size not match. exp = {size_exp}, local={size_local} : {fn_download}')
-                    if size_local == 0:
-                        os.remove(fn_download)
-                    elif not demo:
+                    if not demo:
                         try:
                             os.symlink(fn_download, f'{fn_download}.bad')
                         except:
@@ -346,6 +348,7 @@ def parse_info_file(info_file, remote_pw_in=None, ft=None):
             n_desired += 1
             if v['url'].lower() == 'na':
                 invalid_url.append(fn)
+                continue
             if v['uploaded']:
                 logger.info(f'file already uploaded: {fn}')
                 n_uploaded += 1
@@ -379,11 +382,36 @@ def parse_info_file(info_file, remote_pw_in=None, ft=None):
 
     return d
 
-# udn
 
-def refine_remote_pw(remote_pw, all_remote_folders):
+def refine_remote_pw(remote_pw):
     if asis:
         return remote_pw
+
+    remote_pw = re.sub('/$', '', remote_pw)
+    remote_base_dir = ''
+    tmp = remote_pw.rsplit('/', 1)
+    if len(tmp) == 2:
+        remote_base_dir = tmp[0] + '/'
+        remote_pw = tmp[-1]
+
+    # get the remote folder list
+    fn_all_folder = 'all_folders.txt'
+    os.system(f'{dock} aws s3 ls emg-auto-samples/Vanderbilt/upload/{remote_base_dir} > {fn_all_folder} ')
+    all_remote_folders = {}
+    pattern = re.compile(r'.*(UDN\d+)(.*|$)')
+    n = 0
+    for i in open(fn_all_folder):
+        i = i.rsplit(' ', 1)[-1].strip()
+        n += 1
+        i = re.sub('/$', '', i)
+        m = re.match(pattern, i)
+        if not m:
+            continue
+        all_remote_folders[m.group(1)] = f'{remote_base_dir}{i}'
+
+    if n == 0:
+        logger.error(f'folder not exist: emg-auto-samples/Vanderbilt/upload/{remote_base_dir}')
+        sys.exit(1)
 
     remote_pw = re.sub('^/', '', remote_pw)
     remote_pw = re.sub('upload_?', '', remote_pw, flags=re.I)
@@ -425,9 +453,10 @@ def build_script(d):
             size_exp = v['size']
             remote_pw = v['remote']
             download_type = v['download_type']
+            ext = fn.rsplit('.', 1)[-1]
 
             fn_download = f'{pw}/download/{fn}'
-            fn_download_chunk = fn_download.replace('.gz', '')
+            # fn_download_chunk = fn_download.replace('.gz', '')
             fn_script = f'{pw}/shell/{fn}.download_upload.{dest}.sh'
             fn_status = f'{pw}/log/status.{fn}.txt'
 
@@ -435,6 +464,8 @@ def build_script(d):
                 os.system(f'mv  {fn_script} {pw}/shell_done/{fn}.download_upload.{dest}.sh 2>/dev/null')
                 continue
 
+            if url.lower() == 'na':
+                continue
             with open(fn_script, 'w') as out:
                 if not skip_download and (args.force or not v['downloaded']):
                     if download_type == 'dropbox':
@@ -452,33 +483,34 @@ def build_script(d):
                 elif dest == 'emedgene':
                     out.write(f"""
 local_size=$(stat -c "%s" {fn_download} 2>/dev/null)
-remote_file_size=$({dock} aws s3 ls emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn}|tr -s " "|cut -d " " -f 3)
-# echo $remote_file_size $local_size  >> {fn_status}
-# exit
+if [[ $local_size -eq 0 ]];then
+    echo empty file
+    rm {fn_download}
+    exit
+fi
+
 # check local file
 if [[ "{size_exp}" -ne "na" ]] & [[ "$local_size" -ne "{size_exp}" ]];then
-    echo local file not match with exp actual remote size=$remote_file_size, local_size=$local_size,  expected={size_exp}. skip uploading >> {fn_status}
+    echo local file not match with exp local_size=$local_size,  expected={size_exp}. skip uploading >> {fn_status}
     exit
 fi
 
 # check md5sum
-if [[ ! -f {fn_download_chunk}.md5 ]];then
-    md5sum  {fn_download} >{fn_download_chunk}.md5 2>{fn_download_chunk}.md5.log
+if [[ ! -f {fn}.md5 ]];then
+    md5sum  {fn_download} >{pw}/download/{fn}.md5 2>{pw}/download/{fn}.md5.log
 fi
 
-# check file tail
-# if [[ ! -f {fn_download_chunk}.gztool.tail.txt ]];then
-#     gztool -t {fn_download} >{fn_download_chunk}.gztool.tail.txt 2>{fn_download_chunk}.gztool.log
-# fi
-
-if [[ ! -f {fn_download_chunk}.zcat.tail.txt ]];then
-    zcat {fn_download} |tail -20 >{fn_download_chunk}.zcat.tail.txt 2>{fn_download_chunk}.zcat.log
+""")
+                    if ext == 'gz':
+                        out.write(f"""
+if [[ ! -f {fn}.zcat.tail.txt ]];then
+    zcat {fn_download} |tail -20 >{pw}/download/{fn}.zcat.tail.txt 2>{pw}/download/{fn}.zcat.log
 fi
 
 # build the report
 udn_fq_report {fn_download}  -tofile
 
-""")
+                        """)
                     if not no_upload:
                         cmd_tmp = '' if force_upload else f"""
     mv {pw}/shell/{fn}.download_upload.{dest}.sh {pw}/shell_done/{fn}.download_upload.{dest}.sh
@@ -486,9 +518,9 @@ udn_fq_report {fn_download}  -tofile
     exit
 """
                         out.write(f"""
-
+cd {pw}/download
 # determine need to upload or not
-remote_file_size=$({dock} aws s3 ls emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn}|tr -s " "|cut -d " " -f 3)
+remote_file_size=$({dock} aws s3 ls emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn}|grep "{fn}$" | tr -s " "|cut -d " " -f 3)
 if [[ -z $remote_file_size ]];then
    echo not uploaded yet  >> {fn_status}
 elif [[ "$remote_file_size" -eq "{size_exp}" ]];then
@@ -585,23 +617,26 @@ if __name__ == "__main__":
         sys.exit(1)
 
     # get the file type to upload
-    ft = []
-    wrong_ft = []
-    ft_convert = {'fastq': 'fastq', 'fq': 'fastq', 'bam': 'bam', 'vcf': 'vcf', 'bai': 'bam'}
+    gzip_only = set()
+    ft = set()
 
     if not args.ft:
         ft = ['fastq']
     elif 'all' in args.ft:
         ft = ['all']
     else:
+        err = 0
         for i in args.ft:
+            ext = i.replace('.gz', '')
+            if i[-2:] == 'gz':
+                gzip_only.add(ext)
             try:
-                ft.append(ft_convert[i])
+                ft.add(ft_convert[ext])
             except:
-                wrong_ft.append(i)
-
-    if len(wrong_ft) > 0:
-        logger.warning(f'unkown file type found: {wrong_ft}')
+                logger.error(f'invalid filetype: {i}')
+                err = 0
+        if err:
+            sys.exit(1)
 
     if len(ft) == 0:
         logger.error(f'No file type selected! exit')
