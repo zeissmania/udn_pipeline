@@ -46,7 +46,7 @@ from bs4 import BeautifulSoup as bs
 base_url = 'https://gateway.undiagnosed.hms.harvard.edu/api'
 platform = sys.platform.lower()
 
-ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'vcf', 'fq': 'fastq'}
+ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'gvcf', 'fq': 'fastq', 'vcf': 'vcf'}
 ft_convert.update({_: _ for _ in ft_convert.values()})
 
 class Credential():
@@ -189,7 +189,7 @@ def get_cookie():
     return cookie
 
 
-def cleanup_memory():
+def cleanup_memory(driver):
     # try:
     #     print('now killing the chrome process')
     # except:
@@ -246,15 +246,15 @@ def dump_json(obj, fn):
 
 
 def get_file_extension(fn):
-    m = re.match(r'.*?\.(bam|bai|cnv|fastq|fq|gvcf|vcf)\b', fn.lower())
+    m = re.match(r'.*?\.(bam|bai|cnv|fastq|fq|gvcf|vcf)\b(\.gz)?', fn.lower())
     if m:
         try:
-            return ft_convert[m.group(1)]
+            return ft_convert[m.group(1)], m.group(2)
         except:
-            return m.group(1)
+            return m.group(1), m.group(2)
     else:
         logger.warning(f'unclear file type: {fn}')
-        return None
+        return None, None
 
 
 def format_comment(comment):
@@ -263,15 +263,18 @@ def format_comment(comment):
     return '\n\n'.join(tmp)
 
 
-def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=None, sequence_type_desired=None, demo=False, get_aws_ft=None, udn_raw=None, valid_family=None, lite_mode=None, udn_proband=None):
+def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=None, sequence_type_desired=None, demo=False, get_aws_ft=None, udn_raw=None, valid_family=None, lite_mode=None, udn_proband=None, gzip_only=None):
     """
     rel_to_proband, if run as proband, this is None, otherwize, this func is called during geting the relatives of proband, and specified
     info_passed_in,  {'affected': rel_aff, 'seq_status': have_seq}   include the affect state, sequenced_state, only valid when called during geting the relatives of proband, and specified
     res_all,  when running specific relative, use this dict to accumulate among the family member
     sequence_type_desired : valid = all, wgs, chip, rna, wes ,  is a list, default is [wgs]
     demo: do not resolve the amazon s3 link
+    gzip only, a set, if the ext is found in this set, then, the file must be gziped to get involved. e.g. if vcf in gzip_only, then,  the file named .vcf$ would not be included
     """
 
+    if not isinstance(gzip_only, set):
+        gzip_only = set()
     udn_raw = udn_raw or udn
     set_seq_type = set('wgs,wes,rna,all,chip'.split(','))
     sequence_type_desired = sequence_type_desired or ['wgs']
@@ -612,11 +615,16 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
             # {"messages": [], "download_url": "https://udnarchive.s3.amazonaws.com:443/db488479-8923-4a60-9779-48f58b2f1dad/921192-UDN830680-P.bam?Signature=iZaOBprDz69DFzCZ%2BF0Pn9qEjDk%3D&Expires=1600299340&AWSAccessKeyId=AKIAZNIVXXYEAPHA7BGD", "success": true}
 
             # which include the amazon presigned URL
-            ext = get_file_extension(fn)
+            ext, gz = get_file_extension(fn)
             try:
                 ext = ft_convert[ext]
             except:
-                raise
+                logger.error(f'invalid file extension: {fn}')
+                sys.exit(1)
+            if not gz and ext in gzip_only:
+                logger.debug(f'file skipped due to gzip file only: {fn}')
+                download = 'NA'
+
             if get_aws_ft and len(get_aws_ft) > 0 and ext not in get_aws_ft:
                 logger.debug(f'skip update amazon link due to file type limit: {fn} ext={ext}, valid ft={get_aws_ft}')
                 download = 'NA'
@@ -676,7 +684,7 @@ def get_amazon_download_link(fn, file_uuid, header_cookie, n=0, demo=False):
         return header_cookie, None
     if n > 5 and n % 5 == 1:
         logger.debug(f'renew cookie: try: {n}')
-        cleanup_memory()
+        # cleanup_memory(driver)
         cookie = get_cookie()
         header_cookie = get_header_cookie(cookie)
     try:
@@ -704,7 +712,7 @@ def get_header_cookie(cookie):
     return {'Connection': 'keep-alive', 'Pragma': 'no-cache', 'Cache-Control': 'no-cache', 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Safari/537.36 Edg/80.0.361.109', 'Cookie': cookie}
 
 
-def get_logger(prefix=None):
+def get_logger(prefix=None, level='INFO'):
     prefix = prefix or 'udn_api_query'
     fn_log = f'{prefix}.log'
     fn_err = f'{prefix}.err'
@@ -714,7 +722,7 @@ def get_logger(prefix=None):
         datefmt='%Y-%m-%d %H:%M:%S')
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(fmt)
-    console.setLevel('INFO')
+    console.setLevel(level)
 
     fh_file = logging.FileHandler(fn_log, mode='w', encoding='utf8')
     fh_err = logging.FileHandler(fn_err, mode='a', encoding='utf8')
@@ -759,7 +767,7 @@ def create_cred():
     return cred
 
 
-def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None, demo=False, udn_raw=None, valid_family=None):
+def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None, demo=False, udn_raw=None, valid_family=None, gzip_only=None):
     """
     res = {proband: {}, relative: [{family1}, {family2}]}
     1. build a report for the proband
@@ -774,10 +782,11 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
 
     un-used = .vcf.gz, .joint.vcf,  .gvcf.gz,
     """
-
+    if not isinstance(gzip_only, set):
+        gzip_only = set()
     update_aws_ft = set([ft_convert[_] for _ in update_aws_ft]) if update_aws_ft else set(['fastq', 'cnv'])
 
-
+    logger.debug(f'file type to update url = {update_aws_ft}')
     # pw_raw = os.getcwd().rsplit('/', 1)[-1]
     # pw = f'/data/cqs/chenh19/udn/{pw_raw}'
     if not os.path.isdir('origin'):
@@ -785,7 +794,6 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
 
     logger.info(f'keys for the result: {res.keys()}')
     proband_id = res['Proband']['simpleid']
-
 
     cookie = cookie or get_cookie()
     header_cookie = get_header_cookie(cookie)
@@ -820,7 +828,11 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
                 file_uuid = ifl['file_uuid']
 
                 if update_aws_ft and len(update_aws_ft) > 0:
-                    ext = get_file_extension(fn)
+                    ext, gz = get_file_extension(fn)
+                    logger.debug(f'      {fn}: ext={ext}, gz={gz}')
+                    if not gz and ext in gzip_only:
+                        logger.debug(f'        file skipped due to gzip file only: {fn}')
+                        continue
                     if ext not in update_aws_ft:
                         logger.debug(f'      skipp update amazon link due to file type limit: {fn} - ext={ext}, selected file type={update_aws_ft}')
                         continue
@@ -1090,7 +1102,11 @@ cd - 2>/dev/null >/dev/null
                 out_bam.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
                 print(f'<span><b>{rel_to_proband}:    </b></span><a href="{url}">{fn}</a></br></br>', file=html_bam)
             elif re.match(r'.+\.cnv\.vcf(\.gz)?$', fn) and 'cnv' in update_aws_ft:
-                out_cnv.write(f'size=$(stat -c %s origin/{fn} 2>/dev/null);if [[ "$size" -lt 1000 ]];then wget "{url}" -c -O "origin/{fn}";\nelse echo already exist: "origin/{fn}";fi\n')
+                if not os.path.exists(f'origin{fn}'):
+                    if url == 'na':
+                        logger.error(f'invalid CNV file url')
+                    else:
+                        out_cnv.write(f'size=$(stat -c %s origin/{fn} 2>/dev/null);if [[ "$size" -lt 1000 ]];then wget "{url}" -c -O "origin/{fn}";\nelse echo already exist: "origin/{fn}";fi\n')
             elif re.match(r'.+\.fastq.gz', fn) and 'fastq' in update_aws_ft:
                 out.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
             elif other_download:
@@ -1176,10 +1192,11 @@ if __name__ == "__main__":
         help="""filename for the credential file, must include the UDN token, login email, login username(vunetID), login_password""")
     ps.add_argument('-create', '-encry', '-enc', help="""enter into create credential mode""", action='store_true')
     ps.add_argument('-demo', help="""do not resolve the amazon link, just check the raw link. apply to both post and new query""", action='store_true')
-    ps.add_argument('-ft', help="""could be multiple, if specified, would only update the amazon URL for these file types""", nargs='*', choices=['bam', 'vcf', 'cnv', 'fastq', 'fq'])
+    ps.add_argument('-ft', help="""could be multiple, if specified, would only update the amazon URL for these file types, if gzip only, add the .gz suffix. e.g. vcf.gz  would not match .vcf$""", nargs='*')
     ps.add_argument('-renew', '-new', '-update', help="""flag, update the amazon shared link. default is not renew""", action='store_true')
     ps.add_argument('-lite', help="""flag, donot download the cnv files and the bayler report""", action='store_true')
     ps.add_argument('-noupload', '-noup', help="""don't upload the files to ACCRE""", action='store_true')
+    ps.add_argument('-v', '-level', help="""set the logger level, default is info""", default='INFO', choices=['INFO', 'WARN', 'DEBUG', 'ERROR'])
     args = ps.parse_args()
     print(args)
 
@@ -1191,14 +1208,11 @@ if __name__ == "__main__":
     else:
         logger.info('platform= {platform}')
         root = os.getcwd()
-    logger = get_logger()
-
+    logger = get_logger(level=args.v)
 
     pw_script = os.path.realpath(__file__).rsplit('/', 1)[0]
     lite = args.lite
     upload = not args.noupload
-
-
 
     if not args.fn_cred and os.path.exists('udn.credential.pkl.encrypt'):
 
@@ -1211,12 +1225,28 @@ if __name__ == "__main__":
 
 
     pw_accre_data = '/home/chenh19/data/udn'
-    pw_accre_scratch = '/home/chenh19/s/udn/upload'
-
+    pw_accre_scratch = '/fs0/members/chenh19/tmp/upload/'
 
     upload_file_list = ['pheno.keywords.txt', 'download.*']  # upload these files to scratch and data of ACCRE
 
-    update_aws_ft = set([ft_convert[_] for _ in args.ft]) if args.ft else ['cnv', 'fastq']
+    gzip_only = set()
+    update_aws_ft = set()
+
+    if not args.ft:
+        update_aws_ft = ['cnv', 'fastq']
+    else:
+        err = 0
+        for i in args.ft:
+            ext = i.replace('.gz', '')
+            if i[-2:] == 'gz':
+                gzip_only.add(ext)
+            try:
+                update_aws_ft.add(ft_convert[ext])
+            except:
+                logger.error(f'invalid filetype: {i}')
+                err = 0
+        if err:
+            sys.exit(1)
 
     passcode = getpass('Input the passcode for the encrypted credential file: ')
     if not fn_cred:
@@ -1309,7 +1339,7 @@ if __name__ == "__main__":
         os.system(f'mkdir -p {root}/{udn_raw}/origin 2>/dev/null')
         os.chdir(f'{root}/{udn_raw}')
 
-        logger = get_logger(f'{root}/{udn_raw}/{udn_raw}')
+        logger = get_logger(f'{root}/{udn_raw}/{udn_raw}', level=args.v)
         logger.info(os.getcwd())
 
         fn_udn_api_pkl = f'{root}/{udn_raw}/{udn}.udn_api_query.pkl'
@@ -1328,7 +1358,7 @@ if __name__ == "__main__":
             else:
                 renew_amazon_link = args.renew
 
-            parse_api_res(res, cookie=cookie, update_aws_ft=update_aws_ft, renew_amazon_link=renew_amazon_link, demo=demo, udn_raw=udn_raw, valid_family=valid_family)
+            parse_api_res(res, cookie=cookie, update_aws_ft=update_aws_ft, renew_amazon_link=renew_amazon_link, demo=demo, udn_raw=udn_raw, valid_family=valid_family, gzip_only=gzip_only)
 
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
@@ -1339,7 +1369,7 @@ if __name__ == "__main__":
                     os.system(f"""sftp va:{pw_accre_data}/{udn_raw} <<< $'put {ifl}' >/dev/null""")
                     os.system(f"""sftp va:{pw_accre_scratch}/{udn_raw} <<< $'put {ifl}' >/dev/null""")
         else:
-            res = get_all_info(udn, cookie=cookie, demo=demo, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite, udn_proband=udn)
+            res = get_all_info(udn, cookie=cookie, demo=demo, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite, udn_proband=udn, gzip_only=gzip_only)
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
             if upload:
