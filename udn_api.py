@@ -2,24 +2,7 @@
 """
 this is to get the files from UDN gateway
 https://documenter.getpostman.com/view/1367615/RVu1JBWH#0ab3e9c3-792c-b292-6615-761a505df5bb
-
-the input UDN should be the proband UDN, don't add the relative UDN ( they would be get based on the proband)
-the output pickle would be
-res
-    proband
-        udn_name
-        gender
-        age
-        files
-            file1
-            file2
-            file3
-                file_att1
-                file_att2
-                file_att3
-    rellative1
-    relative2
-    relative3
+https://nbviewer.jupyter.org/github/hms-dbmi/udn-gateway-api/blob/master/Sequence%20files%20download%20guide.ipynb
 
 update:
 the res dict, the key may be duplicate, such as sister, brother, before changing, if a proband have multiple brothers, then only the last one would be recorded into the dict, the previous one would be overwritten
@@ -33,6 +16,7 @@ import sys
 import os
 import time
 import re
+import json
 import pickle
 import hashlib
 from getpass import getpass
@@ -41,6 +25,10 @@ from cryptography.fernet import Fernet
 import cryptography.fernet as fernet
 import logging
 import requests
+from selenium import webdriver
+import selenium.common.exceptions as sel_exp
+from selenium.webdriver.support.ui import WebDriverWait as wait
+
 from bs4 import BeautifulSoup as bs
 # basic settings
 base_url = 'https://gateway.undiagnosed.hms.harvard.edu/api'
@@ -94,74 +82,121 @@ class Credential():
             sys.exit(1)
         return res
 
-
-def get_cookie():
-    """
-    get cookie using selenium
-    """
-    url = 'https://gateway.undiagnosed.hms.harvard.edu/login/dashboard/'
-    timeout = 30
-
-    from selenium import webdriver
-    import selenium.common.exceptions as sel_exp
-    from selenium.webdriver.support.ui import WebDriverWait as wait
-
+def get_driver(driver, headless=True):
+    try:
+        driver.current_url
+    except:
+        pass
+    else:
+        return driver
     if platform == 'darwin':
         path_chromedriver = '/Users/files/work/package/chrome_v90/chromedriver'
     else:
         path_chromedriver = '/home/chenh19/tools/chromedriver2.35'
     option = webdriver.ChromeOptions()
-    option.add_argument('--headless')
+    if headless:
+        option.add_argument('--headless')
     option.add_argument('--no-sandbox')
+    option.add_argument(f"--window-size=1080,720")
     if platform == 'linux':
         option.add_argument('--disable-dev-shm-usage')
         option.binary_location = '/home/chenh19/tools/chrome/chrome'
     driver = webdriver.Chrome(executable_path=path_chromedriver, options=option)
+    return driver
+
+
+def login(driver, headless=False):
+    """
+    get cookie using selenium
+    """
+    timeout = 30
+
+    try:
+        driver.current_url
+    except:
+        driver = get_driver(driver, headless=headless)
+
+    current_url = driver.current_url
+    if current_url.find('https://gateway.undiagnosed.hms.harvard.edu') == 0:
+        logger.debug(f'session still active')
+        return driver
+    url = 'https://gateway.undiagnosed.hms.harvard.edu/login/dashboard/'
     driver.get(url)
+    if current_url.find('hms-dbmi.auth0.com') > -1:
+        # logged out, maybe due to timeout
+        # <div class="auth0-lock-social-button-text">hua-chang.chen@vumc.org</div>
+        logger.warning(f'you got logged out, try login again')
 
     # sys.exit(1)
-
-    email = wait(driver, timeout).until(lambda x: x.find_element_by_xpath('//input[@type="email" and @name="email"]'))
-    password = driver.find_element_by_xpath('//input[@type="password"]')
-    button = driver.find_element_by_xpath('//button[@class="auth0-lock-submit"]')
-
-    for _ in range(10):
-        if button.is_displayed():
-            break
-        time.sleep(1)
+    # if the user name already exist
+    run_sso = True
+    type_email = False
+    try:
+        email = cred["email"]
+        button = wait(driver, 5).until(lambda x: x.find_element_by_xpath(f'//div[text()="{email}"]'))
+    except:
+        type_email = True
     else:
-        logger.error('fail to display to UDN gateway interface')
+        # email saved in previous session'
+        for _ in range(10):
+            try:
+                button.click()
+            except:
+                time.sleep(1)
+                logger.debug(f'click button before sso: - {_}')
+            else:
+                break
+        else:
+            logger.error(f'fail to enter into SSO page')
+            # driver.save_screenshot('fail_to_enter_sso')
+            return None
 
-    # driver.save_screenshot('udn_login_pre_sso.png')
-    logger.debug('driver is set')
-    driver.save_screenshot('test.png')
+    if type_email:
+        email = wait(driver, timeout).until(lambda x: x.find_element_by_xpath('//input[@type="email" and @name="email"]'))
+        password = driver.find_element_by_xpath('//input[@type="password"]')
+        button = driver.find_element_by_xpath('//button[@class="auth0-lock-submit"]')
 
-    run_sso = False
-    for _ in range(10):
-        try:
-            email.click()
-            email.send_keys(cred['email'])
-        except:
+        for _ in range(10):
+            if button.is_displayed():
+                break
             time.sleep(1)
         else:
-            break
-    else:
-        logger.error(f'fail to input email, error')
+            logger.error('fail to display to UDN gateway interface')
 
-    # driver.save_screenshot('email_input.png')
-    time.sleep(2)
-    try:
-        password.click()
-        password.send_keys(cred['password'])
-    except webdriver.remote.errorhandler.ElementNotVisibleException:
-        run_sso = True
-    except sel_exp.ElementNotInteractableException:
-        run_sso = True
+        # driver.save_screenshot('udn_login_pre_sso.png')
+        logger.debug('driver is set')
 
-    button.click()
-    driver.save_screenshot('password_input.png')
+        for _ in range(10):
+            try:
+                email.click()
+                email.send_keys(cred['email'])
+            except:
+                time.sleep(1)
+            else:
+                break
+        else:
+            logger.error(f'fail to input email, error')
+        # driver.save_screenshot('udn_login_step1.png')
+
+        # driver.save_screenshot('email_input.png')
+        time.sleep(2)
+        try:
+            password.click()
+            password.send_keys(cred['password'])
+            run_sso = False
+        except webdriver.remote.errorhandler.ElementNotVisibleException:
+            run_sso = True
+        except sel_exp.ElementNotInteractableException:
+            run_sso = True
+        button.click()
+
+    current_url = driver.current_url
+    if current_url.find('https://gateway.undiagnosed.hms.harvard.edu') == 0:
+        logger.info(f'session still active')
+        return driver
 
     if run_sso:
+        # driver.save_screenshot('udn_sso.png')
         username = wait(driver, timeout).until(lambda x: x.find_element_by_xpath('//input[@id="username"]'))
         password = driver.find_element_by_xpath('//input[@id="password"]')
         button = driver.find_element_by_xpath('//a[@class="ping-button normal allow"]')
@@ -172,21 +207,31 @@ def get_cookie():
         password.click()
         password.send_keys(cred['password'])
 
+        # driver.save_screenshot('udn_login_sso.png')
         button.click()
-
     for _ in range(10):
         if driver.current_url.find('gateway.undiagnosed.hms.harvard.edu') > -1:
             break
         time.sleep(1)
     else:
-        logger.error('fail to login to UDN gateway')
+        logger.error(f'fail to login to UDN gateway, url=\n{driver.current_url}')
         return 0
+    # url = "https://gateway.undiagnosed.hms.harvard.edu/patient/sequence/6145/files/"
+    # driver.get(url)
+    # driver.save_screenshot('udn_gateway.png')
+    return driver
 
+
+
+def get_cookie(driver, headless=True):
+    driver = login(driver, headless=headless)
     cookies = driver.get_cookies()
-    cookies_list = [f"{_['name']}={_['value']}" for _ in cookies]
-    cookie = '; '.join(cookies_list)
+    cookie_token = {_['name']: _['value'] for _ in cookies}
 
-    return cookie
+    # csrftoken=2DIZXSDSd8ffFuwxfOcO3VKCC3W0a4v0
+    # sessionid=0lkbrirzd0mz92o8h1ygpc2y3c7daf21
+    # mod_auth_openidc_session=e36bf6ee-f612-4b5f-8e55-6f6ea7f3156c
+    return driver, cookie_token
 
 
 def cleanup_memory(driver):
@@ -263,7 +308,7 @@ def format_comment(comment):
     return '\n\n'.join(tmp)
 
 
-def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=None, sequence_type_desired=None, demo=False, get_aws_ft=None, udn_raw=None, valid_family=None, lite_mode=None, udn_proband=None, gzip_only=None):
+def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_passed_in=None, sequence_type_desired=None, demo=False, get_aws_ft=None, udn_raw=None, valid_family=None, lite_mode=None, udn_proband=None, gzip_only=None, driver=None):
     """
     rel_to_proband, if run as proband, this is None, otherwize, this func is called during geting the relatives of proband, and specified
     info_passed_in,  {'affected': rel_aff, 'seq_status': have_seq}   include the affect state, sequenced_state, only valid when called during geting the relatives of proband, and specified
@@ -293,11 +338,14 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
     res['affect_from_proband_list'] = info_passed_in.get('affected') or 'Unknown'
     res['seq_status'] = info_passed_in.get('seq_status') or 'Unkown'
 
-    cookie = cookie or get_cookie()
-    header_cookie = get_header_cookie(cookie)
-    if not cookie:
+    if not cookie_token:
+        driver, cookie_token = get_cookie(driver)
+
+    if not cookie_token:
         logger.error('fail to get cookie, can\'t get the amazon s3 presigned URL, exit')
         return 0
+
+    header_cookie = get_header_cookie(cookie_token)
 
     # prepare to write each json result to the pickle
     fn_json_pk = f'{udn}.json.pkl'
@@ -384,7 +432,6 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
         res['simpleid'] = json['patient']['simpleid']
         try:
             res['similar_symp'] = format_comment(json['patient'].get('similarsymptomsexplain'))
-            res['comment'] = format_comment(json['comment'])
         except:
             res['similar_symp'] = None
 
@@ -414,13 +461,25 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
         if not uuid_case:
             logger.error(f'case UUID not found: patient record={res}')
             return 0
-        try:
-            response_relative = requests.request('GET', url_relative, headers=header_cookie)
-        except:
-            logger.error(f'fail to get relatives info: {udn}')
-            return 0
 
-        r = bs(response_relative.text, features='lxml')
+        try:
+            driver.get(url_relative)
+        except:
+            logger.error(f'fail to get relatives page using selenium')
+            try:
+                response_relative = requests.request('GET', url_relative, headers=header_cookie).text
+
+            except:
+                logger.error(f'fail to get relatives info: {udn}')
+                return 0
+        else:
+            _tmp_ele = wait(driver, 20).until(lambda _:_.find_element_by_xpath(f'//a[text()="Sequence uploaded"]'))
+
+            response_relative = driver.page_source
+            # logger.warning(f'type={type(response_relative)}, len={len(response_relative)}')
+            driver.save_screenshot(f'{udn}.relatives_table.png')
+
+        r = bs(response_relative, features='lxml')
         tb = r.find('tbody').find_all('tr')
         if len(tb) == 0:
             logger.error('Relative list is empty')
@@ -465,7 +524,7 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
                 rel_to_proband_tmp = f'{rel_to_proband_tmp}#{rel_seq}'
 
 
-            res_all = get_all_info(rel_udn, cookie, rel_to_proband=rel_to_proband_tmp, res_all=res_all, info_passed_in={'affected': rel_aff, 'seq_status': have_seq}, demo=demo, get_aws_ft=get_aws_ft, valid_family=valid_family, lite_mode=lite_mode, udn_proband=udn_proband)
+            res_all = get_all_info(rel_udn, cookie_token, rel_to_proband=rel_to_proband_tmp, res_all=res_all, info_passed_in={'affected': rel_aff, 'seq_status': have_seq}, demo=demo, get_aws_ft=get_aws_ft, valid_family=valid_family, lite_mode=lite_mode, udn_proband=udn_proband, driver=driver)
             # logger.info(res_all.keys())
 
         # patient dignosis
@@ -505,7 +564,7 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
     d_json['files'] = json
     dump_json(d_json, fn_json_pk)
 
-    logger.info('\n\n****************')
+    print('\n\n****************')
     logger.info(f'\tnow getting information of {rel_to_proband} : {udn}')
     # if rel_to_proband.find('#') > -1:
     #     logger.warning(f'Family member with same relative to proband: {rel_to_proband}')
@@ -525,20 +584,19 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
     seq_type_convert.update({str(k): v for k, v in seq_type_convert.items()})
     files = []
     res['bayler_report'] = []
-    res['seq_id'] = []
 
     for json in json_all:
-        res['seq_id'].append([json["id"], rel_to_proband])
+        seq_id = json["id"]
         sequence_type_raw = json['sequencing_type']
         try:
             sequence_type = seq_type_convert[sequence_type_raw]
         except:
-            logger.warning(f'{rel_to_proband} seq_id = {json["id"]}: unkown sequence type: type code={sequence_type_raw}')
+            logger.warning(f'{rel_to_proband} seq_id = {seq_id}: unkown sequence type: type code={sequence_type_raw}')
             continue
         if sequence_type in sequence_type_desired  or'all' in  sequence_type_desired or sequence_type == 'reanalysis':
             pass
         else:
-            logger.warning(f'{rel_to_proband}: skipped due to unmatch sequence type, seq_id = {json["id"]}, desired={sequence_type_desired} found={sequence_type}')
+            logger.warning(f'{rel_to_proband}: skipped due to unmatch sequence type, seq_id = {seq_id}, desired={sequence_type_desired} found={sequence_type}')
             continue
 
         res['bayler_report'] += [
@@ -546,49 +604,95 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
             for _ in json['sequencereports']]
 
         files_raw = json['sequencingfiles']
-        logger.info(f'\t{rel_to_proband}: {sequence_type} seq_id={json["id"]}  total files={len(files_raw)} ')
+        logger.info(f'\t{rel_to_proband}: {sequence_type} seq_id={seq_id}  total files={len(files_raw)} ')
 
         for n_fl, ifl in enumerate(files_raw):
             # each file is like
-            # demo_format = {'udn_id': ['UDN139529'],
-            #     'sequence_id': [1984],
-            #     'uuid': '9636f625-4b3d-4888-82d5-0db65fd1fd39',
-            #     'fileserviceuuid': '2e43d4af-80fe-48cc-83ac-ce38f06e393d',
-            #     'filename': 'UDN139529-HHG3FCCXY_s7_SL285308-recal.bai',
-            #     'sequencing_site': 'mcw',
-            #     'complete': True,
-            #     'file_data': {'creationdate': '2018-01-30T16:25:49-05:00',
-            #     'modifydate': '2018-01-30T16:25:49-05:00',
-            #     'description': 'UDN139529 sequenced at HudsonAlpha Institute for Biotechnology',
-            #     'tags': [],
-            #     'locations': [{'url': 'S3://udnarchive/b3d1b663-ff21-4d3d-89dc-406fc2bd6169/UDN139529-HHG3FCCXY_s7_SL285308-recal.bai',
+            # demo_format = {'udn_id': ['UDN525121'],
+            # 'sequence_id': [6345],
+            # 'uuid': '81c137f0-0a1d-403b-befb-83c40a24b81e',
+            # 'fileserviceuuid': 'a09300e9-879a-4309-af82-b52e4aea9228',
+            # 'sequencing_type': ['genome'],
+            # 'filename': '939336-UDN525121-P.bam.bai',
+            # 'sequencing_site': 'baylorseq',
+            # 'complete': True,
+            # 'file_data': {'creationdate': '2021-03-26T00:09:06-04:00',
+            # 'modifydate': '2021-03-26T00:09:06-04:00',
+            # 'description': '',
+            # 'tags': [],
+            # 'locations': [{'url': 'S3://udnarchive/8471503a-18a0-4a20-ae95-88e3681628ff/939336-UDN525121-P.bam.bai',
             #     'storagetype': 's3',
-            #     'uploadComplete': '2018-01-30T16:25:56-05:00',
-            #     'id': 403269,
-            #     'filesize': 8843928}],
-            #     'uuid': '2e43d4af-80fe-48cc-83ac-ce38f06e393d',
-            #     'filename': 'UDN139529-HHG3FCCXY_s7_SL285308-recal.bai',
-            #     'expirationdate': '2018-08-18',
-            #     'owner': {'email': 'jharris@hudsonalpha.org'},
-            #     'permissions': ['udn'],
-            #     'id': 35655,
-            #     'metadata': {'md5': 'b6edcdb45a938fc781555918889af4e7',
-            #     'patientid': 'UDN139529',
-            #     'coverage': '84.1278688742',
-            #     'otherinfo': 'info'}}},
+            #     'uploadComplete': '2021-03-26T00:09:08-04:00',
+            #     'id': 933980,
+            #     'filesize': 9481464}],
+            # 'uuid': 'a09300e9-879a-4309-af82-b52e4aea9228',
+            # 'filename': '939336-UDN525121-P.bam.bai',
+            # 'expirationdate': '2021-10-12',
+            # 'owner': {'email': 'imachol@bcm.edu'},
+            # 'permissions': ['udn'],
+            # 'id': 80272,
+            # 'metadata': {'sequenceid': '6345',
+            # 'assembly': 'hg38',
+            # 'description': 'Binary Index File.',
+            # 'md5sum': 'd21c930dbcbb160d6ecdde4069aa11c5',
+            # 'patientid': '9fd8379b-a074-4457-83e5-b6f84e4fadf8',
+            # 'sequencing_type': 'genome',
+            # 'filename': '939336-UDN525121-P.bam.bai',
+            # 'sequencing_location': 'baylor',
+            # 'permissions': 'udn',
+            # 'sequencing_sampleid': '939336-UDN525121'}}}
 
-            if n_fl % 5 == 1 and n_fl > 1:
-                time.sleep(5)
+    # udn_id - list
+    # sequence_id - list
+    # sequencing_type - list
+    # fileserviceuuid * useful
+    # filename
+    # complete
+
+    # file_data
+    #         uuid # same as fileserviceuuid in above layer
+    #         filename
+    #         metadata
+    #                 sequenceid
+    #                 assembly
+    #                 md5sum
+    #                 sequencing_type
+    #                 filename
+    #         locations  # is a list, ele=dict
+    #                 url = S3 url
+    #                 filesize
+
             completed = ifl['complete']
-            fl_url = ifl['file_data']['locations'][0]['url']
-            fl_size = ifl['file_data']['locations'][0]['filesize']
+
+            try:
+                fl_loc = ifl['file_data']['locations'][0]
+                fl_meta = ifl['file_data']['metadata']
+            except:
+                logger.error(f"wrong file json: {ifl}")
+                sys.exit(1)
+
             fn = ifl['file_data']['filename']
-            file_uuid = ifl['uuid']
-            date_upload = ifl['file_data']['locations'][0]['uploadComplete']
-            fl_expire = ifl['file_data']['expirationdate']
-            fl_assembly = ifl['file_data']['metadata'].get('assembly')
-            fl_md5 = ifl['file_data']['metadata'].get('md5sum') or ifl['file_data']['metadata'].get('md5')
-            fl_type = ifl['file_data']['metadata'].get('description') or ifl['file_data'].get('description')
+
+            # use fileserviceuuid key, rather than the uuid key
+            file_uuid = ifl['fileserviceuuid']
+            file_uuid1 = ifl['file_data']['uuid']
+            if file_uuid != file_uuid1:
+                demo_d = {'fileserviceuuid': file_uuid, 'file_data': {'uuid': file_uuid1}}
+                logger.warning(f'fs_uuid not match within json: {demo_d}')
+
+
+            fl_url = fl_loc['url']
+            fl_size = fl_loc['filesize']
+
+    #         metadata
+    #                 sequenceid
+    #                 assembly
+    #                 md5sum
+    #                 sequencing_type
+    #                 filename
+            seq_id = fl_meta['sequenceid']
+            fl_assembly = fl_meta.get('assembly')
+            fl_md5 = fl_meta.get('md5sum') or fl_meta.get('md5')
 
             if re.match(r'.+\.bai$', fn):
                 pass
@@ -621,6 +725,8 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
             except:
                 logger.error(f'invalid file extension: {fn}')
                 sys.exit(1)
+
+
             if not gz and ext in gzip_only:
                 logger.debug(f'file skipped due to gzip file only: {fn}')
                 download = 'NA'
@@ -629,86 +735,157 @@ def get_all_info(udn, cookie, rel_to_proband=None, res_all=None, info_passed_in=
                 logger.debug(f'skip update amazon link due to file type limit: {fn} ext={ext}, valid ft={get_aws_ft}')
                 download = 'NA'
             else:
-                res_amazon_url = get_amazon_download_link(fn, file_uuid, header_cookie, demo=demo)
-                try:
-                    header_cookie, download = res_amazon_url
-                except:
-                    logger.error(f'error when getting_amazon_download_link return = {res_amazon_url} \nfn="{fn}"\nfile_uuid="{file_uuid}"\nheader_cookie="{header_cookie}"')
-                    sys.exit(1)
-                logger.info(f'{sequence_type} seq_id={json["id"]}: {fn} demo={demo}, amazon link resolved')
+                time.sleep(2)
+                cookie_token, download, res_source = get_amazon_download_link(fn, file_uuid, cookie_token, seq_id=seq_id, demo=demo, driver=driver)
 
-            files.append({'download': download, 'relative': rel_to_proband, 'file_uuid': file_uuid, 'fn': fn, 'url': fl_url, 'complete': completed, 'size': fl_size, 'date_upload': date_upload,
-                          'expire': fl_expire, 'build': fl_assembly, 'assembly': fl_assembly, 'md5': fl_md5, 'type': fl_type, 'seq_type': sequence_type})
+                # download = get_amazon_download_link_api(file_uuid)
+                if not download:
+                    logger.debug(f'error when getting_amazon_download_link cookie_token = {cookie_token} \nfn="{fn}"\nfile_uuid="{file_uuid}"')
+                    download = 'NA'
+                else:
+                    logger.info(f'{sequence_type} seq_id={seq_id}: {fn}, amazon link resolved ({res_source})')
+
+            files.append({'download': download, 'relative': rel_to_proband, 'file_uuid': file_uuid, 'fn': fn, 'url': fl_url, 'complete': completed, 'size': fl_size, 'build': fl_assembly, 'assembly': fl_assembly, 'md5': fl_md5, 'seq_type': sequence_type, 'seq_id': seq_id})
     res['files'] = files
-
     res_all[rel_to_proband] = res
 
     if rel_to_proband == 'Proband':
         try:
-            parse_api_res(res_all, cookie=cookie, udn_raw=udn_raw, valid_family=valid_family)
+            parse_api_res(res_all, cookie_token=cookie_token, udn_raw=udn_raw, valid_family=valid_family, driver=driver)
         except:
             logger.error(f'fail to parse the result dict, try again')
             raise
     return res_all
 
-
-def get_html_file_table(rel_to_proband, seq_id, headers, udn_proband):
-
+def get_download_link_by_selinium(driver, fn, seq_id, logger, n=0):
+    driver = login(driver)
+    time.sleep(5)
     url = f'https://gateway.undiagnosed.hms.harvard.edu/patient/sequence/{seq_id}/files/'
-    r = requests.request('GET', url, headers=headers)
-    r = bs(r.text, features='lxml')
-    tb = r.find('table')
-    tb = repr(tb)
-    fn = f'{udn_proband}_sequencing_file_list.html'
-    if not os.path.exists(fn):
-        o = open(fn, 'w')
-        o.write(f"<html>\n")
+    # logger.debug(f'getting url {url}')
+    if re.sub('/#', '', driver.current_url) != url:
+        driver.get(url)
+    try:
+        ele_file = wait(driver, 5).until(lambda _:_.find_element_by_xpath(f'//a[@filename="{fn}"]'))
+        ele_file.click()
+        logger.debug(f'clicked: {fn}')
+        download_link = wait(driver, 5).until(lambda _: _.find_element_by_xpath('//span[@class="sequencing_file_url"]'))
+    except Exception as e:
+        logger.debug(f'try - {n} - error={e}')
     else:
-        o = open(fn, 'a')
+        if download_link.text.strip().find('https') > -1:
+            logger.debug(f'download link got from selenium: {download_link.get_attribute("outerHTML")}')
+            return download_link.text
+    if n > 2:
+        logger.debug(f'    fail to get download link for {fn}')
+        return None
+    n += 1
+    get_download_link_by_selinium(driver, fn, seq_id, logger, n=n)
 
-    o.write(f"<h1>{rel_to_proband} Seq_id = {seq_id}<h1>")
-    o.write(tb)
-    print('<br>' *3, file=o)
-    print('\n'*2, file=o)
-    o.close()
+def get_amazon_download_link_api(file_uuid):
+    # # get all files
+    # udn_id = 'UDN665600'
+    # gw_headers = {
+    #     'Content-Type': 'application/json',
+    #     'Authorization': f'Token {api_token_gateway}',
+    #     'FSAuthorization': f'FSToken {api_token_fileservice}'
+    # }
+    # gw_host = 'gateway.undiagnosed.hms.harvard.edu'
+    # url = f'https://{gw_host}/api/sequences/{udn_id}/'
+    # r = requests.get(url, headers=gw_headers)
+
+    # FileSerivce API needs a separate set of headers
+    # file_uuid = 'b3f47f61-a45f-4e6e-a32d-39a79d39a65f'
+    fs_headers = {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Authorization': f'Token {api_token_fileservice}',
+        # 'Authorization': f'Token {api_token_gateway}'
+    }
+    # setup the host to easily switch between systems
+    # fs_host = 'fileservicedev.aws.dbmi.hms.harvard.edu'
+    fs_host = 'fileservice.dbmi.hms.harvard.edu'
+    # fs_host = 'fileservice-ci.dbmi.hms.harvard.edu'
+    url = f'https://{fs_host}/filemaster/api/file/{file_uuid}/download/'
+    #
+    r = requests.get(url, headers=fs_headers)
+    try:
+        download_url = r.json()['url']
+    except:
+        logger.debug(f'fail to get the downloadlink json: {r}')
+        return None
+    return download_url
 
 
-def get_amazon_download_link(fn, file_uuid, header_cookie, n=0, demo=False):
+def get_amazon_download_link(fn, file_uuid, cookie_token,  seq_id, driver, n=0, demo=False):
+    download_link = get_amazon_download_link_api(file_uuid)
+    if download_link:
+        return cookie_token, download_link, 'api'
+
     if demo:
         logger.debug(f'demo mode for {fn}')
-        return header_cookie, 'na'
-    url_download_info = f'https://gateway.undiagnosed.hms.harvard.edu/patient/downloadsequenceurl/{file_uuid}/'
+        return cookie_token, None, None
+
+    if not cookie_token:
+        driver, cookie_token = get_cookie(driver)
+
+    header_cookie = get_header_cookie(cookie_token)
+    try:
+        csrftoken = cookie_token['csrftoken']
+        # csrftoken = 'CWdClEbLTBFuIw7NIDpt2KB8WeG82xaV'
+    except:
+        logger.error(f'csrftoken not found in cookie')
+        logger.error(cookie_token)
+        logger.error(header_cookie)
+        sys.exit(1)
+
+    url_download_info = f'https://gateway.undiagnosed.hms.harvard.edu/patient/downloadsequenceurl/{file_uuid}/?csrfmiddlewaretoken={csrftoken}'
     response_download_link = requests.request('GET', url_download_info, headers=header_cookie)
-    if n > 20:
-        logger.error(f'fail to get file download link: {fn}')
-        return header_cookie, None
-    if n > 5 and n % 5 == 1:
-        logger.debug(f'renew cookie: try: {n}')
-        # cleanup_memory(driver)
-        cookie = get_cookie()
-        header_cookie = get_header_cookie(cookie)
+    if n > 2:
+        return cookie_token, None, None
+
+    # https://gateway.undiagnosed.hms.harvard.edu/patient/sequence/6145/files/
     try:
         json = response_download_link.json()
     except Exception as e:
         if str(e.__class__).find('JSONDecodeError') > -1:
             # logger.info(f'not a json response,  url_download_info= "{url_download_info}", headers={header_cookie}')
             n += 1
-            time.sleep(10)
+            time.sleep(2)
             # logger.info(header_cookie)
-            header_cookie, download_url = get_amazon_download_link(fn, file_uuid, header_cookie, n, demo=demo)
-            if download_url:
-                return header_cookie, download_url
+            download_link = get_download_link_by_selinium(driver, fn, seq_id, logger=logger)
+            res_source = 'selenium'
+            if not download_link:
+                cookie_token, download_link = get_amazon_download_link(fn, file_uuid, cookie_token, seq_id=seq_id, n=n, demo=demo, driver=driver)
+                res_source = 'JS'
+            if download_link:
+                return cookie_token, download_link, res_source
         else:
             raise
     else:
-        logger.debug(f'\tgot json: {fn}')
         try:
-            return header_cookie, json['download_url']
+            return cookie_token, json['download_url'], 'JS'
         except:
-            logger.error(f'{fn}: json does not contain the download link: {json}')
-            return header_cookie, None
+            # logger.debug(f'{fn}: \niter - {n} json does not contain the download link:\n {json}\nurl=  {url_download_info}\ncookie_token={cookie_token}\n\n')
+            logger.debug(f'{fn}: \niter - {n} json does not contain the download link')
+            n += 1
+            time.sleep(2)
+            download_link = get_download_link_by_selinium(driver, fn, seq_id, logger=logger)
+            res_source = 'selenium'
+            if not download_link:
+                cookie_token, download_link = get_amazon_download_link(fn, file_uuid, cookie_token, seq_id=seq_id, n=n, demo=demo, driver=driver)
+                res_source = 'JS'
+            if download_link:
+                return cookie_token, download_link, res_source
 
-def get_header_cookie(cookie):
+            return cookie_token, None, None
+
+
+def get_header_cookie(cookie_token):
+    # csrftoken=2DIZXSDSd8ffFuwxfOcO3VKCC3W0a4v0
+    # sessionid=0lkbrirzd0mz92o8h1ygpc2y3c7daf21
+    # mod_auth_openidc_session=e36bf6ee-f612-4b5f-8e55-6f6ea7f3156c
+
+    cookies_list = [f"{k}={v}" for k, v in cookie_token.items()]
+    cookie = '; '.join(cookies_list)
     return {'Connection': 'keep-alive', 'Pragma': 'no-cache', 'Cache-Control': 'no-cache', 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Safari/537.36 Edg/80.0.361.109', 'Cookie': cookie}
 
 
@@ -742,7 +919,6 @@ def get_logger(prefix=None, level='INFO'):
 
 
 def create_cred():
-
     token = getpass(prompt='Your UDN token: ')
     email = getpass(prompt='Your email to login to UDN gateway: ')
     password = getpass(prompt='Your password to login to UDN gateway: ')
@@ -766,8 +942,32 @@ def create_cred():
     key.dump(cred)
     return cred
 
+def validate_download_link(url):
+    """
+    Does the url contain a downloadable resource
+    """
+    error_code = os.popen(f'curl "{url}" 2>&1|head -c 10000|egrep -i "Error|Could not resolve host"|wc -l').read().strip()
 
-def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None, demo=False, udn_raw=None, valid_family=None, gzip_only=None):
+    error_code = int(error_code)
+    return not error_code
+
+
+    # try:
+    #     h = requests.head(url, allow_redirects=True)
+    # except:
+    #     return False
+    # header = h.headers
+    # content_type = header.get('content-type')
+    # if 'text' in content_type.lower():
+    #     return False
+    # if 'html' in content_type.lower():
+    #     return False
+    # if 'xml' in content_type.lower():
+    #     return False
+
+    # return True
+
+def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None, demo=False, udn_raw=None, valid_family=None, gzip_only=None, driver=None):
     """
     res = {proband: {}, relative: [{family1}, {family2}]}
     1. build a report for the proband
@@ -795,9 +995,10 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
     logger.info(f'keys for the result: {res.keys()}')
     proband_id = res['Proband']['simpleid']
 
-    cookie = cookie or get_cookie()
-    header_cookie = get_header_cookie(cookie)
-    if not cookie:
+    if not cookie_token:
+        driver, cookie_token = get_cookie(driver)
+    header_cookie = get_header_cookie(cookie_token)
+    if not cookie_token:
         logger.error('fail to get cookie, can\'t get the amazon s3 presigned URL, exit')
         return 0
 
@@ -822,10 +1023,30 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
             if 'files' not in v:
                 logger.info(f'{rel_to_proband}: no files found')
                 continue
-
+            try:
+                seq_id = v['seq_id'][0][0]
+                logger.info(f'seq_id found in the outer of res dict ')
+            except:
+                # logger.warning(f'seq ID not found in dict: {rel_to_proband}')
+                pass
+                # continue
+            seq_id_source = 'outer'
             for ifl in v['files']:
                 fn = ifl['fn']
                 file_uuid = ifl['file_uuid']
+                old_download_link = ifl['download']
+                try:
+                    seq_id = ifl['seq_id']
+                    seq_id_source = 'from_file'
+                except:
+                    pass
+
+                try:
+                    seq_id = int(seq_id)
+                except:
+                    logger.error(f'wrong seq ID: {seq_id} ,  source = {seq_id_source}')
+                    sys.exit(1)
+                logger.debug(f'seq_id, source = {seq_id_source}')
 
                 if update_aws_ft and len(update_aws_ft) > 0:
                     ext, gz = get_file_extension(fn)
@@ -836,13 +1057,20 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
                     if ext not in update_aws_ft:
                         logger.debug(f'      skipp update amazon link due to file type limit: {fn} - ext={ext}, selected file type={update_aws_ft}')
                         continue
-                res_amazon_url = get_amazon_download_link(fn, file_uuid, header_cookie, demo=demo)
-                try:
-                    header_cookie, download = res_amazon_url
-                except:
-                    logger.error(f'      get_amazon_download_link return = {res_amazon_url} \nfn="{fn}"\nfile_uuid="{file_uuid}"\nheader_cookie="{header_cookie}"')
+
+                if validate_download_link(old_download_link):
+                    logger.info(f'      {fn}: href still valid')
+                    # print(old_download_link)
                     continue
-                logger.info(f'      {fn}: update amazon_link done')
+
+                time.sleep(2)
+                cookie_token, download, res_source = get_amazon_download_link(fn, file_uuid, cookie_token, seq_id=seq_id, demo=demo, driver=driver)
+                # download = get_amazon_download_link_api(file_uuid)
+                if not download:
+                    download = 'NA'
+                    logger.warning(f'      {fn}:fail to get amazon link')
+                    continue
+                logger.info(f'      {fn}: update amazon_link done ({res_source})')
                 ifl['download'] = download
 
         pkl_fn = pkl_fn or f'{proband_id}.udn_api_query.pkl'
@@ -924,13 +1152,6 @@ def parse_api_res(res, cookie=None, renew_amazon_link=False, update_aws_ft=None,
     cfg_info = {'father': '', 'mother':'', 'male':[], 'female':[], 'other': []}
 
     for rel_to_proband, irel in res.items():
-        if toggle_get_html_file_table:
-            for seq_id, rel_tmp in irel['seq_id']:
-                if rel_tmp != rel_to_proband:
-                    logger.error(f'not match: {rel_tmp} {rel_to_proband}')
-                    sys.exit(1)
-                get_html_file_table(rel_tmp, seq_id, headers=header_cookie, udn_proband=proband_id)
-
         if rel_to_proband == 'Proband':
             continue
         try:
@@ -1011,7 +1232,6 @@ default:
     out_md5 = open(f'download.{udn}.md5', 'w')
 
     out = open(f'download.fastq.{udn}.txt', 'w')
-    out_fastq_sh = open(f'download.fastq.{udn}.sh', 'w')
 
     if 'bam' in update_aws_ft:
         out_bam = open(f'download.bam.{udn}.sh', 'w')
@@ -1062,21 +1282,6 @@ default:
         p_trailing = '_' + p_trailing if p_trailing else ''
         remote_pw = m[1] + p_trailing
 
-    pw_upload = f'/scratch/h_vangard_1/chenh19/udn/upload/{tmp}'
-    upload_cmd = f'udn_upload emedgene  download.info.{udn}.txt -remote {remote_pw} -ft fastq $@'
-    out_fastq_sh.write(f"""#! /usr/bin/env bash
-mkdir -p {pw_upload}
-cp download.fastq.{udn}.txt {pw_upload}
-cp download.info.{udn}.txt {pw_upload}
-cp download.{udn}.md5 {pw_upload}
-cp download.fastq.{udn}.sh {pw_upload}
-echo {pw_upload}
-cd {pw_upload}
-{upload_cmd}
-echo "{upload_cmd}" >upload_command.sh
-cd - 2>/dev/null >/dev/null
-    """)
-
     out_info.write('rel_to_proband\tfn\turl\tudn\tseq_type\tsize\tbuild\tmd5\turl_s3\n')
 
     for rel_to_proband, irel in res.items():
@@ -1090,7 +1295,7 @@ cd - 2>/dev/null >/dev/null
             size = ifl['size']
             build = ifl['build']
             md5 = ifl['md5']
-            # date_upload = ifl.get('date_upload') or 'NA'
+
             seq_type = ifl.get('seq_type')
 
             if re.match(r'.+\.bai$', fn) and 'bam' in update_aws_ft:
@@ -1135,10 +1340,6 @@ cd - 2>/dev/null >/dev/null
 
     try:
         out_igv.close()
-    except:
-        pass
-    try:
-        out_fastq_sh.close()
     except:
         pass
 
@@ -1191,17 +1392,19 @@ if __name__ == "__main__":
         '-fn_cred', '-cred',
         help="""filename for the credential file, must include the UDN token, login email, login username(vunetID), login_password""")
     ps.add_argument('-create', '-encry', '-enc', help="""enter into create credential mode""", action='store_true')
+    ps.add_argument('-update_cred', '-uc',  help="""update the credential info""", action='store_true')
     ps.add_argument('-demo', help="""do not resolve the amazon link, just check the raw link. apply to both post and new query""", action='store_true')
     ps.add_argument('-ft', help="""could be multiple, if specified, would only update the amazon URL for these file types, if gzip only, add the .gz suffix. e.g. vcf.gz  would not match .vcf$""", nargs='*')
     ps.add_argument('-renew', '-new', '-update', help="""flag, update the amazon shared link. default is not renew""", action='store_true')
     ps.add_argument('-lite', help="""flag, donot download the cnv files and the bayler report""", action='store_true')
     ps.add_argument('-noupload', '-noup', help="""don't upload the files to ACCRE""", action='store_true')
+    ps.add_argument('-show', '-chrome', '-noheadless', help="""disable headless mode""", action='store_true')
+    ps.add_argument('-showcred', help="""show the credential content and exit""", action='store_true')
     ps.add_argument('-v', '-level', help="""set the logger level, default is info""", default='INFO', choices=['INFO', 'WARN', 'DEBUG', 'ERROR'])
     args = ps.parse_args()
     print(args)
 
-    toggle_get_html_file_table = 0 if args.lite else 1
-
+    headless = not args.show
     if platform == 'darwin':
         root = '/Users/files/work/cooperate/udn/cases'
         os.chdir(root)
@@ -1215,7 +1418,6 @@ if __name__ == "__main__":
     upload = not args.noupload
 
     if not args.fn_cred and os.path.exists('udn.credential.pkl.encrypt'):
-
         fn_cred = 'udn.credential.pkl.encrypt'
     else:
         fn_cred = f'{pw_script}/udn.credential.pkl.encrypt'
@@ -1228,6 +1430,8 @@ if __name__ == "__main__":
     pw_accre_scratch = '/fs0/members/chenh19/tmp/upload/'
 
     upload_file_list = ['pheno.keywords.txt', 'download.*']  # upload these files to scratch and data of ACCRE
+
+
 
     gzip_only = set()
     update_aws_ft = set()
@@ -1267,12 +1471,25 @@ if __name__ == "__main__":
         cred = key.load()
 
     # unpack the cred
-    update_cred = False
+
+    # print(cred)
+    # sys.exit(1)
+    update_cred = args.update_cred
+
+    if update_cred:
+        cred_key = input(f'Choose which key do you need to modify: {cred.keys()}:   ')
+
+        if cred_key in {'password', 'pw'}:
+            cred['password'] = getpass(prompt='Your password to login to UDN gateway: ')
+        else:
+            cred[cred_key] = input(f'new value for {cred_key}:   ')
+
     try:
         token = cred['token']
     except KeyError:
         logger.error('Token not found in credential file')
         token = input(prompt='You UDN token: ')
+
         cred['token'] = token
         update_cred = True
 
@@ -1300,12 +1517,16 @@ if __name__ == "__main__":
         cred['vunetID'] = vunetID
         update_cred = True
 
+    if update_cred:
+        logger.warning('now dumping the new cred')
+        key.dump(cred)
 
-    cookie = get_cookie()
-    header1 = {
-        'Content-Type': 'application/json',
-        'Authorization': f'Token {token}',
-    }
+    api_token_gateway = cred['token']
+    api_token_fileservice = cred['fs_token']
+
+    if args.showcred:
+        logger.info(cred)
+        sys.exit(1)
 
     udn_list = args.udn
     udn_list = [_.strip().upper() for _ in udn_list if _.strip()]
@@ -1332,8 +1553,20 @@ if __name__ == "__main__":
         udn = m.group(1)
         validated.append([udn_raw, udn, valid_family])
 
+    if len(validated) == 0:
+        logger.error('No UDN case passed in, please check')
+        sys.exit(1)
+
     # sys.exit(1)
     logger.info('\n\n\n'+'#' *30)
+
+    driver, cookie_token = get_cookie(None, headless=headless)
+    # logger.info(f'cookie_token=\n{cookie_token}')
+
+    header1 = {
+        'Content-Type': 'application/json',
+        'Authorization': f'Token {token}',
+    }
 
     for udn_raw, udn, valid_family in validated:
         os.system(f'mkdir -p {root}/{udn_raw}/origin 2>/dev/null')
@@ -1344,12 +1577,6 @@ if __name__ == "__main__":
 
         fn_udn_api_pkl = f'{root}/{udn_raw}/{udn}.udn_api_query.pkl'
 
-        if toggle_get_html_file_table:
-            try:
-                os.unlink(f'{udn}_sequencing_file_list.html')
-            except:
-                pass
-
         if os.path.exists(fn_udn_api_pkl):
             logger.info('directly load API query result from pickle file')
             res = pickle.load(open(fn_udn_api_pkl, 'rb'))
@@ -1358,7 +1585,7 @@ if __name__ == "__main__":
             else:
                 renew_amazon_link = args.renew
 
-            parse_api_res(res, cookie=cookie, update_aws_ft=update_aws_ft, renew_amazon_link=renew_amazon_link, demo=demo, udn_raw=udn_raw, valid_family=valid_family, gzip_only=gzip_only)
+            parse_api_res(res, cookie_token=cookie_token, update_aws_ft=update_aws_ft, renew_amazon_link=renew_amazon_link, demo=demo, udn_raw=udn_raw, valid_family=valid_family, gzip_only=gzip_only, driver=driver)
 
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
@@ -1369,11 +1596,10 @@ if __name__ == "__main__":
                     os.system(f"""sftp va:{pw_accre_data}/{udn_raw} <<< $'put {ifl}' >/dev/null""")
                     os.system(f"""sftp va:{pw_accre_scratch}/{udn_raw} <<< $'put {ifl}' >/dev/null""")
         else:
-            res = get_all_info(udn, cookie=cookie, demo=demo, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite, udn_proband=udn, gzip_only=gzip_only)
+            res = get_all_info(udn, cookie_token=cookie_token, demo=demo, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite, udn_proband=udn, gzip_only=gzip_only, driver=driver)
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
             if upload:
-
                 os.system(f"""sftp va <<< $'mkdir {pw_accre_data}/{udn_raw}'  2>/dev/null >&2""")
                 os.system(f"""sftp va <<< $'mkdir {pw_accre_scratch}/{udn_raw}'  2>/dev/null >&2""")
 
