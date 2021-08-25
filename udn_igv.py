@@ -5,6 +5,8 @@ https://software.broadinstitute.org/software/igv/PortCommands
 https://github.com/igvteam/igv/blob/master/src/main/resources/org/broad/igv/prefs/preferences.tab
 input 1 = igv download file
 input 2 = {udn}.selected.genes.txt. first column = mut_type
+
+if input2 is not defined, would create the script just adding the bam tracks
 """
 
 import argparse as arg
@@ -30,37 +32,20 @@ if not udn:
     udn = tmp[0].split('.', 1)[0]
 
 import logging
-prefix = f'{udn}.build_igv_script'
-fn_log = f'{prefix}.log'
-fn_err = f'{prefix}.err'
+
 
 fmt = logging.Formatter('%(asctime)s  %(levelname)-9s   %(funcName)-10s   line: %(lineno)-5s   %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 console = logging.StreamHandler(sys.stdout)
 console.setFormatter(fmt)
 console.setLevel('INFO')
 
-fh_file = logging.FileHandler(fn_log, mode='w', encoding='utf8')
-fh_err = logging.FileHandler(fn_err, mode='a', encoding='utf8')
-
-fh_file.setLevel('DEBUG')
-fh_file.setFormatter(fmt)
-
-fh_err.setLevel('ERROR')
-fh_err.setFormatter(fmt)
-
 logger = logging.getLogger(__file__)
 logger.setLevel('DEBUG')
 logger.addHandler(console)
-logger.addHandler(fh_file)
-logger.addHandler(fh_err)
-
-
-
 
 
 pwigv = f'{pw}/igv'
 os.system(f'mkdir -p {pwigv} 2>/dev/null')
-
 
 # read-in the bam files
 fn_in = f'{pw}/{udn}.igv.files.txt'
@@ -82,65 +67,68 @@ with open(fn_in) as fp:
         except:
             d_bam[ext] = {lb: url}
 
-
-# read-in the region/ genes
-for fn_in in [f'{pw}/{udn}.selected.genes.txt', f'{pw}/{udn}.selected.genes.xlsx', f'{pw}/selected.genes.txt', f'{pw}/selected.genes.xlsx']:
-    if os.path.exists(fn_in):
-        break
-else:
-    logger.error(f'selected.genes.txt/xlsx file not found')
-    sys.exit(1)
-
-d_genes = {}
-
-ext = fn_in.rsplit('.', 1)[-1]
-if ext == 'txt':
-    with open(fn_in) as fp:
-        data = [i.strip() for i in fp if i.strip()]
-        data = [i.split('\t') for i in data]
-elif ext == 'xlsx':
-    import pandas as pd
-    data = pd.read_excel(fn_in, keep_default_na=False)
-    data = data.itertuples(False, None)
-
-
-for a in data:
-    if len(a) < 9:
-        print(f'error split: {a}')
-        continue
-    gn = a[9]
-    try:
-        s = a[4] + 0
-        e = a[5] + 0
-    except:
-        try:
-            s = int(re.sub(r"[,\s\"']+", '', a[4]))
-            e = int(re.sub(r"[,\s\"']+", '', a[5]))
-        except:
-
-            print(f'fail to convert start/end to int: {a}')
-            continue
-    chr_ = a[3]
-    try:
-        chr_ = {'chrx': 'chrX', 'chry': 'chrY'}[chr_]
-    except:
-        pass
-        # continue
-
-    len_sv = e - s
-    try:
-        _ = d_genes[gn]
-    except:
-        d_genes[gn] = []   # do not add gn as the first element, because they are too big, no valid screenshot
-
-    if len_sv > 20000:
-        n = int(len_sv/10000)
-        for _ in range(n-1):
-            d_genes[gn].append(f'{chr_}:{s-2000 + _*10000}-{s + 2000 + (_ + 1)*10000}')
-        d_genes[gn].append(f'{chr_}:{s-1000 + (n-1) *10000}-{e + 2000}')
+def get_gene_region():
+    # read-in the region/ genes
+    for fn_in in [f'{pw}/{udn}.selected.genes.txt', f'{pw}/{udn}.selected.genes.xlsx', f'{pw}/selected.genes.txt', f'{pw}/selected.genes.xlsx']:
+        if os.path.exists(fn_in):
+            break
     else:
-        d_genes[gn].append(f'{chr_}:{s-2000}-{e+2000}')
+        logger.warning(f'selected.genes.txt/xlsx file not found, would only add bam tracks, no jumping and screenshot')
+        return {}
 
+    d_genes = {}
+
+    ext = fn_in.rsplit('.', 1)[-1]
+    if ext == 'txt':
+        with open(fn_in) as fp:
+            data = [i.strip() for i in fp if i.strip()]
+            data = [i.split('\t') for i in data]
+    elif ext == 'xlsx':
+        import pandas as pd
+        data = pd.read_excel(fn_in, keep_default_na=False)
+        data = data.itertuples(False, None)
+
+
+    for a in data:
+        if len(a) < 9:
+            print(f'error split: {a}')
+            continue
+        gn = a[9]
+        try:
+            s = a[4] + 0
+            e = a[5] + 0
+        except:
+            try:
+                s = int(re.sub(r"[,\s\"']+", '', a[4]))
+                e = int(re.sub(r"[,\s\"']+", '', a[5]))
+            except:
+
+                print(f'fail to convert start/end to int: {a}')
+                continue
+        chr_ = a[3]
+        try:
+            chr_ = {'chrx': 'chrX', 'chry': 'chrY'}[chr_]
+        except:
+            pass
+            # continue
+
+        len_sv = e - s
+        try:
+            _ = d_genes[gn]
+        except:
+            d_genes[gn] = []   # do not add gn as the first element, because they are too big, no valid screenshot
+
+        if len_sv > 20000:
+            n = int(len_sv/10000)
+            for _ in range(n-1):
+                d_genes[gn].append(f'{chr_}:{s-2000 + _*10000}-{s + 2000 + (_ + 1)*10000}')
+            d_genes[gn].append(f'{chr_}:{s-1000 + (n-1) *10000}-{e + 2000}')
+        else:
+            d_genes[gn].append(f'{chr_}:{s-2000}-{e+2000}')
+
+    return d_genes
+
+d_genes = get_gene_region()
 # output igv batch script
 with open(f'{pw}/igv.script.{udn}.txt', 'w') as out:
     out.write(f"""genome hg38
@@ -165,7 +153,6 @@ load http://hgdownload.cse.ucsc.edu/goldenPath/hg38/database/refGene.txt.gz
 collapse refGene.txt.gz
 
 """)
-
     for gn, v in d_genes.items():
         for n, region in enumerate(v):
             # suffix = 'gene_overview' if n == 0 else n
