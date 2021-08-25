@@ -995,6 +995,24 @@ def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft
     logger.info(f'keys for the result: {res.keys()}')
     proband_id = res['Proband']['simpleid']
 
+
+
+    # get the screenshot of relative table
+    if save_rel_table:
+        uuid_case = res['Proband']['uuid_case']
+        url_relative = f'https://gateway.undiagnosed.hms.harvard.edu/patient/relatives/{uuid_case}/'
+        if not uuid_case:
+            logger.error(f'case UUID not found: patient record={res["Proband"]}')
+            return 0
+        try:
+            driver.get(url_relative)
+        except:
+            logger.error(f'fail to get relatives page using selenium')
+        else:
+            _tmp_ele = wait(driver, 20).until(lambda _:_.find_element_by_xpath(f'//a[text()="Sequence uploaded"]'))
+            driver.save_screenshot(f'{proband_id}.relatives_table.png')
+            logger.info(f'relative table saved!')
+
     if not cookie_token:
         driver, cookie_token = get_cookie(driver)
     header_cookie = get_header_cookie(cookie_token)
@@ -1400,10 +1418,13 @@ if __name__ == "__main__":
     ps.add_argument('-noupload', '-noup', help="""don't upload the files to ACCRE""", action='store_true')
     ps.add_argument('-show', '-chrome', '-noheadless', help="""disable headless mode""", action='store_true')
     ps.add_argument('-showcred', help="""show the credential content and exit""", action='store_true')
+    ps.add_argument('-reltable', '-rel', help="""force save the relative table, even in the parse_api_result mode""", action='store_true')
     ps.add_argument('-v', '-level', help="""set the logger level, default is info""", default='INFO', choices=['INFO', 'WARN', 'DEBUG', 'ERROR'])
     args = ps.parse_args()
     print(args)
 
+
+    save_rel_table = args.reltable
     headless = not args.show
     if platform == 'darwin':
         root = '/Users/files/work/cooperate/udn/cases'
@@ -1430,7 +1451,6 @@ if __name__ == "__main__":
     pw_accre_scratch = '/fs0/members/chenh19/tmp/upload/'
 
     upload_file_list = ['pheno.keywords.txt', 'download.*']  # upload these files to scratch and data of ACCRE
-
 
 
     gzip_only = set()
