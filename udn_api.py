@@ -28,6 +28,7 @@ import requests
 from selenium import webdriver
 import selenium.common.exceptions as sel_exp
 from selenium.webdriver.support.ui import WebDriverWait as wait
+import udn_igv
 
 from bs4 import BeautifulSoup as bs
 # basic settings
@@ -1272,6 +1273,8 @@ default:
 
         """)
 
+
+
     if 'cnv' in update_aws_ft:
         out_cnv = open(f'download.cnv.{udn}.sh', 'w')
         # out_other = open(f'download.other.{udn}.sh', 'w')
@@ -1366,6 +1369,9 @@ default:
         out_igv.close()
     except:
         pass
+    if 'bam' in update_aws_ft:
+        logger.info('building IGV script')
+        udn_igv.main('.', udn, logger)
 
 
 def resolve_udn_id(s):

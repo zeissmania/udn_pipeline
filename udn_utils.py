@@ -410,7 +410,7 @@ class UDN_case():
                     res[gn][1].append(matched_word)
 
             if n_word_match_meaning > 0:
-                print(f'{gn}\t{highlighted_words - redundant_words}')
+                logger.info(f'{gn}\t{highlighted_words - redundant_words}')
 
             comment_list = [refine_comment(_, symbol_to_word) for _ in comment_list]
 
@@ -453,7 +453,6 @@ class UDN_case():
             print(f'## {n3}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}', file=out3)
             print(comment, file=out3)
             print('#' * 50 + '\n\n\n', file=out3)
-
 
         for v in res1:
             gn = v[0]
