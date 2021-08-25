@@ -675,6 +675,9 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
 
             # use fileserviceuuid key, rather than the uuid key
             file_uuid = ifl['fileserviceuuid']
+
+            # the above file_uuid is used for api query, but the file_uuid used for the js query is ifl['uuid']
+            file_uuid_js = ifl['uuid']
             file_uuid1 = ifl['file_data']['uuid']
             if file_uuid != file_uuid1:
                 demo_d = {'fileserviceuuid': file_uuid, 'file_data': {'uuid': file_uuid1}}
@@ -736,16 +739,14 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
                 download = 'NA'
             else:
                 time.sleep(2)
-                cookie_token, download, res_source = get_amazon_download_link(fn, file_uuid, cookie_token, seq_id=seq_id, demo=demo, driver=driver)
-
-                # download = get_amazon_download_link_api(file_uuid)
+                cookie_token, download, res_source = get_amazon_download_link(fn, file_uuid, cookie_token, seq_id=seq_id, demo=demo, driver=driver, file_uuid_js=file_uuid_js)
                 if not download:
                     logger.debug(f'error when getting_amazon_download_link cookie_token = {cookie_token} \nfn="{fn}"\nfile_uuid="{file_uuid}"')
                     download = 'NA'
                 else:
                     logger.info(f'{sequence_type} seq_id={seq_id}: {fn}, amazon link resolved ({res_source})')
 
-            files.append({'download': download, 'relative': rel_to_proband, 'file_uuid': file_uuid, 'fn': fn, 'url': fl_url, 'complete': completed, 'size': fl_size, 'build': fl_assembly, 'assembly': fl_assembly, 'md5': fl_md5, 'seq_type': sequence_type, 'seq_id': seq_id})
+            files.append({'download': download, 'relative': rel_to_proband, 'file_uuid': file_uuid, 'file_uuid_js': file_uuid_js, 'fn': fn, 'url': fl_url, 'complete': completed, 'size': fl_size, 'build': fl_assembly, 'assembly': fl_assembly, 'md5': fl_md5, 'seq_type': sequence_type, 'seq_id': seq_id})
     res['files'] = files
     res_all[rel_to_proband] = res
 
@@ -815,7 +816,8 @@ def get_amazon_download_link_api(file_uuid):
     return download_url
 
 
-def get_amazon_download_link(fn, file_uuid, cookie_token,  seq_id, driver, n=0, demo=False):
+def get_amazon_download_link(fn, file_uuid, cookie_token,  seq_id, driver, n=0, demo=False, file_uuid_js=None):
+    # file_uuid_js, used for js query
     download_link = get_amazon_download_link_api(file_uuid)
     if download_link:
         return cookie_token, download_link, 'api'
@@ -837,7 +839,11 @@ def get_amazon_download_link(fn, file_uuid, cookie_token,  seq_id, driver, n=0, 
         logger.error(header_cookie)
         sys.exit(1)
 
-    url_download_info = f'https://gateway.undiagnosed.hms.harvard.edu/patient/downloadsequenceurl/{file_uuid}/?csrfmiddlewaretoken={csrftoken}'
+    if not file_uuid_js:
+        logger.warning(f'file_uuid_js is not defined, use file_uuid instead')
+        file_uuid_js = file_uuid
+
+    url_download_info = f'https://gateway.undiagnosed.hms.harvard.edu/patient/downloadsequenceurl/{file_uuid_js}/?csrfmiddlewaretoken={csrftoken}'
     response_download_link = requests.request('GET', url_download_info, headers=header_cookie)
     if n > 2:
         return cookie_token, None, None
@@ -854,7 +860,7 @@ def get_amazon_download_link(fn, file_uuid, cookie_token,  seq_id, driver, n=0, 
             download_link = get_download_link_by_selinium(driver, fn, seq_id, logger=logger)
             res_source = 'selenium'
             if not download_link:
-                cookie_token, download_link = get_amazon_download_link(fn, file_uuid, cookie_token, seq_id=seq_id, n=n, demo=demo, driver=driver)
+                cookie_token, download_link = get_amazon_download_link(fn, file_uuid, cookie_token, seq_id=seq_id, n=n, demo=demo, driver=driver, file_uuid_js=file_uuid_js)
                 res_source = 'JS'
             if download_link:
                 return cookie_token, download_link, res_source
@@ -871,7 +877,7 @@ def get_amazon_download_link(fn, file_uuid, cookie_token,  seq_id, driver, n=0, 
             download_link = get_download_link_by_selinium(driver, fn, seq_id, logger=logger)
             res_source = 'selenium'
             if not download_link:
-                cookie_token, download_link = get_amazon_download_link(fn, file_uuid, cookie_token, seq_id=seq_id, n=n, demo=demo, driver=driver)
+                cookie_token, download_link = get_amazon_download_link(fn, file_uuid, cookie_token, seq_id=seq_id, n=n, demo=demo, driver=driver, file_uuid_js=file_uuid_js)
                 res_source = 'JS'
             if download_link:
                 return cookie_token, download_link, res_source
@@ -1052,6 +1058,7 @@ def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft
             for ifl in v['files']:
                 fn = ifl['fn']
                 file_uuid = ifl['file_uuid']
+                file_uuid_js = ifl.get('file_uuid_js')
                 old_download_link = ifl['download']
                 try:
                     seq_id = ifl['seq_id']
@@ -1082,8 +1089,7 @@ def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft
                     continue
 
                 time.sleep(2)
-                cookie_token, download, res_source = get_amazon_download_link(fn, file_uuid, cookie_token, seq_id=seq_id, demo=demo, driver=driver)
-                # download = get_amazon_download_link_api(file_uuid)
+                cookie_token, download, res_source = get_amazon_download_link(fn, file_uuid, cookie_token, seq_id=seq_id, demo=demo, driver=driver, file_uuid_js=file_uuid_js)
                 if not download:
                     download = 'NA'
                     logger.warning(f'      {fn}:fail to get amazon link')
