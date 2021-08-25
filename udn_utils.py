@@ -252,10 +252,13 @@ class UDN_case():
                 with open(fn1, 'w') as out:
                     pass
 
+
+
+        logger.info(f'local total gene number with OMIM description={len(d_gene_comment_scrapy)}')
+
         gene_with_omim = set(d_gene) & set(list(d_gene_comment_scrapy) + list(d_gene_comment))
         logger.info(f'gene count in merged.sorted.tsv: {len(d_gene)}')
         logger.info(f'gene count in with OMIM description: {len(gene_with_omim)}')
-
 
         # build the phenotype keyword list
         # if 2 words link together, use +, if match the exact word, add a prefix @
@@ -388,7 +391,6 @@ class UDN_case():
                         if len(word) == 1 or re.match(r'^\d+$', word):
                             continue
 
-
                         if word not in redundant_words:
                             n_word_match_meaning += 1
                         else:
@@ -407,6 +409,9 @@ class UDN_case():
                 elif n_word_match_meaning > 0:
                     res[gn][1].append(matched_word)
 
+            if n_word_match_meaning > 0:
+                print(f'{gn}\t{highlighted_words - redundant_words}')
+
             comment_list = [refine_comment(_, symbol_to_word) for _ in comment_list]
 
             res[gn][2] = '\n'.join(comment_list)
@@ -423,7 +428,7 @@ class UDN_case():
 
         # logger.info(f'OMIM query count={len(res)}')
 
-        logger.info(f'gene number with OMIM description={len(d_gene_comment_scrapy)}')
+
 
         # tally the result
         out1 = open(f'{pw}/omim_match_gene.{udn}.md', 'w')
