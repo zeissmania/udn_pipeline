@@ -32,26 +32,68 @@ class IGV():
     def get_bam_list(self):
         # read-in the bam files
         logger = self.logger
-        fn_in = f'{self.pw}/{self.udn}.igv.files.txt'
+        # fn_in = f'{self.pw}/{self.udn}.igv.files.txt'
+        fn_in = f'{self.pw}/download.info.{self.udn}.txt'
         if not os.path.exists(fn_in):
             logger.error(f'{self.udn}: {fn_in} file not found')
             sys.exit(1)
         # logger.info(fn_in)
 
         d_bam = {}
+        rank = {'Proband': 0, 'Father': 1, 'Mother': 2}
+        sn_brother, sn_sister, sn_sibling, sn_other = 1, 1, 1, 1
+        rel_rank = {}
         with open(fn_in) as fp:
+            header = fp.readline().split('\t')
+            # rel_to_proband	fn	url	udn	seq_type	size	build	md5	url_s3
+            keys = ['rel_to_proband', 'fn', 'url']
+            try:
+                header_idx = {_: header.index(_) for _ in header if _ in keys}
+            except:
+                logger.error(f'some keys not found in header of {fn_in}:\nexpected={keys}\nheader={header}')
+                sys.exit(1)
             for i in fp:
                 i = i.strip()
                 if not i:
                     continue
-                url, fn = i.split('\t')
+                a = i.split('\t')
+                rel = a[header_idx['rel_to_proband']]
+                if rel not in rel_rank:
+                    try:
+                        rel_rank[rel] = rank[rel]
+                    except:
+                        if rel.lower().startswith('brother'):
+                            sn_brother += 1  # should be less than 90
+                            rel_rank[rel] = 10 + sn_brother
+                        elif rel.lower().startswith('bister'):
+                            sn_sister += 1 # should be less than 100
+                            rel_rank[rel] = 100 + sn_sister
+                        elif rel.lower().startswith('sibling'):
+                            sn_sibling += 1  # should be less than 100
+                            rel_rank[rel] = 200 + sn_sibling
+                        else:
+                            sn_other += 1
+                            rel_rank[rel] = 300 + sn_other # no limit
+
+
+                fn = a[header_idx['fn']]
+                url = a[header_idx['url']]
                 ext = fn.rsplit('.', 1)[-1]
                 lb = fn.replace('.bai', '')
+                if ext not in set(['bam', 'bai']):
+                    continue
                 try:
-                    d_bam[ext][lb] = url
+                    d_bam[lb]
                 except:
-                    d_bam[ext] = {lb: url}
-        return d_bam
+                    d_bam[lb] = [rel_rank[rel], 'error', 'error']
+                if ext == 'bam':
+                    d_bam[lb][1] = url
+                elif ext == 'bai':
+                    d_bam[lb][2] = url
+
+        # sort by pre-defined relative order
+        bam_list = sorted(d_bam.values(), key=lambda _: _[0])
+        return bam_list
 
     def get_gene_region(self):
         # read-in the region/ genes
@@ -123,8 +165,8 @@ def main(pw, udn, logger):
     pwigv = f'{pw}/igv'
     os.system(f'mkdir -p {pwigv} 2>/dev/null')
     igv_obj = IGV(pw, udn, logger)
-    d_bam = igv_obj.get_bam_list()
-    if len(d_bam) == 0:
+    bam_list = igv_obj.get_bam_list()
+    if len(bam_list) == 0:
         logger.error(f'no bam file found in {pw}/{udn}.igv.files.txt')
 
     d_genes = igv_obj.get_gene_region()
@@ -139,12 +181,7 @@ def main(pw, udn, logger):
     new
 
     """)
-        for lb, url_bam in d_bam['bam'].items():
-            try:
-                url_bai = d_bam['bai'][lb]
-            except:
-                logger.warning(f'bai file not found: {lb}')
-                continue
+        for _rank, url_bam, url_bai in bam_list:
             out.write(f'load "{url_bam}" index="{url_bai}"\n')
 
         out.write("""

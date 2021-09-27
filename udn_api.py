@@ -16,6 +16,7 @@ import sys
 import os
 import time
 import re
+import glob
 import json
 import pickle
 import hashlib
@@ -222,8 +223,6 @@ def login(driver, headless=False):
     # driver.save_screenshot('udn_gateway.png')
     return driver
 
-
-
 def get_cookie(driver, headless=True):
     driver = login(driver, headless=headless)
     cookies = driver.get_cookies()
@@ -309,7 +308,7 @@ def format_comment(comment):
     return '\n\n'.join(tmp)
 
 
-def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_passed_in=None, sequence_type_desired=None, demo=False, get_aws_ft=None, udn_raw=None, valid_family=None, lite_mode=None, udn_proband=None, gzip_only=None, driver=None):
+def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_passed_in=None, sequence_type_desired=None, demo=False, get_aws_ft=None, udn_raw=None, valid_family=None, lite_mode=None, udn_proband=None, gzip_only=None, driver=None, sv_caller='dragen'):
     """
     rel_to_proband, if run as proband, this is None, otherwize, this func is called during geting the relatives of proband, and specified
     info_passed_in,  {'affected': rel_aff, 'seq_status': have_seq}   include the affect state, sequenced_state, only valid when called during geting the relatives of proband, and specified
@@ -345,6 +344,7 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
     if not cookie_token:
         logger.error('fail to get cookie, can\'t get the amazon s3 presigned URL, exit')
         return 0
+
 
     header_cookie = get_header_cookie(cookie_token)
 
@@ -594,8 +594,9 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
         except:
             logger.warning(f'{rel_to_proband} seq_id = {seq_id}: unkown sequence type: type code={sequence_type_raw}')
             continue
+
         if sequence_type in sequence_type_desired  or'all' in  sequence_type_desired or sequence_type == 'reanalysis':
-            pass
+            logger.info(f'desired seq type found: {sequence_type}')
         else:
             logger.warning(f'{rel_to_proband}: skipped due to unmatch sequence type, seq_id = {seq_id}, desired={sequence_type_desired} found={sequence_type}')
             continue
@@ -684,9 +685,12 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
                 demo_d = {'fileserviceuuid': file_uuid, 'file_data': {'uuid': file_uuid1}}
                 logger.warning(f'fs_uuid not match within json: {demo_d}')
 
-
-            fl_url = fl_loc['url']
-            fl_size = fl_loc['filesize']
+            try:
+                fl_url = fl_loc['url']
+                fl_size = fl_loc['filesize']
+            except:
+                logger.warning(f'unexpected fl_info {fn}: {fl_loc}')
+                fl_url = fl_size = 'NA'
 
     #         metadata
     #                 sequenceid
@@ -694,9 +698,16 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
     #                 md5sum
     #                 sequencing_type
     #                 filename
-            seq_id = fl_meta['sequenceid']
-            fl_assembly = fl_meta.get('assembly')
-            fl_md5 = fl_meta.get('md5sum') or fl_meta.get('md5')
+            try:
+                seq_id = fl_meta['sequenceid']
+            except:
+                pass
+            try:
+                fl_assembly = fl_meta.get('assembly')
+                fl_md5 = fl_meta.get('md5sum') or fl_meta.get('md5')
+            except:
+                logger.warning(f'unexpected fl meta info  {fn}: {fl_meta}')
+                fl_assembly = fl_md5 = 'NA'
 
             if re.match(r'.+\.bai$', fn):
                 pass
@@ -753,7 +764,7 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
 
     if rel_to_proband == 'Proband':
         try:
-            parse_api_res(res_all, cookie_token=cookie_token, udn_raw=udn_raw, valid_family=valid_family, driver=driver)
+            parse_api_res(res_all, cookie_token=cookie_token, udn_raw=udn_raw, valid_family=valid_family, driver=driver, sv_caller=sv_caller)
         except:
             logger.error(f'fail to parse the result dict, try again')
             raise
@@ -974,7 +985,7 @@ def validate_download_link(url):
 
     # return True
 
-def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None, demo=False, udn_raw=None, valid_family=None, gzip_only=None, driver=None):
+def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None, demo=False, udn_raw=None, valid_family=None, gzip_only=None, driver=None, sv_caller='dragen'):
     """
     res = {proband: {}, relative: [{family1}, {family2}]}
     1. build a report for the proband
@@ -1002,10 +1013,9 @@ def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft
     logger.info(f'keys for the result: {res.keys()}')
     proband_id = res['Proband']['simpleid']
 
-
-
     # get the screenshot of relative table
-    if save_rel_table:
+    fn_reltive_png = f'{proband_id}.relatives_table.png'
+    if save_rel_table or not os.path.exists(fn_reltive_png):
         uuid_case = res['Proband']['uuid_case']
         url_relative = f'https://gateway.undiagnosed.hms.harvard.edu/patient/relatives/{uuid_case}/'
         if not uuid_case:
@@ -1017,18 +1027,18 @@ def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft
             logger.error(f'fail to get relatives page using selenium')
         else:
             _tmp_ele = wait(driver, 20).until(lambda _:_.find_element_by_xpath(f'//a[text()="Sequence uploaded"]'))
-            driver.save_screenshot(f'{proband_id}.relatives_table.png')
-            logger.info(f'relative table saved!')
 
-    if not cookie_token:
-        driver, cookie_token = get_cookie(driver)
-    header_cookie = get_header_cookie(cookie_token)
-    if not cookie_token:
-        logger.error('fail to get cookie, can\'t get the amazon s3 presigned URL, exit')
-        return 0
+            driver.save_screenshot(fn_reltive_png)
+            logger.info(f'Screenshot: relative table saved!')
+
+    # if not cookie_token:
+    #     driver, cookie_token = get_cookie(driver)
+    # header_cookie = get_header_cookie(cookie_token)
+    # if not cookie_token:
+    #     logger.error('fail to get cookie, can\'t get the amazon s3 presigned URL, exit')
+    #     return 0
 
     # export the sequencing html table
-
 
     # filter on the valid_family
     if valid_family is not None:
@@ -1042,6 +1052,8 @@ def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft
 
 
     affect_convert_to_01 = {'Affected': 1, 'Unaffected': 0, '3 / Unaffected': 0, '2 / Affected': 1, 'Unaffected / 3': 0, 'Affected / 2': 1, 'Unknown': -1}
+
+
     if renew_amazon_link:
         for rel_to_proband, v in res.items():
             logger.info(f'renew amazon download link for {rel_to_proband}')
@@ -1105,6 +1117,7 @@ def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft
 
     # report for proband
 
+
     proband = res['Proband']
     udn = proband['simpleid']
     hpo = proband['symp']
@@ -1147,6 +1160,7 @@ def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft
                 out.write(f'\n\n### {v}\n\n{proband[k]}\n')
         out.write('\n\n')
 
+
     fn_pdf = f'{udn}.basic_info.pdf'
     # os.system(f"pandoc  -t pdf {udn}.basic_info.md --pdf-engine pdflatex -o {fn_pdf}")
     if not os.path.exists(fn_pdf):
@@ -1177,18 +1191,19 @@ def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft
     cfg_info = {'father': '', 'mother':'', 'male':[], 'female':[], 'other': []}
 
     for rel_to_proband, irel in res.items():
+
         if rel_to_proband == 'Proband':
             continue
         try:
             rel_udn = irel['simpleid']
             rel_gender = irel['gender']
         except:
-            tmp_set = set(['simpleid', 'affect', 'gender'])
+            tmp_set = set(['simpleid', 'affect_final', 'gender'])
             logger.info(f'{rel_to_proband}: key not found: {[_ for _ in tmp_set if _ not in irel]}, keys={irel.keys()}')
             continue
 
-        if not irel.get('files'):
-            logger.info(f'{rel_to_proband}: no files available, skip... ')
+        if not irel.get('files') and sv_caller != 'pacbio':
+            logger.warning(f'{rel_to_proband}: no files available, skip... ')
             continue
 
         try:
@@ -1212,16 +1227,19 @@ def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft
         else:
             cfg_info['other'].append([rel_udn, rel_aff, rel_to_proband])
 
+
+    logger.debug(cfg_info)
     # brothers = '\n'.join([f'brother{n+1}: {str(_)}' for n, _ in enumerate(cfg_info['brother'])])
     # sisters = '\n'.join([f'sister{n+1}: {str(_)}' for n, _ in enumerate(cfg_info['sister'])])
-    male = '\n'.join([f'male{n+1}: {str(_)}' for n, _ in enumerate(cfg_info['male'])])
-    female = '\n'.join([f'female{n+1}: {str(_)}' for n, _ in enumerate(cfg_info['female'])])
-    other = '\n'.join([f'other{n+1}: {str(_)}' for n, _ in enumerate(cfg_info['other'])])
+    male = '\n  '.join([f'male{n+1}: {str(_)}' for n, _ in enumerate(cfg_info['male'])])
+    female = '\n  '.join([f'female{n+1}: {str(_)}' for n, _ in enumerate(cfg_info['female'])])
+    other = '\n  '.join([f'other{n+1}: {str(_)}' for n, _ in enumerate(cfg_info['other'])])
 
 
     cfg = f"""prj: {udn}  # the project name
 path:
 # if the file is under the path above, could use the filename only
+sv_caller: {sv_caller}
 pheno_file: {udn}.terms.txt  # include the phenotype terms
 udn_match_gene_file:  # if available, specify here, this file contains the Number of occurrences in the 3rd column, gene symbol as the 1st column
 # if not available, leave blank
@@ -1260,7 +1278,6 @@ default:
 
     if 'bam' in update_aws_ft:
         out_bam = open(f'download.bam.{udn}.sh', 'w')
-        out_igv = open(f'{udn}.igv.files.txt', 'w')
         html_bam = open(f'download.bam.{udn}.html', 'w')
         html_bam.write(f"""<!DOCTYPE html>
     <html lang="en">
@@ -1273,8 +1290,6 @@ default:
 
         """)
 
-
-
     if 'cnv' in update_aws_ft:
         out_cnv = open(f'download.cnv.{udn}.sh', 'w')
         # out_other = open(f'download.other.{udn}.sh', 'w')
@@ -1284,8 +1299,6 @@ default:
     if len(set(update_aws_ft) - set(['bam', 'fastq', 'cnv'])) > 0:
         other_download = 1
         out_other = open(f'download.other.{udn}.sh', 'w')
-
-
 
     tmp = udn_raw or udn
     remote_pw = re.sub(r'^\d+_', '', tmp, 1)
@@ -1311,6 +1324,7 @@ default:
 
     out_info.write('rel_to_proband\tfn\turl\tudn\tseq_type\tsize\tbuild\tmd5\turl_s3\n')
 
+
     for rel_to_proband, irel in res.items():
         if not irel.get('files'):
             continue
@@ -1326,11 +1340,9 @@ default:
             seq_type = ifl.get('seq_type')
 
             if re.match(r'.+\.bai$', fn) and 'bam' in update_aws_ft:
-                out_igv.write(f'{url}\t{fn}\n')
                 out_bam.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
                 print(f'<span><b>{rel_to_proband}:    </b></span><a href="{url}">{fn}</a></br></br>', file=html_bam)
             elif re.match(r'.+\.bam$', fn) and 'bam' in update_aws_ft:
-                out_igv.write(f'{url}\t{fn}\n')
                 out_bam.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
                 print(f'<span><b>{rel_to_proband}:    </b></span><a href="{url}">{fn}</a></br></br>', file=html_bam)
             elif re.match(r'.+\.cnv\.vcf(\.gz)?$', fn) and 'cnv' in update_aws_ft:
@@ -1365,10 +1377,6 @@ default:
     out_md5.close()
     out_info.close()
 
-    try:
-        out_igv.close()
-    except:
-        pass
     if 'bam' in update_aws_ft:
         logger.info('building IGV script')
         udn_igv.main('.', udn, logger)
@@ -1410,8 +1418,6 @@ UDN179293_Proband, UDN216310_Mother, UDN027382_Father (Case 222)"""
     return ' '.join(res)
 
 
-
-
 if __name__ == "__main__":
 
     import argparse as arg
@@ -1422,12 +1428,14 @@ if __name__ == "__main__":
         '-fn_cred', '-cred',
         help="""filename for the credential file, must include the UDN token, login email, login username(vunetID), login_password""")
     ps.add_argument('-create', '-encry', '-enc', help="""enter into create credential mode""", action='store_true')
+    ps.add_argument('-sv_caller', '-svcaller', '-svsoftware', help="""the software used for sv calling, default=dragen, alt=pacbio""", default='dragen', choices=['pacbio', 'dragen'])
     ps.add_argument('-update_cred', '-uc',  help="""update the credential info""", action='store_true')
     ps.add_argument('-demo', help="""do not resolve the amazon link, just check the raw link. apply to both post and new query""", action='store_true')
-    ps.add_argument('-ft', help="""could be multiple, if specified, would only update the amazon URL for these file types, if gzip only, add the .gz suffix. e.g. vcf.gz  would not match .vcf$""", nargs='*')
+    ps.add_argument('-ft', help="""could be multiple, if specified, would only update the amazon URL for these file types, if gzip only, add the .gz suffix. e.g. vcf.gz  would not match .vcf$""", nargs='*', default=None)
     ps.add_argument('-renew', '-new', '-update', help="""flag, update the amazon shared link. default is not renew""", action='store_true')
     ps.add_argument('-lite', help="""flag, donot download the cnv files and the bayler report""", action='store_true')
     ps.add_argument('-noupload', '-noup', help="""don't upload the files to ACCRE""", action='store_true')
+    ps.add_argument('-force_upload', '-fu', help="""force upload all files to ACCRE""", action='store_true')
     ps.add_argument('-show', '-chrome', '-noheadless', help="""disable headless mode""", action='store_true')
     ps.add_argument('-showcred', help="""show the credential content and exit""", action='store_true')
     ps.add_argument('-reltable', '-rel', help="""force save the relative table, even in the parse_api_result mode""", action='store_true')
@@ -1435,6 +1443,10 @@ if __name__ == "__main__":
     args = ps.parse_args()
     print(args)
 
+    udn_list = args.udn or [os.getcwd().rsplit('/')[-1]]
+
+    force_upload = args.force_upload
+    sv_caller = args.sv_caller
 
     save_rel_table = args.reltable
     headless = not args.show
@@ -1460,18 +1472,18 @@ if __name__ == "__main__":
 
 
     pw_accre_data = '/home/chenh19/data/udn'
-    pw_accre_scratch = '/fs0/members/chenh19/tmp/upload/'
+    pw_accre_scratch = '/fs0/members/chenh19/tmp/upload'
 
     upload_file_list = ['pheno.keywords.txt', 'download.*']  # upload these files to scratch and data of ACCRE
-
 
     gzip_only = set()
     update_aws_ft = set()
 
-    if not args.ft:
+    if args.ft is None:
         update_aws_ft = ['cnv', 'fastq']
     else:
         err = 0
+        args.ft = [_ for _ in args.ft if _.strip()]
         for i in args.ft:
             ext = i.replace('.gz', '')
             if i[-2:] == 'gz':
@@ -1483,6 +1495,7 @@ if __name__ == "__main__":
                 err = 0
         if err:
             sys.exit(1)
+
 
     passcode = getpass('Input the passcode for the encrypted credential file: ')
     if not fn_cred:
@@ -1560,7 +1573,7 @@ if __name__ == "__main__":
         logger.info(cred)
         sys.exit(1)
 
-    udn_list = args.udn
+
     udn_list = [_.strip().upper() for _ in udn_list if _.strip()]
 
     # validate udn
@@ -1592,8 +1605,10 @@ if __name__ == "__main__":
     # sys.exit(1)
     logger.info('\n\n\n'+'#' *30)
 
-    driver, cookie_token = get_cookie(None, headless=headless)
+    # driver, cookie_token = get_cookie(None, headless=headless)
     # logger.info(f'cookie_token=\n{cookie_token}')
+    driver = None
+    cookie_token = None
 
     header1 = {
         'Content-Type': 'application/json',
@@ -1617,32 +1632,53 @@ if __name__ == "__main__":
             else:
                 renew_amazon_link = args.renew
 
-            parse_api_res(res, cookie_token=cookie_token, update_aws_ft=update_aws_ft, renew_amazon_link=renew_amazon_link, demo=demo, udn_raw=udn_raw, valid_family=valid_family, gzip_only=gzip_only, driver=driver)
+            parse_api_res(res, cookie_token=cookie_token, update_aws_ft=update_aws_ft, renew_amazon_link=renew_amazon_link, demo=demo, udn_raw=udn_raw, valid_family=valid_family, gzip_only=gzip_only, driver=driver, sv_caller=sv_caller)
 
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
-
-            if upload:
-                for ifl in upload_file_list:  # file name can't contain space
-                    logger.info(f'update {ifl} to  ACCRE: {udn_raw}')
-                    os.system(f"""sftp va:{pw_accre_data}/{udn_raw} <<< $'put {ifl}' >/dev/null""")
-                    os.system(f"""sftp va:{pw_accre_scratch}/{udn_raw} <<< $'put {ifl}' >/dev/null""")
         else:
-            res = get_all_info(udn, cookie_token=cookie_token, demo=demo, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite, udn_proband=udn, gzip_only=gzip_only, driver=driver)
+            res = get_all_info(udn, cookie_token=cookie_token, demo=demo, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite, udn_proband=udn, gzip_only=gzip_only, driver=driver, sv_caller=sv_caller)
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
-            if upload:
-                os.system(f"""sftp va <<< $'mkdir {pw_accre_data}/{udn_raw}'  2>/dev/null >&2""")
-                os.system(f"""sftp va <<< $'mkdir {pw_accre_scratch}/{udn_raw}'  2>/dev/null >&2""")
-
-                logger.info(f'initial uploading to ACCRE: {udn_raw}')
-                os.system(f"""sftp va:{pw_accre_data}/{udn_raw} <<< $'put -r *' >/dev/null""")
-
-                for ifl in upload_file_list:  # file name can't contain space
-                    logger.info(f'update {ifl} to  ACCRE: {udn_raw}')
-                    os.system(f"""sftp va:{pw_accre_scratch}/{udn_raw} <<< $'put {ifl}' >/dev/null""")
 
         if not lite:
             logger.info(f'downloading CNV vcf file')
             os.system(f'bash download.cnv.{udn}.sh')
+
+        # upload files
+        if upload and os.path.exists(fn_udn_api_pkl) and not force_upload:
+            fls = []  # file name can't contain space
+            fls.append(f'mkdir {pw_accre_data}/{udn_raw}/')
+            fls.append(f'mkdir {pw_accre_scratch}/{udn_raw}/')
+
+            for ifl in upload_file_list:
+                fls.append(f'put {ifl} {pw_accre_data}/{udn_raw}/')
+                fls.append(f'put {ifl} {pw_accre_scratch}/{udn_raw}/')
+            fls = '\\n'.join(fls)
+
+            logger.info(f'update {upload_file_list} to  ACCRE: {udn_raw}')
+            os.system(f"""sftp va <<< $'{fls}' >/dev/null 2>/dev/null""")
+        else:
+            logger.info(f'initial uploading to ACCRE: {udn_raw}')
+            os.system(f"""sftp va <<< $'mkdir {pw_accre_data}/{udn_raw}/\\nmkdir {pw_accre_scratch}/{udn_raw}/\\nput -r * {pw_accre_data}/{udn_raw}/'  2>/dev/null >&2""")
+
+        fn_cnv_upload_flag = 'origin/cnv_uploaded'
+        if 'cnv' in update_aws_ft and not os.path.exists(fn_cnv_upload_flag):
+            # check cnv.vcf file on server
+            # here must link to the udn_raw folder and ls origin/*cnv.vcf.gz and not link to udn_raw/origin, because in the latter way, the return would not include the origin/ prefix, can't be used for later local set calc
+            cmd = f"""sftp va:{pw_accre_data}/{udn_raw}/ <<< 'ls origin/*cnv.vcf.gz' 2>/dev/null|sed '1,2d'"""
+            remote_cnv = os.popen(cmd).read().strip().split('\n')
+            remote_cnv = {_.strip() for _ in remote_cnv if _.strip()}
+            # print(remote_cnv)
+            # print(cmd)
+
+            local_cnv = set(glob.glob('origin/*cnv.vcf.gz'))
+            not_uploaded = local_cnv - remote_cnv
+            if len(not_uploaded) == 0:
+                logger.info(f'all CNV have been uploaded ({len(local_cnv)})')
+            else:
+                logger.warning(f'\ttotal CNV={len(local_cnv)}, not uploaded = {len(not_uploaded)}')
+                fls = '\\n'.join([f'put {_} {_}' for _ in not_uploaded])
+                os.system(f"""sftp va:{pw_accre_data}/{udn_raw} <<< $' {fls}' >/dev/null""")
+
         print('\n########################\n\n')
