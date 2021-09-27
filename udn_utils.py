@@ -455,6 +455,10 @@ class UDN_case():
                 elif n_word_match_meaning > 0:
                     res[gn][1].append(matched_word)
 
+
+            if n_word_match_meaning > 0:
+                logger.info(f'{gn}\t{highlighted_words - redundant_words}')
+
             comment_list = [refine_comment(_, symbol_to_word) for _ in comment_list]
 
             res[gn][2] = '\n'.join(comment_list)
