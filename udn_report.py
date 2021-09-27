@@ -19,7 +19,7 @@ import xlsxwriter
 # ws.title = 'Original'
 
 
-def main(prj, pw=None, fn_selected_genes=None):
+def main(prj, pw=None, fn_selected_genes=None, sv_caller='dragen'):
     """
     expected file = selected.genes.xlsx
     prj = UDNxxxx
@@ -72,8 +72,16 @@ def main(prj, pw=None, fn_selected_genes=None):
 
     # sort the rank
     col_rank = d.columns[1]
-    d = d.sort_values(col_rank)
-    d[col_rank] = [_ + 1 for _ in range(len(d))]
+    d_rank = {}
+    for gn, score in zip(d['gn'], d[col_rank]):
+        try:
+            d_rank[gn] = min(d_rank[gn], score)
+        except:
+            d_rank[gn] = score
+
+    d_rank = sorted(d_rank.items(), key=lambda _: _[1])
+    d_rank = {k[0]: n + 1 for n, k in enumerate(d_rank)}
+    d[col_rank] = d['gn'].map(d_rank)
 
     # sort the family
     family_info_raw = list(header[21:])
@@ -170,19 +178,38 @@ def main(prj, pw=None, fn_selected_genes=None):
     # ws.merge_range(row, 0, row, total_col, note, cell_format=header2)
 
     # sort the rank with in he same sv type
-    sv_selected_sorted = [(k, sorted(v, key=lambda _: int(_[0]))) for k, v in sv_selected.items()]
+    col_comment = 17
+    # first sort by comment len
+    # v is a list
+    sv_selected_sorted = [(k, sorted(v, key=lambda _: len(_[col_comment]), reverse=True)) for k, v in sv_selected.items()]
 
-    # sort the order of sv type
+    # then sort by gn rank
+    # sv_selected_sorted = [(k, sorted(v, key=lambda _: int(_[0]))) for k, v in sv_selected.items()]
+    # print([v[0][:col_comment] for k, v in sv_selected_sorted])
+    sv_selected_sorted = [(k, sorted(v, key=lambda _: int(_[0]))) for k, v in sv_selected_sorted]
+
+    # sort the order of sv type, denomo on top or hetero on top
     sv_selected_sorted = sorted(sv_selected_sorted, key=lambda _: int(_[1][0][0]))
 
     row += 1
+
     for sv_type_long, info in sv_selected_sorted:
         # sv_type_long = sv_type_conversion[sv_type]
         row = add_header(ws, row, sv_type_long, family_info, formats)
-
+        prev_gn = 'demo111'
+        gn_record = {}
         for info1 in info:
+            gn = info1[8]
+            if gn == prev_gn:
+                dup_gn = gn_record[gn]
+            else:
+                dup_gn = None
 
-            res = add_data(ws, row, info1, n_family, formats)
+                gn_record[gn] = {'row': row, 'comment': info1[col_comment]}
+
+            # print(gn, dup_gn)
+            prev_gn = gn
+            res = add_data(ws, row, info1, n_family, formats, sv_caller=sv_caller)
             if res is not None:
                 row = res
     wb.close()
@@ -210,7 +237,7 @@ def add_header(ws, row, sv_type_long, family_info, formats):
             ws.write_string(row + i_row, col, i, cell_format=formats['header_main'])
     return row + 4
 
-def add_data(ws, row, data, n_family, formats):
+def add_data(ws, row, data, n_family, formats, sv_caller='dragen', dup_gn=False):
     try:
         rank, _, chr_, s, e, sv_type, qual, exon_span_tag, gn, sv_len, exon_span, dgv_gain, dgv_loss, gnomad, _, ddd_disease, _, phenotype, inher = data[:19]
     except:
@@ -219,7 +246,10 @@ def add_data(ws, row, data, n_family, formats):
         print(data[:19])
     # exon_span_tag = '' if exon_span_tag == np.nan else exon_span_tag
     cn_proband = data[20]
-    cn_family = [_.replace('@', '\n') for _ in list(data[21:])]
+    if sv_caller == 'dragen':
+        cn_family = [_.replace('@', '\n') for _ in list(data[21:])]
+    else:
+        cn_family = [_ for _ in list(data[21:])]
 
     if len(cn_family) != n_family - 1:
         print(f'error, the family number count in file({len(cn_family)}) and Family info({n_family}) list are differnet !')
@@ -241,10 +271,31 @@ def add_data(ws, row, data, n_family, formats):
     ws.write_string(row + 3, col, sv_len, cell_format=formats['fmt_txt'])
 
     # write merged cells
-    col_idx = [0, 3] + [4 + _ for _ in range(n_family)] + [4 + n_family + _ for _ in [3, 4, 6]]
-    values = [gn, sv_type, cn_proband] + cn_family + ['', '', '']
+
+
+    # set to dump None, before the function is running properly
+    # dup_gn = None
+
+    # the merge of gn and comment should be done outside of the func
+    col_idx = [3] + [4 + _ for _ in range(n_family)] + [4 + n_family + _ for _ in [3, 4, 6]]
+    values = [sv_type, cn_proband] + cn_family + ['', '', '']
     for col, v in zip(col_idx, values):
-         ws.merge_range(row, col, row + 3, col, v, cell_format=formats['fmt_txt'])
+        ws.merge_range(row, col, row + 3, col, v, cell_format=formats['fmt_txt'])
+
+    # if dup_gn:
+    #     col_idx = [3] + [4 + _ for _ in range(n_family)] + [4 + n_family + _ for _ in [3, 4, 6]]
+    #     values = [sv_type, cn_proband] + cn_family + ['', '', '']
+    #     for col, v in zip(col_idx, values):
+    #         ws.merge_range(row, col, row + 3, col, v, cell_format=formats['fmt_txt'])
+    #     col_gn = 0
+    #     row_prev_gn = dup_gn['row']
+    #     ws.merge_range(row_prev_gn, col_gn, row + 3, col_gn, gn)
+    # else:
+    #     col_idx = [0, 3] + [4 + _ for _ in range(n_family)] + [4 + n_family + _ for _ in [3, 4, 6]]
+    #     values = [gn, sv_type, cn_proband] + cn_family + ['', '', '']
+    #     for col, v in zip(col_idx, values):
+    #         ws.merge_range(row, col, row + 3, col, v, cell_format=formats['fmt_txt'])
+
 
 
     # write the split cols
@@ -264,23 +315,50 @@ def add_data(ws, row, data, n_family, formats):
     # write the comment
     col = 11 + n_family
     ws.merge_range(row, col, row + 3, col, '', cell_format=formats['fmt_comment'])
-    tmp = comment.split('**')
-    comment_list = []
     bold = formats['bold']
-    for n, _ in enumerate(tmp):
-        if n % 2:
-            comment_list.append(bold)
-            comment_list.append(_)
-        elif not _:
-            continue
-        else:
-            comment_list.append(formats['fmt_comment'])
-            comment_list.append(_)
+    cell_format = formats['fmt_comment']
+
+
+    bold_pattern = r'\*\*([\w\?][^*]+[\w\)])\*\*'
+    spans = []
+    for i in re.finditer(bold_pattern, comment):
+        spans.append(i.span())
+
+    comment_list = []
+    prev_plain_text_start = 0
+    for s, e in spans:
+        txt = comment[prev_plain_text_start: s]
+        if txt:
+            comment_list.extend([cell_format, txt])
+        txt = comment[s+2: e-2]
+        if txt.strip():
+            comment_list.extend([bold, txt])
+        prev_plain_text_start = e
+    txt = comment[prev_plain_text_start: ]
+    if txt:
+        comment_list.extend([cell_format, txt])
+
     # print(comment_list)
-    if len(comment_list) == 1:
-        ws.write(row, col, comment_list[0])
+    # ws.write(row, col, comment)
+
+    fmt_types = set(comment_list[::2])
+    # if you need to use write_rich_string, the format types must be more than 1
+    if len(fmt_types) == 1:
+        # print('writing single format cell')
+        comment_list = comment_list[1::2]
+        fmt = list(fmt_types)[0]
+        ws.write_string(row, col, ' '.join(comment_list), fmt)
     else:
-        ws.write_rich_string(row, col, *comment_list)
+        res = ws.write_rich_string(row, col, *comment_list)
+        if res:
+            format_map = {bold: 'format_bold', cell_format: 'cell_format'}
+            comment_list_demo = [format_map.get(_) or _ for _ in comment_list]
+            print(f'write_rich_string return={res}\ncomment_list= {comment_list_demo}')
+
+    # if len(comment_list) == 1:
+    #     ws.write(row, col, comment_list[0])
+    # else:
+    #     ws.write_rich_string(row, col, *comment_list)
 
     # prepare to set the row height
     # each line is about 100 char, height = 15 px

@@ -28,7 +28,7 @@ ps.add_argument('info_file', help="""the file containing the amazon download lin
 ps.add_argument('-remote', '-r', '-remote_pw', dest='remote_pw', help="""the remote path, if not exist, would create one. start from the root path, donot include the leading and ending slash. dropbox is like UDN12345/proband_UDN12345  for emedgene is like UDN12345, if the remote folder is not in the root path, include all the path from root, e.g. cases_202107/34_269_AA_UDN616750""", default=None, nargs='?')
 ps.add_argument('-remote_base', '-r_base', '-rbase', '-rb', help="remote path base, default is from the root of the remote folder")
 ps.add_argument('-ft', help="""the file type to upload, could be multiple types sep by space, such as fastq, fq, vcf, bam, default = fastq""", nargs='*')
-ps.add_argument('-pw', help="""the folder for each case, could be multiple, default = current folder""", nargs='*')
+ps.add_argument('-pw', help="""the folder for each case, could be multiple, default = current folder, and would search for child folder for info.txt file""", nargs='*')
 ps.add_argument('-profile', help="""aws profile, default=emedgene, other valid could be pacbio""", default='emedgene')
 ps.add_argument('-demo', help="""demo mode, would not create remote folder, won't rename the local file with wrong file size""", action='store_true')
 ps.add_argument('-rm', '-delete', help="""flag, if set, would delete the downloaded file from local disk when uploading is done""", action='store_true')
@@ -37,6 +37,7 @@ ps.add_argument('-asis', help="""use the remote_pw in the cmd line input, do not
 ps.add_argument('-lite', '-ck', help="""toggle, just check, donot build script""", action='store_true')
 ps.add_argument('-force', '-f', help="""force create the shell file, even it already exist on the server""", action='store_true')
 ps.add_argument('-skip_download', '-skip', '-nodown', help="""skip download the files""", action='store_true')
+ps.add_argument('-allversion', '-all', help="""include all versions even the updated version exist""", action='store_true')
 ps.add_argument('-force_upload', '-forceup', '-fu', help="""force upload the file to server, even the file size match with remote""", action='store_true')
 
 args = ps.parse_args()
@@ -202,7 +203,7 @@ fi
 """)
 
 
-def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None):
+def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, updated_version_only=True):
     """
     the info file is like
     rel_to_proband\tfn\turl\tudn\tseq_type\tsize\tbuild\tmd5\turl_s3\tdate_upload\tremote_pw\n
@@ -394,9 +395,40 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None):
     need_upload = []
     invalid_url = []
 
+    # check for the updated tag
+    updated_tag = set()
+    all_fn = set()
 
     for _, v1 in d.items():
         for fn, v in v1.items():
+            all_fn.add(fn)
+            if fn.lower().find('update') > 0:
+                tag = fn.split('update')[0]
+                tag = re.sub(r'\W*$', '', tag)
+                updated_tag.add(tag)
+
+    if len(updated_tag) > 0:
+        logger.info(f'files with updated flag = {len(updated_tag)}')
+        all_fn_new = {_ for _ in all_fn if _.split('.fastq')[0] not in updated_tag}
+
+        excluded_file = all_fn - all_fn_new
+        excluded_file_str = '\n\t'.join(sorted(excluded_file))
+        len1 = len(excluded_file)
+        if len1 > 0:
+            if updated_version_only:
+                logger.warning(f'{len1} files would be omitted due to old version:\n\t{excluded_file_str}')
+            else:
+                logger.warning(f'{len1} files have updated version, both version would be updated:\t{excluded_file_str}')
+    else:
+        excluded_file = set()
+
+    for _ in list(d):
+        v1 = d[_]
+        for fn in list(v1):
+            if fn in excluded_file:
+                del d[_][fn]
+                continue
+            v = v1[fn]
             n_desired += 1
             if v['url'].lower() == 'na':
                 invalid_url.append(fn)
@@ -640,7 +672,7 @@ def get_prj_name(pw):
         logger.error(f'invalid prj name specified, you may in the wrong working folder: {prj}, exit...')
         sys.exit(1)
 
-def main(pw, info_file=None, remote_pw_in=None):
+def main(pw, info_file=None, remote_pw_in=None, updated_version_only=True):
     if not info_file:
         tmp = glob.glob(f'{pw}/download.info.*.txt')
         if len(tmp) == 0:
@@ -668,7 +700,7 @@ def main(pw, info_file=None, remote_pw_in=None):
     for i in ['shell', 'shell_done', 'download', 'log']:
         os.makedirs(f'{pw}/{i}', exist_ok=True)
     # parse the info file
-    d = parse_info_file(pw, info_file, remote_pw_in=remote_pw_in, ft=ft)
+    d = parse_info_file(pw, info_file, remote_pw_in=remote_pw_in, ft=ft, updated_version_only=updated_version_only)
     if not lite:
         build_script(pw, d)
 
@@ -696,6 +728,7 @@ if __name__ == "__main__":
     print(args)
 
     node_name = platform.node()
+    updated_version_only = not args.allversion
 
     if node_name.find('viccbiostat120') > -1:
         dock = 'singularity exec /mnt/d/dock/centos.sif '
@@ -723,6 +756,10 @@ if __name__ == "__main__":
     if len(pw) > 1 and remote_pw:
         logger.error('multiple local path found, but only 1 remote_pw specified, try specify one at each or specify remote_base, then use auto assigned name')
         sys.exit(1)
+
+    logger.info(f'total cases = {len(pw)}\n{"*"*50}\n\n')
+    pw = sorted(pw)
+
     # if len(pw) > 1 and not remote_base:
     #     logger.error(f'multiple local path found, you must specify a remote_base')
     #     sys.exit(1)
@@ -762,4 +799,4 @@ if __name__ == "__main__":
 
         remote_base_prefix = f'{remote_base}/' if remote_base else ''
         remote_pw_in = remote_pw or f'{remote_base_prefix}{pw_core}'
-        main(ipw, remote_pw_in=remote_pw_in)
+        main(ipw, remote_pw_in=remote_pw_in, updated_version_only=updated_version_only)
