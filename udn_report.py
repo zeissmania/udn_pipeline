@@ -70,6 +70,7 @@ def main(prj, pw=None, fn_selected_genes=None, sv_caller='dragen'):
     prev_columns = list(header[:21])
 
 
+
     # sort the rank
     col_rank = d.columns[1]
     d_rank = {}
@@ -201,17 +202,49 @@ def main(prj, pw=None, fn_selected_genes=None, sv_caller='dragen'):
         for info1 in info:
             gn = info1[8]
             if gn == prev_gn:
-                dup_gn = gn_record[gn]
+                dup_gn = 1
             else:
                 dup_gn = None
-
-                gn_record[gn] = {'row': row, 'comment': info1[col_comment]}
+                gn_record[gn] = {'row_start': row}
 
             # print(gn, dup_gn)
             prev_gn = gn
-            res = add_data(ws, row, info1, n_family, formats, sv_caller=sv_caller)
+            res, comment_info = add_data(ws, row, info1, n_family, formats, sv_caller=sv_caller, dup_gn=dup_gn)
             if res is not None:
                 row = res
+                gn_record[gn]['row_end'] = row - 1
+            if comment_info is not None:
+                gn_record[gn]['comment_info'] = comment_info
+
+
+    for gn, v in gn_record.items():
+        row_start = v['row_start']
+        row_end = v['row_end']
+        comment_info = v['comment_info']
+
+        col_gn = 0
+        ws.merge_range(row_start, col_gn, row_end, col_gn, gn, cell_format=formats['fmt_txt'])
+
+
+        height = comment_info['height']
+        comment_list = comment_info['comment_list']
+        fmt_types = set(comment_list[::2])
+        col_comment = 11 + n_family
+        ws.merge_range(row_start, col_comment, row_end, col_comment, '', cell_format=formats['fmt_comment'])
+
+        # if you need to use write_rich_string, the format types must be more than 1
+        if len(fmt_types) == 1:
+            # print('writing single format cell')
+            comment_list = comment_list[1::2]
+            fmt = list(fmt_types)[0]
+            ws.write_string(row_start, col_comment, ' '.join(comment_list), fmt)
+        else:
+            res = ws.write_rich_string(row_start, col_comment, *comment_list)
+            if res:
+                print(f'fail to write rich text: {gn}')
+
+        ws.set_row(row_start + 3, height * 14)
+
     wb.close()
 
 
@@ -236,6 +269,7 @@ def add_header(ws, row, sv_type_long, family_info, formats):
         for i_row, i in enumerate(v):
             ws.write_string(row + i_row, col, i, cell_format=formats['header_main'])
     return row + 4
+
 
 def add_data(ws, row, data, n_family, formats, sv_caller='dragen', dup_gn=False):
     try:
@@ -312,63 +346,48 @@ def add_data(ws, row, data, n_family, formats, sv_caller='dragen', dup_gn=False)
            iv = str(iv)
            ws.write_string(row + n, col, iv, cell_format=formats['fmt_txt'])
 
+
+
     # write the comment
-    col = 11 + n_family
-    ws.merge_range(row, col, row + 3, col, '', cell_format=formats['fmt_comment'])
-    bold = formats['bold']
-    cell_format = formats['fmt_comment']
+
+    if dup_gn is None:
+        bold = formats['bold']
+        cell_format = formats['fmt_comment']
 
 
-    bold_pattern = r'\*\*([\w\?][^*]+[\w\)])\*\*'
-    spans = []
-    for i in re.finditer(bold_pattern, comment):
-        spans.append(i.span())
+        bold_pattern = r'\*\*([\w\?][^*]+[\w\)])\*\*'
+        spans = []
+        for i in re.finditer(bold_pattern, comment):
+            spans.append(i.span())
 
-    comment_list = []
-    prev_plain_text_start = 0
-    for s, e in spans:
-        txt = comment[prev_plain_text_start: s]
+        comment_list = []
+        prev_plain_text_start = 0
+        for s, e in spans:
+            txt = comment[prev_plain_text_start: s]
+            if txt:
+                comment_list.extend([cell_format, txt])
+            txt = comment[s+2: e-2]
+            if txt.strip():
+                comment_list.extend([bold, txt])
+            prev_plain_text_start = e
+        txt = comment[prev_plain_text_start: ]
         if txt:
             comment_list.extend([cell_format, txt])
-        txt = comment[s+2: e-2]
-        if txt.strip():
-            comment_list.extend([bold, txt])
-        prev_plain_text_start = e
-    txt = comment[prev_plain_text_start: ]
-    if txt:
-        comment_list.extend([cell_format, txt])
 
-    # print(comment_list)
-    # ws.write(row, col, comment)
+        # print(comment_list)
+        # ws.write(row, col, comment)
 
-    fmt_types = set(comment_list[::2])
-    # if you need to use write_rich_string, the format types must be more than 1
-    if len(fmt_types) == 1:
-        # print('writing single format cell')
-        comment_list = comment_list[1::2]
-        fmt = list(fmt_types)[0]
-        ws.write_string(row, col, ' '.join(comment_list), fmt)
+        # prepare to set the row height
+        # each line is about 100 char, height = 15 px
+        tmp = comment.split('\n')
+        tmp = [int(len(_)/105) + 1 for _ in tmp]
+        height = sum(tmp) - 3 # exclude the 3 merged row height
+        # print(f"expected_lines = {height}")
+        comment_info = {'comment_list': comment_list, 'height': height}
     else:
-        res = ws.write_rich_string(row, col, *comment_list)
-        if res:
-            format_map = {bold: 'format_bold', cell_format: 'cell_format'}
-            comment_list_demo = [format_map.get(_) or _ for _ in comment_list]
-            print(f'write_rich_string return={res}\ncomment_list= {comment_list_demo}')
+        comment_info = None
 
-    # if len(comment_list) == 1:
-    #     ws.write(row, col, comment_list[0])
-    # else:
-    #     ws.write_rich_string(row, col, *comment_list)
-
-    # prepare to set the row height
-    # each line is about 100 char, height = 15 px
-    tmp = comment.split('\n')
-    tmp = [int(len(_)/105) + 1 for _ in tmp]
-    height = sum(tmp) - 3 # exclude the 3 merged row height
-    # print(f"expected_lines = {height}")
-    ws.set_row(row + 3, height * 14)
-
-    return row + 4
+    return row + 4, comment_info
 
 
 

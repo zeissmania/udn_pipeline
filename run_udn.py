@@ -74,6 +74,7 @@ else:
     # query the amelie API, build the amelie result files
 
     if sv_caller == 'dragen':
+        logger.info(f'SV caller= {sv_caller}')
         for sample_id in case.family:
             case.annotate(sample_id)
             case.anno_filter(sample_id)
@@ -81,8 +82,9 @@ else:
             case.query_amelie(force=False)
             case.amelie_dict = case.get_amelie_dict()
             case.family[sample_id]['sv_dict'] = case.group_sv_into_bin(sample_id)
-            # match SV in proband with family
-            case.run_proband_sv_match()
+
+        # match SV in proband with family
+        case.run_proband_sv_match()
         # print(case.family[sample_id]['sv_dict'].keys())
     else:
         proband_id = case.proband_id

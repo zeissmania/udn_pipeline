@@ -248,7 +248,7 @@ class UDN_case():
             except:
                 valid_cn = 0
 
-            logger.info(f'{idx}\n{header}')
+            logger.info(f'index# : {idx}\nheader={header}')
 
             for i in fp:
                 a = i.split('\t')
@@ -280,7 +280,6 @@ class UDN_case():
 
                     d_gene[gn][1] = max(cover_exon_flag, d_gene[gn][1])
 
-        logger.info(d_gene['FGFR2'])
         # build the predefined gene list
 
         # logger.warning(f'POU6F2:{d_gene["POU6F2"]}')
@@ -1631,6 +1630,9 @@ class UDN_case():
         merged_table = f'{pw}/{intermediate_folder}/{prj}.merged.tsv'
         final = open(merged_table, 'w')
 
+        # logger.info(self.family[proband_id].keys())
+        # logger.info(self.family[proband_id]['sv_dict'])
+
         d_amelie = self.amelie_dict
 
         # determine the order of non-proband samples
@@ -1711,6 +1713,8 @@ class UDN_case():
 
                 # get the same bin in the same family annotation results
                 for sample_id in trio_order:
+                    # logger.info(f'{sample_id}, {self.family[sample_id]["rel"]}')
+                    # logger.info(self.family[sample_id].keys())
                     sex = family[sample_id]['sex']
                     sv_dict = self.family[sample_id]['sv_dict']
                     sample_type = self.family[sample_id]['type']
