@@ -72,15 +72,14 @@ elif case.done_phase1:
 else:
     # filter /extract annotation
     # query the amelie API, build the amelie result files
-    case.query_amelie(force=False)
-    # get amelie dict
-    case.amelie_dict = case.get_amelie_dict()
 
     if sv_caller == 'dragen':
         for sample_id in case.family:
             case.annotate(sample_id)
             case.anno_filter(sample_id)
             case.anno_extract(sample_id)
+            case.query_amelie(force=False)
+            case.amelie_dict = case.get_amelie_dict()
             case.family[sample_id]['sv_dict'] = case.group_sv_into_bin(sample_id)
             # match SV in proband with family
             case.run_proband_sv_match()
@@ -90,6 +89,8 @@ else:
         case.annotate(proband_id)
         case.anno_filter(proband_id)
         case.anno_extract(proband_id)
+        case.query_amelie(force=False)
+        case.amelie_dict = case.get_amelie_dict()
         case.run_proband_sv_match_pacbio()
 
     # run OMIM match

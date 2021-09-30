@@ -137,7 +137,6 @@ class UDN_case():
             logger.warning('No annotSV specified...')
                 # sys.exit(1)
 
-        self.cols = self.get_annot_col()
         # verfify if the automatic process is already done
         self.done_phase1 = 0
         self.done_phase2 = 0
@@ -173,6 +172,10 @@ class UDN_case():
                 logger.warning(f'report already exist {fn_report}, but the size is only {f_size/1000:.2f}')
             else:
                 self.done_phase3 = 1
+        try:
+            self.cols = self.get_annot_col()
+        except:
+            pass
 
     def omim_query(self, force_rerun=False):
         """
@@ -971,8 +974,7 @@ class UDN_case():
             logger.info(f'annotation already done: {lb}')
             return 0
 
-        logger.error(f'run annotav again...')
-        sys.exit(1)
+        logger.error(f'run annotav again... {lb}')
 
         logger.info(f'AnnotSV: {sample_id}: {vcf}')
 
@@ -980,6 +982,8 @@ class UDN_case():
 
         logger.debug(cmd)
         os.system(cmd)
+        self.cols = self.get_annot_col()
+
 
     def anno_filter(self, sample_id) ->'{pw}/{intermediate_folder}/{lb}.filtered.txt':
         """filter the raw annotSV result"""
