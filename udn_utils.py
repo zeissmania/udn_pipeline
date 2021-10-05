@@ -742,7 +742,7 @@ class UDN_case():
         elif machine_node.find('viccbiostat120') > -1:
             # personal desktop
             dock_path = '/mnt/d/dock/annotSV.sif'
-
+            mount = ''
         else:
             # dock_path = '/scratch/cqs/chenh19/dock/annotsv.sif'
             dock_path = '/data/cqs/chenh19/dock/annotSV.sif'
