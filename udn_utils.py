@@ -735,9 +735,14 @@ class UDN_case():
 
         import platform
         machine_platform = platform.system()
+        machine_node = platform.node()
         if machine_platform == 'Darwin':
             dock_path = f'/Users/files/dock/annotsv.sif'
             mount = '-B /Users/files'
+        elif machine_node.find('viccbiostat120') > -1:
+            # personal desktop
+            dock_path = '/mnt/d/dock/annotSV.sif'
+
         else:
             # dock_path = '/scratch/cqs/chenh19/dock/annotsv.sif'
             dock_path = '/data/cqs/chenh19/dock/annotSV.sif'
