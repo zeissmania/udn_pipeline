@@ -133,6 +133,9 @@ class UDN_case():
 
         # get annotSV path
         self.annotsv_app = self.get_annotsv()
+
+        # logger.info(self.annotsv_app)
+
         if not self.annotsv_app:
             logger.warning('No annotSV specified...')
                 # sys.exit(1)
@@ -742,7 +745,7 @@ class UDN_case():
         elif machine_node.find('viccbiostat120') > -1:
             # personal desktop
             dock_path = '/mnt/d/dock/annotSV.sif'
-            mount = ''
+            mount = '-B /mnt/d'
         else:
             # dock_path = '/scratch/cqs/chenh19/dock/annotsv.sif'
             dock_path = '/data/cqs/chenh19/dock/annotSV.sif'
@@ -750,7 +753,7 @@ class UDN_case():
         # the annot_sv_rank and gnomad_AF filtering would only take effect on the proband, would not filter on the parent
 
         if os.path.exists(dock_path):
-            return f'singularity exec {dock_path} {mount} /tools/AnnotSV/bin/AnnotSV'
+            return f'singularity exec {mount} {dock_path} /tools/AnnotSV/bin/AnnotSV'
         # logger.warning('No annotSV specified')
         return None
 
@@ -874,10 +877,11 @@ class UDN_case():
 
         if len(tmp1) > 0:
             # logger.debug('HPO file already exist')
-            os.system(f'ln -sf {tmp1[0]} {fl_result}')
+            if not os.path.exists(fl_result):
+                os.system(f'ln -sf {tmp1[0]} {fl_result}')
             if len(tmp2) == 0:
                 os.system(f'cut -f2 "{tmp1[0]}" > {fl_result1}')
-            else:
+            elif not os.path.exists(fl_result1):
                 os.system(f'ln -sf {tmp2[0]} {fl_result1}')
             return 0
 
@@ -977,8 +981,6 @@ class UDN_case():
         if not run_annot:
             logger.info(f'annotation already done: {lb}')
             return 0
-
-        logger.error(f'run annotav again... {lb}')
 
         logger.info(f'AnnotSV: {sample_id}: {vcf}')
 
