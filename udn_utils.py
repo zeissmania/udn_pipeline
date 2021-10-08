@@ -26,6 +26,9 @@ pw_code = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(pw_code)
 from . import amelie_api
 
+platform = sys.platform
+
+
 redundant_words = set('and,am,is,in,the,are,to,for,of,a,an,one,two,three,four,at,on,type,activity,increased,decreased,low,level,high'.split(','))
 
 sv_type_convert = {'<DEL>': 'deletion', '<DUP>': 'duplication'}
@@ -316,8 +319,6 @@ class UDN_case():
                 with open(fn1, 'w') as out:
                     pass
 
-
-
         logger.info(f'local total gene number with OMIM description={len(d_gene_comment_scrapy)}')
 
         gene_with_omim = set(d_gene) & set(list(d_gene_comment_scrapy) + list(d_gene_comment))
@@ -459,7 +460,7 @@ class UDN_case():
 
 
             if n_word_match_meaning > 0:
-                logger.info(f'{gn}\t{highlighted_words - redundant_words}')
+                logger.debug(f'{gn}\t{highlighted_words - redundant_words}')
 
             comment_list = [refine_comment(_, symbol_to_word) for _ in comment_list]
 
@@ -492,6 +493,9 @@ class UDN_case():
         # res 0 = matched phenotype, 1=partial matched phenotype, 2 = comment. 3 = exon_flag, 4=amelie score
         res1 = sorted(res.items(), key=lambda _: (_[1][3], len(_[1][0]), _[1][4]), reverse=True)
         res2 = sorted(res.items(), key=lambda _: (_[1][3], len(_[1][1]), _[1][4]), reverse=True)
+
+        with open(f'intermediate/omim_match_result.pkl', 'wb') as o:
+            pickle.dump(res, o)
 
         n1 = 0
         n2 = 0
@@ -1020,7 +1024,7 @@ class UDN_case():
             col_quality = col_keep['QUAL'] + 1
 
             if type_short == 'P':  # proband
-                extra_filter = f' && ${col_gnomad_AF}<{thres_gnomad_maf} && ${col_annot_sv_ranking}>={thres_annot_sv_ranking}'
+                extra_filter = f' && ${col_gnomad_AF}<{thres_gnomad_maf}'
                 if sv_caller == 'dragen':
                     extra_filter += f' && ${col_quality}>{thres_quality_score}'
                 cmd = f"""head -1 {f_anno_exp} > {f_anno_filter};awk -F $'\\t'  '${col_filter}=="PASS" {extra_filter}' {f_anno_exp} >> {f_anno_filter} """
@@ -1875,6 +1879,47 @@ def get_omim_map(logger):
     return None
 
 
+global_flag = {'omim_blocked': 0}
+
+
+def get_driver(driver, logger):
+    try:
+        driver.current_url
+    except:
+        from selenium import webdriver
+        from selenium.webdriver.firefox.options import Options
+        options = Options()
+        options.headless = True
+        platform = sys.platform
+        if platform == 'darwin':
+            exe_firefox = '/Users/files/work/package/firefox/geckodriver'
+        else:
+            exe_firefox = f'/home/chenh19/tools/geckodriver'
+        driver = webdriver.Firefox(options=options, executable_path=exe_firefox)
+        logger.warning('firefox initiated')
+        driver.save_screenshot('firefox_init.png')
+
+
+    return driver
+
+
+
+def run_selenium(driver, url_omim, logger):
+    driver = get_driver(driver, logger)
+    try:
+        driver.current_url
+    except:
+        logger.error(f'fail to load selenium')
+        return 0, 0
+
+    driver.get(url_omim)
+    html = driver.page_source
+    if html.find('oldtitle="Gene description') < 0:
+        logger.warning(f'seems an empty html returned: len={len(html)}')
+
+    return driver, html
+
+
 def run_omim_scrapy(gn, gn_omim_id, logger, res_prev=None):
     """
     get the omim disease discription
@@ -1901,16 +1946,29 @@ def run_omim_scrapy(gn, gn_omim_id, logger, res_prev=None):
     # if gn == 'PKHD1':
     #     logger.error(f'gn=PKHD1, omim_id_list={omim_id_list}, gn_omim_id={gn_omim_id}')
 
+    driver = None
+
+    url_omim = f'https://www.omim.org/entry/{gn_omim_id}'
     if d_omim_map:
         try:
             pheno_list = d_omim_map[gn_omim_id]
             gene_page_scrapy = 0
         except:
-            logger.warning(f'gene not found in d_omim_map dict: {gn} omim_id={gn_omim_id}, gn_omim_id={gn_omim_id}')
+            logger.warning(f'gene not found in d_omim_map dict: {gn}  gn_omim_id={gn_omim_id} url={url_omim}')
 
     if gene_page_scrapy:
-        r = requests.request('GET', f'https://www.omim.org/entry/{gn_omim_id}', headers=headers)
-        r = bs(r.text, features='lxml')
+        try:
+            r = requests.request('GET', url_omim, headers=headers).text
+        except:
+            logger.warning(f'OMIM blocked (request), would try selenium: {gn}')
+            global_flag['omim_blocked'] = 1
+
+        if global_flag['omim_blocked']:
+            driver, r = run_selenium(driver, url_omim, logger)
+            if not r:
+                logger.warning(f'fail to run selenium: {gn}')
+                return 1
+        r = bs(r, features='lxml')
 
         gn_web = r.find('a', attrs={'oldtitle': 'HUGO Gene Nomenclature Committee.'})
 
@@ -1960,8 +2018,21 @@ def run_omim_scrapy(gn, gn_omim_id, logger, res_prev=None):
     # get the descriptioin and clinical features
     res = {}
     for pheno_id, pheno_desc in pheno_list.items():
-        r = requests.request('GET', f'https://www.omim.org/entry/{pheno_id}', headers=headers)
-        r = bs(r.text, features='lxml')
+        url_omim = f'https://www.omim.org/entry/{pheno_id}'
+
+        if global_flag['omim_blocked']:
+            driver, r = run_selenium(driver, url_omim, logger)
+            if not r:
+                logger.warning(f'fail to run selenium: {gn}')
+                return 1
+        else:
+            try:
+                r = requests.request('GET', url_omim, headers=headers).text
+            except:
+                logger.warning(f'OMIM blocked (request), would try selenium: {gn}')
+                global_flag['omim_blocked'] = 1
+
+        r = bs(r, features='lxml')
         try:
             desc = r.find('div', attrs={'id': 'descriptionFold'})
             desc = '\n'.join([_.text.strip() for _ in desc.find_all('p')])
