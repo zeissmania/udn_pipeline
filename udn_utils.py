@@ -73,17 +73,34 @@ col_keep_raw_name = ['AnnotSV ID',
 
 # config the logging
 def get_logger(pw, prj):
-    fl_log_conf = f'{pw_code}/logging_setting.yaml'
-    log_prefix = prj
-    log_prefix = pw + '/' + log_prefix + '_' if log_prefix else ''
-    with open(fl_log_conf) as f:
-        cfg = yaml.safe_load(f.read())
-        cfg['handlers']['console']['level'] = 'INFO'
-        cfg['handlers']['file']['mode'] = 'w'
-        cfg['handlers']['file']['filename'] = log_prefix + cfg['handlers']['file']['filename']
-        cfg['handlers']['error']['filename'] = log_prefix + cfg['handlers']['error']['filename']
-        logging.config.dictConfig(cfg)
-    return logging.getLogger('main')
+    prefix = prj
+    fn_log = f'{pw}/{prefix}.runudn.log'
+    fn_err = f'{pw}/{prefix}.runudn.err'
+
+    fmt = logging.Formatter('%(asctime)s  %(levelname)-6s %(funcName)-20s  line: %(lineno)-5s  %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    console = logging.StreamHandler(sys.stdout)
+    console.setFormatter(fmt)
+    console.setLevel('INFO')
+
+    fh_file = logging.FileHandler(fn_log, mode='w', encoding='utf8')
+    fh_err = logging.FileHandler(fn_err, mode='a', encoding='utf8')
+
+    fh_file.setLevel('DEBUG')
+    fh_file.setFormatter(fmt)
+
+    fh_err.setLevel('ERROR')
+    fh_err.setFormatter(fmt)
+
+    try:
+        logger = logging.getLogger(__file__)
+    except:
+        logger = logging.getLogger('terminal')
+    logger.setLevel('DEBUG')
+    logger.addHandler(console)
+    logger.addHandler(fh_file)
+    logger.addHandler(fh_err)
+
+    return logger
 
 def line_count(fn):
     n = 0
@@ -329,6 +346,7 @@ class UDN_case():
         # if 2 words link together, use +, if match the exact word, add a prefix @
         # e.g. lung+cancer  @short+stature
         l_pheno = []
+        l_pheno_raw = []
 
         with open(fn_pheno) as fp:
             for i in fp:
@@ -339,6 +357,7 @@ class UDN_case():
                 if len(a) == 0:
                     continue
                 l_pheno.append([_.replace('+', ' ') for _ in a])
+                l_pheno_raw.append(i)
         logger.warning(l_pheno)
 
         # refine the l_pheno,
@@ -399,7 +418,7 @@ class UDN_case():
             symbol_to_word = {}
             # print(highlighted_words)
             n_symbol = 0
-            for ipheno in l_pheno:
+            for ipheno, ipheno_raw in zip(l_pheno, l_pheno_raw):
                 n_word_match_meaning = 0  # for not exporting the items match of, is and to export into partial match file
                 n_matched_word = 0
                 matched_word = []
@@ -426,7 +445,7 @@ class UDN_case():
                             extra_flag = ''
 
                         #  {word}s  means that, the word could contain an extra s
-                        m = re.match(fr'.*{extra_flag}({word}[a-z]?){extra_flag}', comment_compact)
+                        m = re.match(fr'.*{extra_flag}({word}[a-z]*){extra_flag}', comment_compact)
 
                         # if debug:
                         #     logger.info(m)
@@ -454,9 +473,9 @@ class UDN_case():
                                 comment_list = [re.sub(word, symbol, icomment, flags=re.I) if icomment[:2] != '**' and icomment[-2:] != '**' else icomment for icomment in comment_list]
 
                 if n_matched_word == n_total_word:
-                    res[gn][0].append(ipheno)
+                    res[gn][0].append(f'full_match: {ipheno_raw}')
                 elif n_word_match_meaning > 0:
-                    res[gn][1].append(matched_word)
+                    res[gn][1].append(f'partial: {ipheno_raw}:{matched_word}')
 
 
             if n_word_match_meaning > 0:
@@ -514,11 +533,14 @@ class UDN_case():
         for v in res1:
             gn = v[0]
             match, partial_match, comment, cover_exon_flag, amelie_score, copy_number = v[1]
+            partial_match = '\n'.join(partial_match)
+            match = '\n'.join(match)
             if len(match) > 0:
                 gene_match.add(gn)
                 n1 += 1
                 # print('#' * 20, file=out1)
-                print(f'## {n1}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\t{match}{copy_number}', file=out1)
+
+                print(f'## {n1}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\n{match}\n{partial_match}{copy_number}', file=out1)
                 print(comment, file=out1)
                 print('#' * 50 + '\n\n\n', file=out1)
         for v in res2:
@@ -526,9 +548,10 @@ class UDN_case():
             if gn in gene_match:
                 continue
             match, partial_match, comment, cover_exon_flag, amelie_score, copy_number = v[1]
+            partial_match = '\n'.join(partial_match)
             if len(partial_match) > 0:
                 n2 += 1
-                print(f'## {n2}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\t{partial_match}{copy_number}', file=out2)
+                print(f'## {n2}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\n{partial_match}{copy_number}', file=out2)
                 print(comment, file=out2)
                 print('#' * 50 + '\n\n\n', file=out2)
         out1.close()
@@ -981,8 +1004,6 @@ class UDN_case():
         if not run_annot:
             logger.info(f'annotation already done: {lb}')
             return 0
-
-        logger.error(f'run annotav again... {lb}')
 
         logger.info(f'AnnotSV: {sample_id}: {vcf}')
 
@@ -1909,7 +1930,7 @@ def get_driver(driver, logger):
 
 
 
-def run_selenium(driver, url_omim, logger):
+def run_selenium(driver, url_omim, gn, gn_omim_id, logger):
     driver = get_driver(driver, logger)
     try:
         driver.current_url
@@ -1917,10 +1938,12 @@ def run_selenium(driver, url_omim, logger):
         logger.error(f'fail to load selenium')
         return 0, 0
 
+    gn = re.sub(r'\W+', '_', gn)
     driver.get(url_omim)
     html = driver.page_source
     if html.find('oldtitle="Gene description') < 0:
         logger.warning(f'seems an empty html returned: len={len(html)}')
+        driver.save_screenshot(f'OMIM_{gn}_{gn_omim_id}.png')
 
     return driver, html
 
@@ -1969,7 +1992,7 @@ def run_omim_scrapy(gn, gn_omim_id, logger, res_prev=None):
             global_flag['omim_blocked'] = 1
 
         if global_flag['omim_blocked']:
-            driver, r = run_selenium(driver, url_omim, logger)
+            driver, r = run_selenium(driver, url_omim, gn, gn_omim_id, logger)
             if not r:
                 logger.warning(f'fail to run selenium: {gn}')
                 return 1
@@ -2026,7 +2049,8 @@ def run_omim_scrapy(gn, gn_omim_id, logger, res_prev=None):
         url_omim = f'https://www.omim.org/entry/{pheno_id}'
 
         if global_flag['omim_blocked']:
-            driver, r = run_selenium(driver, url_omim, logger)
+            logger.info(f'get OMIM using selenium')
+            driver, r = run_selenium(driver, url_omim, gn, gn_omim_id, logger)
             if not r:
                 logger.warning(f'fail to run selenium: {gn}')
                 return 1
@@ -2036,6 +2060,11 @@ def run_omim_scrapy(gn, gn_omim_id, logger, res_prev=None):
             except:
                 logger.warning(f'OMIM blocked (request), would try selenium: {gn}')
                 global_flag['omim_blocked'] = 1
+                logger.info(f'get OMIM using selenium')
+                driver, r = run_selenium(driver, url_omim, gn, gn_omim_id, logger)
+                if not r:
+                    logger.warning(f'fail to run selenium: {gn}')
+                    return 1
 
         r = bs(r, features='lxml')
         try:

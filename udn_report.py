@@ -217,33 +217,33 @@ def main(prj, pw=None, fn_selected_genes=None, sv_caller='dragen'):
                 gn_record[gn]['comment_info'] = comment_info
 
 
-    for gn, v in gn_record.items():
-        row_start = v['row_start']
-        row_end = v['row_end']
-        comment_info = v['comment_info']
+        for gn, v in gn_record.items():
+            row_start = v['row_start']
+            row_end = v['row_end']
+            comment_info = v['comment_info']
 
-        col_gn = 0
-        ws.merge_range(row_start, col_gn, row_end, col_gn, gn, cell_format=formats['fmt_txt'])
+            col_gn = 0
+            ws.merge_range(row_start, col_gn, row_end, col_gn, gn, cell_format=formats['fmt_txt'])
 
 
-        height = comment_info['height']
-        comment_list = comment_info['comment_list']
-        fmt_types = set(comment_list[::2])
-        col_comment = 11 + n_family
-        ws.merge_range(row_start, col_comment, row_end, col_comment, '', cell_format=formats['fmt_comment'])
+            height = comment_info['height']
+            comment_list = comment_info['comment_list']
+            fmt_types = set(comment_list[::2])
+            col_comment = 11 + n_family
+            ws.merge_range(row_start, col_comment, row_end, col_comment, '', cell_format=formats['fmt_comment'])
 
-        # if you need to use write_rich_string, the format types must be more than 1
-        if len(fmt_types) == 1:
+            # if you need to use write_rich_string, the format types must be more than 1
+            if len(fmt_types) == 1:
             # print('writing single format cell')
-            comment_list = comment_list[1::2]
-            fmt = list(fmt_types)[0]
-            ws.write_string(row_start, col_comment, ' '.join(comment_list), fmt)
-        else:
-            res = ws.write_rich_string(row_start, col_comment, *comment_list)
+                comment_list = comment_list[1::2]
+                fmt = list(fmt_types)[0]
+                ws.write_string(row_start, col_comment, ' '.join(comment_list), fmt)
+            else:
+                res = ws.write_rich_string(row_start, col_comment, *comment_list)
             if res:
                 print(f'fail to write rich text: {gn}')
 
-        ws.set_row(row_start + 3, height * 14)
+            ws.set_row(row_start + 3, height * 14)
 
     wb.close()
 
