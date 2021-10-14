@@ -20,7 +20,7 @@ import requests
 from bs4 import BeautifulSoup as bs
 import pickle
 # import pandas as pd
-
+from selenium.webdriver.support.ui import WebDriverWait as wait
 # basic data
 pw_code = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(pw_code)
@@ -353,6 +353,7 @@ class UDN_case():
 
         with open(fn_pheno) as fp:
             for i in fp:
+                l_pheno_raw.append(i.strip())
                 i = i.lower().split('#', 1)[0].strip()
                 a = re.split(r'\s+', i)
                 a = [_.strip() for _ in a if _.strip()]
@@ -360,7 +361,7 @@ class UDN_case():
                 if len(a) == 0:
                     continue
                 l_pheno.append([_.replace('+', ' ') for _ in a])
-                l_pheno_raw.append(i)
+
         logger.warning(l_pheno)
 
         # refine the l_pheno,
@@ -1736,6 +1737,7 @@ class UDN_case():
                 s = int(s)
                 e = int(e)
                 bin_ = int(s / 100000)
+                coord = f'{chr_}:{s}-{e}'
 
                 # info stores the extra data need to be added to this line
                 info = {}
@@ -1837,7 +1839,7 @@ class UDN_case():
                 elif amelie == -99:  # not found in amelie but foudn in udn_match
                     amelie = 999
 
-                res = f'\t\t{i_udn_match}\t\t{amelie}\t{i}\t'
+                res = f'{coord}\tna\tna\t\t{amelie}\t{i}'
                 res_suffix_cn = []
                 res_suffix_gn = []
                 res_suffix_sv_type = []
@@ -1863,7 +1865,11 @@ class UDN_case():
 
         import pandas as pd
         df = pd.read_csv(merged_table, sep='\t')
-        df['match_strong'] =  df['chr_'] + ':' + df['pos_s'].astype(str) + "-" + df['pos_e'].astype(str)
+        # try:
+        #     df['coord'] =  df['chr_'] + ':' + df['pos_s'].astype(str) + "-" + df['pos_e'].astype(str)
+        # except:
+        #     print(df.head())
+        #     sys.exit(1)
         # df.drop(['match_strong', 'match_weak', 'match_count_udn'], axis=1, inplace=True)
         df.sort_values('AMELIE', ascending=False, inplace=True)
         df.to_csv(sorted_file, index=False, na_rep='', sep='\t')
@@ -1935,6 +1941,7 @@ def get_driver(driver, logger):
 
 
 def run_selenium(driver, url_omim, gn, gn_omim_id, logger):
+
     driver = get_driver(driver, logger)
     try:
         driver.current_url
@@ -1944,8 +1951,17 @@ def run_selenium(driver, url_omim, gn, gn_omim_id, logger):
 
     gn = re.sub(r'\W+', '_', gn)
     driver.get(url_omim)
+
+    # skip the donation
+    try:
+        cancel_donation = wait(driver, 10).until(lambda _: _.find_element_by_xpath('//button[@id="donationPopupCancel"]'))
+        cancel_donation.click()
+    except:
+        pass
+
+
     html = driver.page_source
-    if html.find('oldtitle="Gene description') < 0:
+    if html.find('Phenotype-Gene') < 0:
         logger.warning(f'seems an empty html returned: len={len(html)}')
         driver.save_screenshot(f'OMIM_{gn}_{gn_omim_id}.png')
 
