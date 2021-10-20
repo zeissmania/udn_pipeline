@@ -1929,7 +1929,6 @@ def get_driver(driver, logger):
         logger.warning('firefox initiated')
         driver.save_screenshot('firefox_init.png')
 
-
     return driver
 
 

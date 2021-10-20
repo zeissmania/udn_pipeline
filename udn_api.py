@@ -84,27 +84,47 @@ class Credential():
             sys.exit(1)
         return res
 
-def get_driver(driver, headless=True):
+# def get_driver(driver, headless=True):
+#     try:
+#         driver.current_url
+#     except:
+#         pass
+#     else:
+#         return driver
+#     if platform == 'darwin':
+#         path_chromedriver = '/Users/files/work/package/chrome_v90/chromedriver'
+#     else:
+#         path_chromedriver = '/home/chenh19/tools/chromedriver2.35'
+#     option = webdriver.ChromeOptions()
+#     if headless:
+#         option.add_argument('--headless')
+#     option.add_argument('--no-sandbox')
+#     option.add_argument(f"--window-size=1080,720")
+#     if platform == 'linux':
+#         option.add_argument('--disable-dev-shm-usage')
+#         option.binary_location = '/home/chenh19/tools/chrome/chrome'
+#     driver = webdriver.Chrome(executable_path=path_chromedriver, options=option)
+#     return driver
+
+
+def get_driver(driver, browser='firefox', headless=True):
     try:
         driver.current_url
     except:
-        pass
-    else:
-        return driver
-    if platform == 'darwin':
-        path_chromedriver = '/Users/files/work/package/chrome_v90/chromedriver'
-    else:
-        path_chromedriver = '/home/chenh19/tools/chromedriver2.35'
-    option = webdriver.ChromeOptions()
-    if headless:
-        option.add_argument('--headless')
-    option.add_argument('--no-sandbox')
-    option.add_argument(f"--window-size=1080,720")
-    if platform == 'linux':
-        option.add_argument('--disable-dev-shm-usage')
-        option.binary_location = '/home/chenh19/tools/chrome/chrome'
-    driver = webdriver.Chrome(executable_path=path_chromedriver, options=option)
+        from selenium import webdriver
+        from selenium.webdriver.firefox.options import Options
+        options = Options()
+        options.headless = headless
+        platform = sys.platform
+        if platform == 'darwin':
+            exe_firefox = '/Users/files/work/package/firefox/geckodriver'
+        else:
+            exe_firefox = f'/home/chenh19/tools/geckodriver'
+        driver = webdriver.Firefox(options=options, executable_path=exe_firefox)
+        logger.warning('firefox initiated')
+
     return driver
+
 
 
 def login(driver, headless=False):
@@ -1016,17 +1036,23 @@ def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft
     # get the screenshot of relative table
     fn_reltive_png = f'{proband_id}.relatives_table.png'
     if save_rel_table or not os.path.exists(fn_reltive_png):
+        logger.info(f'now save the screenshot for relatives table')
         uuid_case = res['Proband']['uuid_case']
         url_relative = f'https://gateway.undiagnosed.hms.harvard.edu/patient/relatives/{uuid_case}/'
         if not uuid_case:
             logger.error(f'case UUID not found: patient record={res["Proband"]}')
             return 0
+
+        driver = login(driver, headless=headless)
+
         try:
             driver.get(url_relative)
         except:
             logger.error(f'fail to get relatives page using selenium')
         else:
-            _tmp_ele = wait(driver, 20).until(lambda _:_.find_element_by_xpath(f'//a[text()="Sequence uploaded"]'))
+            driver.save_screenshot('browser.init.png')
+
+            _tmp_ele = wait(driver, 10).until(lambda _:_.find_element_by_xpath(f'//a[text()="Sequence uploaded"]'))
 
             driver.save_screenshot(fn_reltive_png)
             logger.info(f'Screenshot: relative table saved!')
