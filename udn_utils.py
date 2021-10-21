@@ -217,7 +217,12 @@ class UDN_case():
         udn = self.prj
         pw = self.pw
         logger = self.logger
-        cols = self.cols
+        try:
+            cols = self.cols
+        except:
+            cols = self.get_annot_col()
+
+            self.cols = cols
         header_added_col_n = len(self.header_prefix)
 
         fn_gene_comment = f'{pw_code}/omim.gene_comment.txt'
@@ -972,10 +977,13 @@ class UDN_case():
         proband_id = self.proband_id
         lb = self.family[proband_id]['lb']
 
-        f_anno_exp = f'{pw}/{intermediate_folder}/{lb}.annotated.tsv'
-        with open(f_anno_exp) as f:
-            anno_header = f.readline().strip()
-        cols = anno_header.split('\t')
+        try:
+            f_anno_exp = f'{pw}/{intermediate_folder}/{lb}.annotated.tsv'
+            with open(f_anno_exp) as f:
+                anno_header = f.readline().strip()
+            cols = anno_header.split('\t')
+        except:
+            cols = re.split(',', "AnnotSV ID,SV chrom,SV start,SV end,SV length,SV type,ID,REF,ALT,QUAL,FILTER,INFO,FORMAT,UD264390,UDN287221,UDN882825,AnnotSV type,Gene name,NM,CDS length,tx length,location,location2,intersectStart,intersectEnd,DGV_GAIN_IDs,DGV_GAIN_n_samples_with_SV,DGV_GAIN_n_samples_tested,DGV_GAIN_Frequency,DGV_LOSS_IDs,DGV_LOSS_n_samples_with_SV,DGV_LOSS_n_samples_tested,DGV_LOSS_Frequency,GD_ID,GD_AN,GD_N_HET,GD_N_HOMALT,GD_AF,GD_POPMAX_AF,GD_ID_others,1000g_event,IMH_ID,IMH_AF,IMH_ID_others,promoters,dbVar_event,dbVar_variant,dbVar_status,TADcoordinates,ENCODEexperiments,GCcontent_left,GCcontent_right,Repeats_coord_left,Repeats_type_left,Repeats_coord_right,Repeats_type_right,ACMG,HI_CGscore,TriS_CGscore,DDD_status,DDD_mode,DDD_consequence,DDD_disease,DDD_pmids,HI_DDDpercent,delZ_ExAC,dupZ_ExAC,cnvZ_ExAC,synZ_ExAC,misZ_ExAC,pLI_ExAC,Mim Number,Phenotypes,Inheritance,morbidGenes,morbidGenesCandidates,AnnotSV ranking")
 
         col_keep = {}
 
@@ -983,7 +991,7 @@ class UDN_case():
             try:
                 col_keep[new] = cols.index(raw)
             except:
-                logger.error('column not found in annot file: {raw} (for {new} ) ')
+                logger.error(f'column not found in annot file: {raw} (for {new} ) ')
                 sys.exit(1)
             # logger.info(f'{new} {raw} {cols.index(raw)}')
         # the actual "data" is the next column for "FORMAT"
@@ -1016,7 +1024,8 @@ class UDN_case():
 
         logger.debug(cmd)
         os.system(cmd)
-        self.cols = self.get_annot_col()
+        if lb.lower() == 'proband':
+            self.cols = self.get_annot_col()
 
 
     def anno_filter(self, sample_id) ->'{pw}/{intermediate_folder}/{lb}.filtered.txt':
