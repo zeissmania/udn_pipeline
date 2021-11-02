@@ -1517,6 +1517,7 @@ if __name__ == "__main__":
 
     pw_accre_data = '/data/cqs/chenh19/udn'
     pw_accre_scratch = '/fs0/members/chenh19/tmp/upload'
+    # pw_accre_upload = pw_accre_scratch
 
     upload_file_list = ['pheno.keywords.txt', 'download.*']  # upload these files to scratch and data of ACCRE
 
