@@ -136,6 +136,7 @@ def login(driver, headless=False):
     try:
         driver.current_url
     except:
+        logger.warning(f'driver not available: {driver}')
         driver = get_driver(driver, headless=headless)
 
     current_url = driver.current_url
