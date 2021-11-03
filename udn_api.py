@@ -1519,7 +1519,7 @@ if __name__ == "__main__":
     pw_accre_scratch = '/fs0/members/chenh19/tmp/upload'
     # pw_accre_upload = pw_accre_scratch
 
-    upload_file_list = ['pheno.keywords.txt', 'download.*']  # upload these files to scratch and data of ACCRE
+    upload_file_list = ['pheno.keywords.txt', 'download.*.txt', 'download.*.md5']  # upload these files to scratch and data of ACCRE
 
     gzip_only = set()
     update_aws_ft = set()
