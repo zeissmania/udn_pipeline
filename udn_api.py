@@ -127,7 +127,7 @@ def get_driver(driver, browser='firefox', headless=True):
 
 
 
-def login(driver, headless=False):
+def login(driver, headless=False, source=None):
     """
     get cookie using selenium
     """
@@ -136,6 +136,7 @@ def login(driver, headless=False):
     try:
         driver.current_url
     except:
+        logger.warning(f'driver not available: {driver}, source={source}')
         driver = get_driver(driver, headless=headless)
 
     current_url = driver.current_url
@@ -244,7 +245,7 @@ def login(driver, headless=False):
     return driver
 
 def get_cookie(driver, headless=True):
-    driver = login(driver, headless=headless)
+    driver = login(driver, headless=headless, source='get_cookie')
     cookies = driver.get_cookies()
     cookie_token = {_['name']: _['value'] for _ in cookies}
 
@@ -494,17 +495,22 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
                 logger.error(f'fail to get relatives info: {udn}')
                 return 0
         else:
-            _tmp_ele = wait(driver, 20).until(lambda _:_.find_element_by_xpath(f'//a[text()="Sequence uploaded"]'))
-
-            response_relative = driver.page_source
-            # logger.warning(f'type={type(response_relative)}, len={len(response_relative)}')
-            driver.save_screenshot(f'{udn}.relatives_table.png')
+            try:
+                _tmp_ele = wait(driver, 20).until(lambda _:_.find_element_by_xpath(f'//a[text()="Sequence uploaded"]'))
+                # logger.warning(f'type={type(response_relative)}, len={len(response_relative)}')
+                driver.save_screenshot(f'{udn}.relatives_table.png')
+            except:
+                logger.warning(f'{udn} : This case seems donnot have any relatives info !, check screenshot')
+                response_relative = driver.page_source
+                driver.save_screenshot(f'{udn}.no_relative_found.relatives_table.png')
 
         r = bs(response_relative, features='lxml')
-        tb = r.find('tbody').find_all('tr')
+        try:
+            tb = r.find('tbody').find_all('tr')
+        except:
+            tb = []
         if len(tb) == 0:
             logger.error('Relative list is empty')
-            return 0
 
         # for this part, even the sequence state is noted as "-"  not uploaded, when clicking the actual case, sometimes, the sequence file still exist
         for i in tb:
@@ -527,8 +533,12 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
 
                     continue
 
-            # avoid the overwritten of res_all keys, such as multipel siters /brothers
-            rel_in_prev_run = [_.split('#')[-1] for _ in res_all if re.match(rel_to_proband_tmp, _)]
+            # avoid the overwritten of res_all keys, such as multipel sisters /brothers
+            try:
+                rel_in_prev_run = [_.split('#')[-1] for _ in res_all if re.match(rel_to_proband_tmp, _)]
+            except:
+                logger.error(res_all)
+                sys.exit(1)
 
             # incase multiple sister, multiple brother ...
             rel_seq = 0
@@ -545,7 +555,7 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
                 rel_to_proband_tmp = f'{rel_to_proband_tmp}#{rel_seq}'
 
 
-            res_all = get_all_info(rel_udn, cookie_token, rel_to_proband=rel_to_proband_tmp, res_all=res_all, info_passed_in={'affected': rel_aff, 'seq_status': have_seq}, demo=demo, get_aws_ft=get_aws_ft, valid_family=valid_family, lite_mode=lite_mode, udn_proband=udn_proband, driver=driver)
+            res_all, driver = get_all_info(rel_udn, cookie_token, rel_to_proband=rel_to_proband_tmp, res_all=res_all, info_passed_in={'affected': rel_aff, 'seq_status': have_seq}, demo=demo, get_aws_ft=get_aws_ft, valid_family=valid_family, lite_mode=lite_mode, udn_proband=udn_proband, driver=driver)
             # logger.info(res_all.keys())
 
         # patient dignosis
@@ -788,10 +798,10 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
         except:
             logger.error(f'fail to parse the result dict, try again')
             raise
-    return res_all
+    return res_all, driver
 
 def get_download_link_by_selinium(driver, fn, seq_id, logger, n=0):
-    driver = login(driver)
+    driver = login(driver, source='get_download_link_by_selinium')
     time.sleep(5)
     url = f'https://gateway.undiagnosed.hms.harvard.edu/patient/sequence/{seq_id}/files/'
     # logger.debug(f'getting url {url}')
@@ -1043,7 +1053,7 @@ def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft
             logger.error(f'case UUID not found: patient record={res["Proband"]}')
             return 0
 
-        driver = login(driver, headless=headless)
+        driver = login(driver, headless=headless, source='parse_api_res, get relative table')
 
         try:
             driver.get(url_relative)
@@ -1051,11 +1061,18 @@ def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft
             logger.error(f'fail to get relatives page using selenium')
         else:
             driver.save_screenshot('browser.init.png')
+            try:
+                _tmp_ele = wait(driver, 10).until(lambda _:_.find_element_by_xpath(f'//a[text()="Sequence uploaded"]'))
 
-            _tmp_ele = wait(driver, 10).until(lambda _:_.find_element_by_xpath(f'//a[text()="Sequence uploaded"]'))
-
-            driver.save_screenshot(fn_reltive_png)
-            logger.info(f'Screenshot: relative table saved!')
+                driver.save_screenshot(fn_reltive_png)
+                logger.info(f'Screenshot: relative table saved!')
+            except:
+                driver.save_screenshot(f'{proband_id}.no_relatives_found.table.png')
+                try:
+                    os.symlink(f'{proband_id}.no_relatives_found.table.png', fn_reltive_png)
+                except:
+                    pass
+                logger.warning(f'no relatives found for {proband_id}')
 
     # if not cookie_token:
     #     driver, cookie_token = get_cookie(driver)
@@ -1407,6 +1424,7 @@ default:
         logger.info('building IGV script')
         udn_igv.main('.', udn, logger)
 
+    return driver
 
 def resolve_udn_id(s):
     """
@@ -1497,8 +1515,9 @@ if __name__ == "__main__":
     pw_script = os.path.realpath(__file__).rsplit('/', 1)[0]
 
 
-    pw_accre_data = '/home/chenh19/data/udn'
+    pw_accre_data = '/data/cqs/chenh19/udn'
     pw_accre_scratch = '/fs0/members/chenh19/tmp/upload'
+    # pw_accre_upload = pw_accre_scratch
 
     upload_file_list = ['pheno.keywords.txt', 'download.*']  # upload these files to scratch and data of ACCRE
 
@@ -1658,12 +1677,12 @@ if __name__ == "__main__":
             else:
                 renew_amazon_link = args.renew
 
-            parse_api_res(res, cookie_token=cookie_token, update_aws_ft=update_aws_ft, renew_amazon_link=renew_amazon_link, demo=demo, udn_raw=udn_raw, valid_family=valid_family, gzip_only=gzip_only, driver=driver, sv_caller=sv_caller)
+            driver = parse_api_res(res, cookie_token=cookie_token, update_aws_ft=update_aws_ft, renew_amazon_link=renew_amazon_link, demo=demo, udn_raw=udn_raw, valid_family=valid_family, gzip_only=gzip_only, driver=driver, sv_caller=sv_caller)
 
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
         else:
-            res = get_all_info(udn, cookie_token=cookie_token, demo=demo, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite, udn_proband=udn, gzip_only=gzip_only, driver=driver, sv_caller=sv_caller)
+            res, driver = get_all_info(udn, cookie_token=cookie_token, demo=demo, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite, udn_proband=udn, gzip_only=gzip_only, driver=driver, sv_caller=sv_caller)
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
 
@@ -1672,7 +1691,8 @@ if __name__ == "__main__":
             os.system(f'bash download.cnv.{udn}.sh')
 
         # upload files
-        if upload and os.path.exists(fn_udn_api_pkl) and not force_upload:
+        initial_upload_flag = 'origin/initial_uploaded'
+        if upload and os.path.exists(fn_udn_api_pkl) and not force_upload and os.path.exists(initial_upload_flag):
             fls = []  # file name can't contain space
             fls.append(f'mkdir {pw_accre_data}/{udn_raw}/')
             fls.append(f'mkdir {pw_accre_scratch}/{udn_raw}/')
@@ -1686,7 +1706,7 @@ if __name__ == "__main__":
             os.system(f"""sftp va <<< $'{fls}' >/dev/null 2>/dev/null""")
         else:
             logger.info(f'initial uploading to ACCRE: {udn_raw}')
-            os.system(f"""sftp va <<< $'mkdir {pw_accre_data}/{udn_raw}/\\nmkdir {pw_accre_scratch}/{udn_raw}/\\nput -r * {pw_accre_data}/{udn_raw}/'  2>/dev/null >&2""")
+            os.system(f"""sftp va <<< $'mkdir {pw_accre_data}/{udn_raw}/origin/\\nmkdir {pw_accre_scratch}/{udn_raw}/\\nput -r * {pw_accre_data}/{udn_raw}/'  2>/dev/null >&2; touch {initial_upload_flag}""")
 
         fn_cnv_upload_flag = 'origin/cnv_uploaded'
         if 'cnv' in update_aws_ft and not os.path.exists(fn_cnv_upload_flag):
@@ -1705,6 +1725,9 @@ if __name__ == "__main__":
             else:
                 logger.warning(f'\ttotal CNV={len(local_cnv)}, not uploaded = {len(not_uploaded)}')
                 fls = '\\n'.join([f'put {_} {_}' for _ in not_uploaded])
-                os.system(f"""sftp va:{pw_accre_data}/{udn_raw} <<< $' {fls}' >/dev/null""")
+
+                cmd  = f"""sftp va:{pw_accre_data}/{udn_raw} <<< $'{fls}' >/dev/null;\ntouch {fn_cnv_upload_flag}"""
+                logger.info(cmd)
+                os.system(cmd)
 
         print('\n########################\n\n')
