@@ -593,14 +593,14 @@ if [[ "{size_exp}" -ne "na" ]] & [[ "$local_size" -ne "{size_exp}" ]];then
 fi
 
 # check md5sum
-if [[ ! -f {fn}.md5 ]];then
+if [[ ! -f {pw}/download/{fn}.md5 ]];then
     md5sum  {fn_download} >{pw}/download/{fn}.md5 2>{pw}/download/{fn}.md5.log
 fi
 
 """)
                     if ext == 'gz':
                         out.write(f"""
-if [[ ! -f {fn}.zcat.tail.txt ]];then
+if [[ ! -f {pw}/download/{fn}.zcat.tail.txt ]];then
     zcat {fn_download} |tail -20 >{pw}/download/{fn}.zcat.tail.txt 2>{pw}/download/{fn}.zcat.log
 fi
 
