@@ -242,6 +242,8 @@ def main(prj, pw=None, fn_selected_genes=None, sv_caller='dragen'):
                 res = ws.write_rich_string(row_start, col_comment, *comment_list)
             if res:
                 print(f'fail to write rich text: {gn}')
+                # print(comment_list)
+                # print(len(comment_list))
 
             ws.set_row(row_start + 3, height * 14)
 
@@ -355,7 +357,7 @@ def add_data(ws, row, data, n_family, formats, sv_caller='dragen', dup_gn=False)
         cell_format = formats['fmt_comment']
 
 
-        bold_pattern = r'\*\*([\w\?][^*]+[\w\)])\*\*'
+        bold_pattern = r'\*\*([\S][^*]+)\*\*'
         spans = []
         for i in re.finditer(bold_pattern, comment):
             spans.append(i.span())
