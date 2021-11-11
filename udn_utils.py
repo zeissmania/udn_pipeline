@@ -196,7 +196,7 @@ class UDN_case():
             else:
                 self.done_phase3 = 1
         try:
-            self.cols = self.get_annot_col()
+            self.get_annot_col()
         except:
             pass
 
@@ -220,8 +220,7 @@ class UDN_case():
         try:
             cols = self.cols
         except:
-            cols = self.get_annot_col()
-
+            self.get_annot_col()
             self.cols = cols
         header_added_col_n = len(self.header_prefix)
 
@@ -276,7 +275,7 @@ class UDN_case():
             except:
                 valid_cn = 0
 
-            logger.info(f'index# : {idx}\nheader={header}')
+            # logger.info(f'index# : {idx}\nheader={header}')
 
             for i in fp:
                 a = i.split('\t')
@@ -522,7 +521,7 @@ class UDN_case():
         res1 = sorted(res.items(), key=lambda _: (_[1][3], len(_[1][0]), _[1][4]), reverse=True)
         res2 = sorted(res.items(), key=lambda _: (_[1][3], len(_[1][1]), _[1][4]), reverse=True)
 
-        with open(f'intermediate/omim_match_result.pkl', 'wb') as o:
+        with open(f'{pw}/intermediate/omim_match_result.pkl', 'wb') as o:
             pickle.dump(res, o)
 
         n1 = 0
@@ -983,7 +982,8 @@ class UDN_case():
                 anno_header = f.readline().strip()
             cols = anno_header.split('\t')
         except:
-            cols = re.split(',', "AnnotSV ID,SV chrom,SV start,SV end,SV length,SV type,ID,REF,ALT,QUAL,FILTER,INFO,FORMAT,UD264390,UDN287221,UDN882825,AnnotSV type,Gene name,NM,CDS length,tx length,location,location2,intersectStart,intersectEnd,DGV_GAIN_IDs,DGV_GAIN_n_samples_with_SV,DGV_GAIN_n_samples_tested,DGV_GAIN_Frequency,DGV_LOSS_IDs,DGV_LOSS_n_samples_with_SV,DGV_LOSS_n_samples_tested,DGV_LOSS_Frequency,GD_ID,GD_AN,GD_N_HET,GD_N_HOMALT,GD_AF,GD_POPMAX_AF,GD_ID_others,1000g_event,IMH_ID,IMH_AF,IMH_ID_others,promoters,dbVar_event,dbVar_variant,dbVar_status,TADcoordinates,ENCODEexperiments,GCcontent_left,GCcontent_right,Repeats_coord_left,Repeats_type_left,Repeats_coord_right,Repeats_type_right,ACMG,HI_CGscore,TriS_CGscore,DDD_status,DDD_mode,DDD_consequence,DDD_disease,DDD_pmids,HI_DDDpercent,delZ_ExAC,dupZ_ExAC,cnvZ_ExAC,synZ_ExAC,misZ_ExAC,pLI_ExAC,Mim Number,Phenotypes,Inheritance,morbidGenes,morbidGenesCandidates,AnnotSV ranking")
+            logger.error('Annotation file header not found')
+            return None
 
         col_keep = {}
 
@@ -996,8 +996,8 @@ class UDN_case():
             # logger.info(f'{new} {raw} {cols.index(raw)}')
         # the actual "data" is the next column for "FORMAT"
         col_keep['data'] += 1
+        self.cols = col_keep
 
-        return col_keep
 
     def annotate(self, sample_id) -> '{pw}/{intermediate_folder}/{lb}.annotated.txt':
         """
@@ -1016,6 +1016,8 @@ class UDN_case():
 
         if not run_annot:
             logger.info(f'annotation already done: {lb}')
+            if lb == 'proband':
+                self.get_annot_col()
             return 0
 
         logger.info(f'AnnotSV: {sample_id}: {vcf}')
@@ -1024,8 +1026,9 @@ class UDN_case():
 
         logger.debug(cmd)
         os.system(cmd)
-        if lb.lower() == 'proband':
-            self.cols = self.get_annot_col()
+        if lb == 'proband':
+            self.get_annot_col()
+
 
 
     def anno_filter(self, sample_id) ->'{pw}/{intermediate_folder}/{lb}.filtered.txt':
@@ -1064,11 +1067,13 @@ class UDN_case():
             col_quality = col_keep['QUAL'] + 1
 
             if type_short == 'P':  # proband
-                extra_filter = f' && ${col_gnomad_AF}<{thres_gnomad_maf}'
+                # extra_filter = f' && ${col_gnomad_AF}<{thres_gnomad_maf}'
+                extra_filter = ''
                 if sv_caller == 'dragen':
                     extra_filter += f' && ${col_quality}>{thres_quality_score}'
                 cmd = f"""head -1 {f_anno_exp} > {f_anno_filter};awk -F $'\\t'  '${col_filter}=="PASS" {extra_filter}' {f_anno_exp} >> {f_anno_filter} """
                 logger.info(f'{lb}:  filter criteria = FILTER==PASS {extra_filter}')
+                logger.debug(cmd)
             else:
                 extra_filter = ''
                 cmd = f'ln -s {f_anno_exp} {f_anno_filter}'
@@ -1240,6 +1245,7 @@ class UDN_case():
                     logger.info(f'family_ID in header={header_extra}')
             print('\t'.join(header), file=out)
 
+
             for i in fp:
                 a = i.strip().split('\t')
                 anno_id, chr_, pos_s, pos_e, sv_len, sv_type, _filter, qual, gn, \
@@ -1261,7 +1267,7 @@ class UDN_case():
                         svtype1[sv_type] += 1
                     except:
                         svtype1[sv_type] = 1
-                    if sv_type != 'BND':
+                    if sv_type != 'BND':  # small indel, and not BND
                         continue
 
                 if sv_type == 'BND':
@@ -1410,7 +1416,8 @@ class UDN_case():
                                 sv_len, exon_span, af_dgv_gain, af_dgv_loss, af_gnomad,
                                 ddd_mode, ddd_disease, omim, phenotype, inheritance, annot_ranking, copy_number_all]), file=out)
         out.close()
-        logger.info(f'SV with len < 50: count = {svtype1}')
+        if len(svtype1) > 0:
+            logger.info(f'SV with len < 50: count = {svtype1}')
 
     def group_sv_into_bin(self, sample_id) -> 'family[sample_id]["sv_dict"]':
         # read the father and mother annotation result, build a dict

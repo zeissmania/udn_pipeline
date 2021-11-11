@@ -17,6 +17,7 @@ input = info file. columns
 10=optional, remote pw
 """
 import os, sys, re, glob
+import json
 import platform
 import time
 from pprint import pprint as pp
@@ -464,7 +465,9 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
         print('Done, all files already uploaded')
     print('\n\n\n')
 
-    return d
+    ct = {'total': n_desired, 'downloaded': n_downloaded, 'uploaded': n_uploaded, 'need_to_upload': n_need_upload}
+
+    return d, ct
 
 
 def refine_remote_pw(remote_pw):
@@ -700,9 +703,10 @@ def main(pw, info_file=None, remote_pw_in=None, updated_version_only=True):
     for i in ['shell', 'shell_done', 'download', 'log']:
         os.makedirs(f'{pw}/{i}', exist_ok=True)
     # parse the info file
-    d = parse_info_file(pw, info_file, remote_pw_in=remote_pw_in, ft=ft, updated_version_only=updated_version_only)
+    d, ct = parse_info_file(pw, info_file, remote_pw_in=remote_pw_in, ft=ft, updated_version_only=updated_version_only)
     if not lite:
         build_script(pw, d)
+    return ct
 
 
 if __name__ == "__main__":
@@ -790,6 +794,8 @@ if __name__ == "__main__":
         logger.error(f'No file type selected! exit')
         sys.exit(1)
 
+    ct = {'total': 0, 'downloaded': 0, 'uploaded': 0, 'need_to_upload': 0}
+
     for ipw in pw:
         ipw = re.sub(r'/$', '', ipw)
         pw_core = ipw.rsplit('/', 1)[-1]
@@ -799,4 +805,12 @@ if __name__ == "__main__":
 
         remote_base_prefix = f'{remote_base}/' if remote_base else ''
         remote_pw_in = remote_pw or f'{remote_base_prefix}{pw_core}'
-        main(ipw, remote_pw_in=remote_pw_in, updated_version_only=updated_version_only)
+        ct_prj = main(ipw, remote_pw_in=remote_pw_in, updated_version_only=updated_version_only)
+
+        for k in ct:
+            ct[k] += ct_prj[k]
+
+        # ct = {'total': n_desired, 'downloaded': n_downloaded, 'uploaded': n_uploaded, 'need_to_upload': n_need_upload}
+
+    print('\n' + '#' * 50)
+    print(json.dumps(ct, indent=4))
