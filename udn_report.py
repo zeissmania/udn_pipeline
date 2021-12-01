@@ -66,13 +66,16 @@ def main(prj, pw=None, fn_selected_genes=None, sv_caller='dragen'):
 
     # read the raw data
     d = pd.read_excel(fn_selected_genes, keep_default_na=False)
-    header = d.columns
-    prev_columns = list(header[:21])
+    header = list(d.columns)
+    idx_copy_nmber = header.index('annot_ranking') + 1
 
 
+    prev_columns = ["mut_type", "AMELIE", "anno_id", "chr_", "pos_s", "pos_e", "sv_type", "qual", "exon_span_tag", "gn", "sv_len", "exon_span", "af_dgv_gain", "af_dgv_loss", "af_gnomad", "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance", "annot_ranking"]
+
+    idx_col_rank = header.index('AMELIE')
 
     # sort the rank
-    col_rank = d.columns[1]
+    col_rank = d.columns[idx_col_rank]
     d_rank = {}
     for gn, score in zip(d['gn'], d[col_rank]):
         try:
@@ -85,7 +88,7 @@ def main(prj, pw=None, fn_selected_genes=None, sv_caller='dragen'):
     d[col_rank] = d['gn'].map(d_rank)
 
     # sort the family
-    family_info_raw = list(header[21:])
+    family_info_raw = list(header[idx_copy_nmber:])
     family_info_priority = []
     d_family_priority = {'proband': 1, 'mother': 2, 'father':3, 'sister': 4, 'brother': 5}
 
@@ -143,6 +146,13 @@ def main(prj, pw=None, fn_selected_genes=None, sv_caller='dragen'):
     formats['fmt_txt'] = wb.add_format({'font_size': 11, 'bold': False, 'border': 2, 'border_color': '#d9d9d9'})
     formats['fmt_txt'].set_align('center')
     formats['fmt_txt'].set_align('vcenter')
+
+
+    formats['fmt_wrap'] = wb.add_format({'font_size': 11, 'bold': False, 'border': 2, 'border_color': '#d9d9d9'})
+    formats['fmt_wrap'].set_align('center')
+    formats['fmt_wrap'].set_align('vcenter')
+    formats['fmt_wrap'].set_text_wrap()
+
 
     formats['fmt_comment'] = wb.add_format({'font_size': 11, 'bold': False, 'border': 2, 'border_color': '#d9d9d9', 'text_wrap': True})
     formats['fmt_comment'].set_text_wrap()
@@ -281,7 +291,8 @@ def add_data(ws, row, data, n_family, formats, sv_caller='dragen', dup_gn=False)
         print(len(data[:19]))
         print(data[:19])
     # exon_span_tag = '' if exon_span_tag == np.nan else exon_span_tag
-    cn_proband = data[20]
+    cn_proband = data[20].replace('@', '\n')
+
     if sv_caller == 'dragen':
         cn_family = [_.replace('@', '\n') for _ in list(data[21:])]
     else:
@@ -316,7 +327,7 @@ def add_data(ws, row, data, n_family, formats, sv_caller='dragen', dup_gn=False)
     col_idx = [3] + [4 + _ for _ in range(n_family)] + [4 + n_family + _ for _ in [3, 4, 6]]
     values = [sv_type, cn_proband] + cn_family + ['', '', '']
     for col, v in zip(col_idx, values):
-        ws.merge_range(row, col, row + 3, col, v, cell_format=formats['fmt_txt'])
+        ws.merge_range(row, col, row + 3, col, v, cell_format=formats['fmt_wrap'])
 
     # if dup_gn:
     #     col_idx = [3] + [4 + _ for _ in range(n_family)] + [4 + n_family + _ for _ in [3, 4, 6]]

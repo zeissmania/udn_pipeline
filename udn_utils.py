@@ -7,6 +7,14 @@
 to-do
 add the downloading data / uploading data to AWS server
 
+
+2021-11-30
+1. fix the firefox path issue
+2. change SVminSize to 1 for AnnotSV
+3. change the extraction step, if sv_len < 50 and the SV is not BND and the SV is not covering exon, exclude it
+4. get the gene list in the extract step (prev in filter step)
+5. for vcf entry like below, the segment is super long, but it's not actually an SV, exlude it
+chr1    817859  DRAGEN:REF:chr1:817859-2649577  N       .       94      PASS    END=2649577;REFLEN=1831719      GT:SM:CN:BC:PE  ./.:1.00865:2:1428:7,138
 """
 
 import os
@@ -217,15 +225,19 @@ class UDN_case():
         udn = self.prj
         pw = self.pw
         logger = self.logger
+        driver=None
+
+
         try:
             cols = self.cols
         except:
             self.get_annot_col()
-            self.cols = cols
+            cols = self.cols
         header_added_col_n = len(self.header_prefix)
 
         fn_gene_comment = f'{pw_code}/omim.gene_comment.txt'
         fn_gene_description_omim = f'{pw_code}/omim.gene_description_omim.txt'
+        fn_gene_description_omim_pkl = f'{pw_code}/omim.gene_description_omim.pkl'
 
         if os.path.exists(f'{pw}/{udn}.omim_match_gene.txt'):
             logger.info(f'OMIM match already done')
@@ -252,12 +264,13 @@ class UDN_case():
             # get the column number for proband cn and last cn of the last family number
             idx = {}
             idx['proband'] = header.index('annot_ranking') + 1
+
+            l = ['qual', 'gn', 'omim', 'sv_type', 'sv_len', 'exon_span_tag', 'AMELIE']
+            for _ in l:
+                idx[_] = header.index(_)
+
             for n, i in enumerate(header):
-                if i == 'sv_type':
-                    idx['sv_type'] = n
-                elif i == 'sv_len':
-                    idx['sv_len'] = n
-                elif i.lower().startswith('gn_'):
+                if i.lower().startswith('gn_'):
                     idx['end_idx'] = n
                     break
             else:
@@ -277,33 +290,44 @@ class UDN_case():
 
             # logger.info(f'index# : {idx}\nheader={header}')
 
+            header_other_info = ['coord', 'sv_type', 'af_dgv_gain', 'af_dgv_loss', 'af_gnomad', 'filter']
+            for _ in header_other_info:
+                idx[_] = header.index(_)
+
             for i in fp:
                 a = i.split('\t')
-                gn = a[12].strip()
-                omim_id = a[20].strip()
+                gn = a[idx['gn']].strip()
+                omim_id = a[idx['omim']].strip()
                 sv_type = a[idx['sv_type']]
                 sv_len = a[idx['sv_len']]
+                qual_proband = a[idx['qual']]
+
+                other_info = ['',]
+                for _ in header_other_info:
+                    sep = '\t' if len(_) >= 7 else '\t\t'
+                    other_info.append(f'{_}:{sep}{a[idx[_]]}')
                 try:
-                    amelie_score = float(a[4])
+                    amelie_score = float(a[idx['AMELIE']])
                 except:
                     logger.warning(f'wrong amelie score: {a}')
                     continue
 
-                cover_exon_flag = 1 if a[11].strip() else 0
+                cover_exon_flag = 1 if a[idx['exon_span_tag']].strip() else 0
                 copy_number = ''
                 if valid_cn:
                     copy_number = a[idx['proband'] :idx['end_idx']]
+                    copy_number[0] = f'{copy_number[0]}@{qual_proband}'
                     copy_number = [_.strip() for _ in copy_number if _.strip]
 
-                    copy_number = ['='.join(_) for _ in zip(cn_header, copy_number)]
-                    copy_number = ';\t'.join(copy_number)
+                    copy_number = [' = '.join(_) for _ in zip(cn_header, copy_number)] + other_info
+                    copy_number = '\n\t\t'.join(copy_number)
                     copy_number = f'SV={sv_type}, svlen={sv_len} @@\n\t\t' + copy_number
 
                 if omim_id:
                     if gn not in d_gene:
                         d_gene[gn] = [omim_id, cover_exon_flag, amelie_score, '\n\t' + copy_number]
                     else:
-                        d_gene[gn][-1] += '\n\t' + copy_number
+                        d_gene[gn][3] += '\n\t' + copy_number
 
                     d_gene[gn][1] = max(cover_exon_flag, d_gene[gn][1])
 
@@ -315,33 +339,40 @@ class UDN_case():
         d_gene_comment_scrapy = {}
         d_gene_comment_scrapy_new = {}
 
-        for d1, fn1 in zip([d_gene_comment, d_gene_comment_scrapy], [fn_gene_comment, fn_gene_description_omim]):
-            new = 1
-            try:
-                with open(fn1) as fp:
-                    for i in fp:
-                        i = i.strip()
-                        if not i.strip():
-                            try:
-                                if gn not in d1:
-                                    d1[gn] = comment
-                            except:
+
+        if os.path.exists(fn_gene_description_omim_pkl):
+            logger.info('load omim info from pickle')
+            with open(fn_gene_description_omim_pkl, 'rb') as f:
+                d_gene_comment_scrapy = pickle.load(f)
+        else:
+            logger.info(f'file not found: {fn_gene_description_omim_pkl}')
+            for d1, fn1 in zip([d_gene_comment, d_gene_comment_scrapy], [fn_gene_comment, fn_gene_description_omim]):
+                new = 1
+                try:
+                    with open(fn1) as fp:
+                        for i in fp:
+                            i = i.strip()
+                            if not i.strip():
+                                try:
+                                    if gn not in d1:
+                                        d1[gn] = comment
+                                except:
+                                    continue
+                                new = 1
+                            elif new == 1 and len(i) < 30:
+                                gn = i
+                                new = 0
+                                comment = ''
+                            elif new == 1:
+                                logger.warning(f'wrong gene name found in {pw_code}/gene_comment.txt: {i}')
+                                gn = 'wrong'
                                 continue
-                            new = 1
-                        elif new == 1 and len(i) < 30:
-                            gn = i
-                            new = 0
-                            comment = ''
-                        elif new == 1:
-                            logger.warning(f'wrong gene name found in {pw_code}/gene_comment.txt: {i}')
-                            gn = 'wrong'
-                            continue
-                        else:
-                            comment += i + '\n'
-            except:
-                logger.warning(f'{fn1} not exist')
-                with open(fn1, 'w') as out:
-                    pass
+                            else:
+                                comment += i + '\n'
+                except:
+                    logger.warning(f'{fn1} not exist')
+                    with open(fn1, 'w') as out:
+                        pass
 
         logger.info(f'local total gene number with OMIM description={len(d_gene_comment_scrapy)}')
 
@@ -357,9 +388,12 @@ class UDN_case():
 
         with open(fn_pheno) as fp:
             for i in fp:
+                new = i.lower().split('#', 1)[0].strip()
+                if not new:  # pure comment line
+                    continue
                 l_pheno_raw.append(i.strip())
-                i = i.lower().split('#', 1)[0].strip()
-                a = re.split(r'\s+', i)
+
+                a = re.split(r'\s+', new)
                 a = [_.strip() for _ in a if _.strip()]
 
                 if len(a) == 0:
@@ -369,7 +403,6 @@ class UDN_case():
         logger.warning(l_pheno)
 
         # refine the l_pheno,
-
 
         # res , key=gene, value = [0, 0]  first int = count of exact match phenotype, second int = count of partial match phenotype
         res = {}
@@ -405,7 +438,8 @@ class UDN_case():
             else:
                 # run the scrapy
                 # comment is a dict, key=pheno_id, v=pheno description
-                comment_raw = run_omim_scrapy(gn, omim_id, logger)
+                logger.warning(f'run scrapy: {gn}')
+                comment_raw, driver = run_omim_scrapy(gn, omim_id, logger, driver=driver)
                 if comment_raw:
                     comment += '\n'.join(comment_raw.values())
                     d_gene_comment_scrapy_new[gn] = comment.strip()
@@ -507,14 +541,20 @@ class UDN_case():
                     print(desc, file=out)
                     print('\n\n', file=out)
 
+        if not os.path.exists(fn_gene_description_omim_pkl) or len(d_gene_comment_scrapy_new) > 0:
+            logger.info('dumping OMIM records')
+            with open(fn_gene_description_omim_pkl, 'wb') as o:
+                pickle.dump(d_gene_comment_scrapy, o)
+
+
         # logger.info(f'OMIM query count={len(res)}')
 
 
 
         # tally the result
-        out1 = open(f'{pw}/omim_match_gene.{udn}.md', 'w')
-        out2 = open(f'{pw}/omim_partial_match_gene.{udn}.md', 'w')
-        out3 = open(f'{pw}/omim_all_genes.{udn}.md', 'w')
+        out_full_match = open(f'{pw}/omim_match_gene.{udn}.md', 'w')
+        out_partial_match = open(f'{pw}/omim_partial_match_gene.{udn}.md', 'w')
+        out_all_genes = open(f'{pw}/omim_all_genes.{udn}.md', 'w')
         # test = next(iter(res.items()))
         # logger.info(f'res_entry_len={len(test[1])}')
         # res 0 = matched phenotype, 1=partial matched phenotype, 2 = comment. 3 = exon_flag, 4=amelie score
@@ -534,9 +574,9 @@ class UDN_case():
                 logger.debug(f'gene with no OMIM description: {gn}')
                 continue
             n3 += 1
-            print(f'## {n3}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\n{copy_number}', file=out3)
-            print(comment, file=out3)
-            print('#' * 50 + '\n\n\n', file=out3)
+            print(f'## {n3}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\n{match}\n{partial_match}\n{copy_number}', file=out_all_genes)  # all genes
+            print(comment, file=out_all_genes)
+            print('#' * 50 + '\n\n\n', file=out_all_genes)
 
         for v in res1:
             gn = v[0]
@@ -546,11 +586,10 @@ class UDN_case():
             if len(match) > 0:
                 gene_match.add(gn)
                 n1 += 1
-                # print('#' * 20, file=out1)
 
-                print(f'## {n1}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\n{match}\n{partial_match}{copy_number}', file=out1)
-                print(comment, file=out1)
-                print('#' * 50 + '\n\n\n', file=out1)
+                print(f'## {n1}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\n{match}\n{partial_match}\n{copy_number}', file=out_full_match)
+                print(comment, file=out_full_match)
+                print('#' * 50 + '\n\n\n', file=out_full_match)
         for v in res2:
             gn = v[0]
             if gn in gene_match:
@@ -559,11 +598,12 @@ class UDN_case():
             partial_match = '\n'.join(partial_match)
             if len(partial_match) > 0:
                 n2 += 1
-                print(f'## {n2}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\n{partial_match}{copy_number}', file=out2)
-                print(comment, file=out2)
-                print('#' * 50 + '\n\n\n', file=out2)
-        out1.close()
-        out2.close()
+                print(f'## {n2}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\n{partial_match}{copy_number}', file=out_partial_match)
+                print(comment, file=out_partial_match)
+                print('#' * 50 + '\n\n\n', file=out_partial_match)
+        out_full_match.close()
+        out_partial_match.close()
+        out_all_genes.close()
         logger.info(f'gene with OMIM match= {n1}')
         logger.info(f'gene with OMIM partial match= {n2}')
 
@@ -828,14 +868,14 @@ class UDN_case():
             # get vcf file
             vcf = os.popen(
                 f'find {vcf_file_path} -type f -iname "*{sample_id}*.vcf.gz" -o -iname "*{sample_id}*.vcf"').read().split('\n')
-            vcf = [_.strip() for _ in vcf if _.strip()]
+            vcf = [_.strip() for _ in vcf if _.strip() and not _.rsplit('/', 1)[-1].startswith('new.')]
             if len(vcf) == 0:
                 logger.warning(f'CNV file not downloaded yet, now downloading')
                 os.system(f'bash {pw}/download.cnv.*.sh 2>/dev/null')
                 time.sleep(2)
                 vcf = os.popen(
                     f'find {vcf_file_path} -type f -iname "*{sample_id}*.vcf.gz" -o -iname "*{sample_id}*.vcf"').read().split('\n')
-                vcf = [_.strip() for _ in vcf if _.strip()]
+                vcf = [_.strip() for _ in vcf if _.strip() and not _.rsplit('/', 1)[-1].startswith('new.')]
 
             if len(vcf) == 0:
                 logger.error(f'{v["type"]}  {sample_id} vcf file not found! ')
@@ -976,12 +1016,18 @@ class UDN_case():
         proband_id = self.proband_id
         lb = self.family[proband_id]['lb']
 
-        try:
-            f_anno_exp = f'{pw}/{intermediate_folder}/{lb}.annotated.tsv'
-            with open(f_anno_exp) as f:
-                anno_header = f.readline().strip()
-            cols = anno_header.split('\t')
-        except:
+        for v in self.family.values():
+            lb = v['lb']
+
+            try:
+                f_anno_exp = f'{pw}/{intermediate_folder}/{lb}.annotated.tsv'
+                with open(f_anno_exp) as f:
+                    anno_header = f.readline().strip()
+                cols = anno_header.split('\t')
+                break
+            except:
+                pass
+        else:
             logger.error('Annotation file header not found')
             return None
 
@@ -1016,38 +1062,50 @@ class UDN_case():
 
         if not run_annot:
             logger.info(f'annotation already done: {lb}')
-            if lb == 'proband':
-                self.get_annot_col()
+            self.get_annot_col()
             return 0
 
-        logger.info(f'AnnotSV: {sample_id}: {vcf}')
+        # refine the vcf file
+        ext = vcf.rsplit('.', 1)[-1]
+        if ext == 'gz':
+            zcat = 'gunzip -c '
+        elif ext == 'vcf':
+            zcat = 'cat '
+        tmp =  vcf.rsplit('/', 1)
+        if len(tmp) == 1:
+            vcf_new = 'new.' + vcf
+        else:
+            vcf_new = tmp[0] + '/new.' + tmp[1]
 
-        cmd = f'{self.annotsv_app} -genomeBuild GRCh38 -typeOfAnnotation split -outputFile {f_anno_exp} -SVinputFile {vcf} >{pw}/{intermediate_folder}/{lb}.annotsv.log 2>&1'
+        cmd = f"""{zcat} {vcf}|awk '!match($3, /DRAGEN:REF:/)' |gzip > {vcf_new} """
+        os.system(cmd)
+
+        size_new = os.path.getsize(vcf_new)
+        size_old = os.path.getsize(vcf)
+
+        logger.info(f'AnnotSV: {sample_id}: {vcf_new}, size old = {size_old}, size new={size_new}')
+
+        cmd = f'{self.annotsv_app} -genomeBuild GRCh38 -typeOfAnnotation split -outputFile {f_anno_exp} -SVinputFile {vcf_new}  -SVminSize 1 >{pw}/{intermediate_folder}/{lb}.annotsv.log 2>&1'
 
         logger.debug(cmd)
         os.system(cmd)
-        if lb == 'proband':
-            self.get_annot_col()
-
-
+        self.get_annot_col()
 
     def anno_filter(self, sample_id) ->'{pw}/{intermediate_folder}/{lb}.filtered.txt':
         """filter the raw annotSV result"""
         pw = self.pw
-        prj = self.prj
         logger = self.logger
         lb = self.family[sample_id]['lb']
         sv_caller = self.sv_caller
         type_short = self.family[sample_id]['type_short']
         thres_gnomad_maf = self.thres_gnomad_maf
-        thres_annot_sv_ranking = self.thres_annot_sv_ranking
         col_keep = self.cols
 
 
         f_anno_exp = f'{pw}/{intermediate_folder}/{lb}.annotated.tsv'
         f_anno_filter = f'{pw}/{intermediate_folder}/{lb}.filtered.txt'
 
-        # type_ = the type of this file, P/M/F/S
+        # type_short = the type of this file, P/M/F/S
 
         # ["anno_id", "chr_", "pos_s", "pos_e", "sv_type", "QUAL", "data", "gn", "sv_len", "exon_span",
         #              "af_dgv_gain", "af_dgv_loss", "af_gnomad", "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance",
@@ -1061,19 +1119,24 @@ class UDN_case():
             return 0
         else:
             col_gnomad_AF = col_keep['af_gnomad'] + 1
-            col_annot_sv_ranking = col_keep['annot_ranking'] + 1
-            col_filter = col_keep['filter'] + 1
-            col_gn = col_keep['gn'] + 1
+            # col_filter = col_keep['filter'] + 1
+
+            # the col_filter is disabled, because for dragen,  the SV with FILTER as "cnvLenght" can still be valid (because the thres is 10k bp, which is too long)
+
             col_quality = col_keep['QUAL'] + 1
 
             if type_short == 'P':  # proband
                 # extra_filter = f' && ${col_gnomad_AF}<{thres_gnomad_maf}'
                 extra_filter = ''
                 if sv_caller == 'dragen':
-                    extra_filter += f' && ${col_quality}>{thres_quality_score}'
-                cmd = f"""head -1 {f_anno_exp} > {f_anno_filter};awk -F $'\\t'  '${col_filter}=="PASS" {extra_filter}' {f_anno_exp} >> {f_anno_filter} """
-                logger.info(f'{lb}:  filter criteria = FILTER==PASS {extra_filter}')
-                logger.debug(cmd)
+                    extra_filter += f'${col_quality}>{thres_quality_score}'
+                    # cmd = f"""head -1 {f_anno_exp} > {f_anno_filter};awk -F $'\\t'  '{extra_filter}' {f_anno_exp} >> {f_anno_filter} """
+                    cmd = f"""awk -F $'\\t'  '{extra_filter}' {f_anno_exp} >> {f_anno_filter} """
+
+                    logger.info(f'{lb}:  filter criteria = {extra_filter}')
+                    logger.debug(cmd)
+                else:
+                    cmd = f'ln -s {f_anno_exp} {f_anno_filter}'
             else:
                 extra_filter = ''
                 cmd = f'ln -s {f_anno_exp} {f_anno_filter}'
@@ -1082,36 +1145,26 @@ class UDN_case():
             # logger.info(cmd)
             os.system(cmd)
 
-        # if proband, extract the genelist
-        if type_short == 'P':
-            cmd = f"""cut -d $'\\t' -f {col_gn} {f_anno_filter}|sed '1d' |sort|uniq > {pw}/{intermediate_folder}/{prj}.genelist"""
-            # logger.info(cmd)
-            os.system(cmd)
-            lines = os.popen(f'wc -l < {pw}/{intermediate_folder}/{prj}.genelist').read().strip()
-            try:
-                lines = int(lines)
-            except:
-                logger.error(f'fail to get the line number of {prj}.genelist')
-                sys.exit(1)
 
-            if lines == 0:
-                logger.error(f'{lb}:  no gene was found')
-                sys.exit(1)
-
-    def get_copy_number_dragen(self, data, chr_, sex):
+    def get_copy_number_dragen(self, data, chr_, sex, idx_cn):
         """
         get the copy number from dragen vcf file
         """
         logger = self.logger
+        # GT:SM:CN:BC:PE
+        # SM:CN:BC:PE
+
         try:
-            data = int(data.split(':')[1])  # CN
+            data = int(data.split(':')[idx_cn])  # CN
             if data == 0:
                 copy_number = "-"
-            else:
+            elif data < 6:
                 copy_number = 'o' * data
+            else:
+                copy_number = f'cn={data}'
         except:
-            copy_number = 'NA'
-            logger.warning('wrong copy number format: copy number={data}  : {gn}  {anno_id}')
+            logger.warning(f'wrong copy number format: copy number={data}')
+            return 'NA'
 
 
         if chr_.lower().find('chrx') > -1 and sex == 1:
@@ -1124,9 +1177,9 @@ class UDN_case():
         return copy_number
 
 
-    def get_copy_number_pacbio(self, data, sv_type, gt_format):
+    def get_copy_number_pacbio(self, data, sv_type, format_info):
         """
-        gt_format could be CN or GT:AD:DP, it would define how the data would be parased
+        format_info could be CN or GT:AD:DP, it would define how the data would be parased
         SV could be
     'DEL': 22449,
     'INS': 25805,
@@ -1135,12 +1188,12 @@ class UDN_case():
     'INV': 95,
     'cnv': 5
 
-    gt_format and data is like
+    format_info and data is like
      GT:AD:DP        0/1:5,9:14
         """
         solid_circle = chr(9679)
         logger = self.logger
-        if gt_format == 'CN':
+        if format_info == 'CN':
             try:
                 data = int(data)
             except:
@@ -1152,7 +1205,7 @@ class UDN_case():
                     copy_number = 'o' * data
             return copy_number
 
-        idx = {k.strip(): n for n, k in enumerate(gt_format.split(':'))}
+        idx = {k.strip(): n for n, k in enumerate(format_info.split(':'))}
         # k = GT, AD, DP
 
         data = data.split(':')
@@ -1179,13 +1232,12 @@ class UDN_case():
         else:
             return gt + allele_depth
 
-
-
     def anno_extract(self, sample_id) ->'{pw}/{intermediate_folder}/{lb}.extracted.txt':
-
+        prj = self.prj
         pw = self.pw
         logger = self.logger
         lb = self.family[sample_id]['lb']
+        type_short = self.family[sample_id]['type_short']
         sex = self.family[sample_id]['sex']  # 1 or 2 for male and female
         col_keep = self.cols
         rel = self.family[sample_id]['type'].lower()
@@ -1208,11 +1260,13 @@ class UDN_case():
                 return 0
 
         out = open(f_anno_extract, 'w')
-        header = ["anno_id", "chr_", "pos_s", "pos_e", "sv_type", "qual", "exon_span_tag", "gn", "sv_len", "exon_span",
+        header = ["filter", "anno_id", "chr_", "pos_s", "pos_e", "sv_type", "qual", "exon_span_tag", "gn", "sv_len", "exon_span",
                 "af_dgv_gain", "af_dgv_loss", "af_gnomad", "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance",
                 "annot_ranking"]
 
         svtype1 = {}
+        gene_list = set()
+
 
         with open(f_anno_filter) as fp:
             first_line = fp.readline()
@@ -1245,7 +1299,6 @@ class UDN_case():
                     logger.info(f'family_ID in header={header_extra}')
             print('\t'.join(header), file=out)
 
-
             for i in fp:
                 a = i.strip().split('\t')
                 anno_id, chr_, pos_s, pos_e, sv_len, sv_type, _filter, qual, gn, \
@@ -1255,49 +1308,28 @@ class UDN_case():
                 # data = expon_span_tag/FORMAT
                 # sv_len = tx length (overlap of the SV and transcript)
                 # exon_span = location
-                #
-                sv_len1 = int(pos_e) - int(pos_s)
-                try:
-                    sv_len = abs(int(sv_len))
-                except:
-                    sv_len = sv_len1
-
-                if sv_len < 50 :
-                    try:
-                        svtype1[sv_type] += 1
-                    except:
-                        svtype1[sv_type] = 1
-                    if sv_type != 'BND':  # small indel, and not BND
-                        continue
-
-                if sv_type == 'BND':
-                    info = a[col_keep['info']]
-                    info = {k: v for k, v in [_.split('=') for _ in info.split(';')]}
-                    mate_id = info.get('MATEID') or ''
-                    mate_dist = info.get('MATEDIST') or ''
-                    sv_len = f'{mate_id};dist={mate_dist}'
-
-                chr_ = 'chr' + chr_.lower()
-                try:
-                    if sv_len > 1000:
-                        sv_len = f'{int(sv_len)/1000:.2f}kbp'
-                    else:
-                        sv_len = f'{sv_len} bp'
-                except:
-                    # logger.warning(f'wrong sv_len format: sv_len={sv_len}  : {gn}  {anno_id}')
-                    # continue
-                    pass
 
                 # copy number
                 # the the cols for the GT of each family member
                 data_all = a[col_keep['data']: col_keep['data_end_flag']]
+                format_info_raw = a[col_keep['format']]
+                format_info = format_info_raw.split(':')
+                # GT:SM:CN:BC:PE
+                # SM:CN:BC:PE
+
+                if sv_caller == 'dragen':
+                    if 'CN' not in format_info and gn != "Gene name" :
+                        logger.warning(f'CN not in FORMAT column: {format_info}, line={a}')
+                        continue
+                    idx_cn = format_info.index('CN')
+
+
                 copy_number_all = []
                 for data in data_all:
                     if sv_caller == 'dragen':
-                        copy_number = self.get_copy_number_dragen(data, chr_, sex)
+                        copy_number = self.get_copy_number_dragen(data, chr_, sex, idx_cn)
                     else:
-                        gt_format = a[col_keep['format']]
-                        copy_number = self.get_copy_number_pacbio(data, sv_type, gt_format)
+                        copy_number = self.get_copy_number_pacbio(data, sv_type, format_info)
 
                     copy_number_all.append(copy_number)
 
@@ -1404,20 +1436,71 @@ class UDN_case():
                     else:
                         exon_span_tag = 'error, no pattern matched'
 
+                # SV len
+                sv_len1 = int(pos_e) - int(pos_s)
+                try:
+                    sv_len = abs(int(sv_len))
+                except:
+                    sv_len = sv_len1
 
-                if rel != 'proband' and sv_caller == 'dragen':
+                if sv_len < 50 :
+                    try:
+                        svtype1[sv_type] += 1
+                    except:
+                        svtype1[sv_type] = 1
+                    if sv_type != 'BND' and exon_span_tag.find('exon') < 0:  # small indel, and not BND, not in exon
+                        continue
+
+                if sv_type == 'BND':
+                    info = a[col_keep['info']]
+                    info = {k: v for k, v in [_.split('=') for _ in info.split(';')]}
+                    mate_id = info.get('MATEID') or ''
+                    mate_dist = info.get('MATEDIST') or ''
+                    sv_len = f'{mate_id};dist={mate_dist}'
+
+                chr_ = 'chr' + chr_.lower()
+                try:
+                    if sv_len > 1000:
+                        sv_len = f'{int(sv_len)/1000:.2f}kbp'
+                    else:
+                        sv_len = f'{sv_len} bp'
+                except:
+                    # logger.warning(f'wrong sv_len format: sv_len={sv_len}  : {gn}  {anno_id}')
+                    # continue
+                    pass
+
+                if type_short == 'P':
+                    gene_list.add(gn)
+
+                # copy number
+                if sv_caller == 'dragen':
                     copy_number_all = [f'{copy_number}@QUAL={qual}' for copy_number in copy_number_all]
                 try:
                     copy_number_all = '\t'.join(copy_number_all)
                 except:
                     logger.error(copy_number_all)
                     sys.exit(1)
-                print('\t'.join([anno_id, chr_, pos_s, pos_e, sv_type, qual, exon_span_tag, gn,
+                print('\t'.join([_filter, anno_id, chr_, pos_s, pos_e, sv_type, qual, exon_span_tag, gn,
                                 sv_len, exon_span, af_dgv_gain, af_dgv_loss, af_gnomad,
                                 ddd_mode, ddd_disease, omim, phenotype, inheritance, annot_ranking, copy_number_all]), file=out)
         out.close()
         if len(svtype1) > 0:
             logger.info(f'SV with len < 50: count = {svtype1}')
+
+        # write the genelist
+        if type_short == 'P':
+            n_genes = len(gene_list)
+            if n_genes == 0:
+                logger.error(f'no gene list found !')
+                sys.exit(1)
+            elif n_genes > 3000:
+                logger.error(f'too many genes in the gene list ( {n_genes}) ,please check!')
+                sys.exit(1)
+
+            fn_genelist = f'{pw}/{intermediate_folder}/{prj}.genelist'
+            logger.info(f'gene list count = {n_genes}')
+            with open(fn_genelist, 'w') as o:
+                print('\n'.join(gene_list), file=o)
 
     def group_sv_into_bin(self, sample_id) -> 'family[sample_id]["sv_dict"]':
         # read the father and mother annotation result, build a dict
@@ -1453,6 +1536,10 @@ class UDN_case():
         d_parent = {}
         n = 0
         with open(fn) as fp:
+            header = fp.readline().strip().split('\t')
+            idx = [header.index(_) for _ in ['chr_', 'pos_s', 'pos_e', 'sv_type', 'gn', 'copy_number']]
+            fp.seek(0)
+
             for i in fp:
                 n+=1
                 a = i.strip().split('\t')
@@ -1460,7 +1547,7 @@ class UDN_case():
                 #     "af_dgv_gain", "af_dgv_loss", "af_gnomad", "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance",
                 #     "annot_ranking", 'copy_number']
                 try:
-                    chr_, s, e, sv_type, gn, cn = [a[_] for _ in [1, 2, 3, 4, 7, -1]]
+                    chr_, s, e, sv_type, gn, cn = [a[_] for _ in idx]
                 except:
                     logger.error(fn)
                     logger.error(a)
@@ -1617,6 +1704,8 @@ class UDN_case():
             header_raw = f.readline()
             tmp = header_raw.split('\t')
             idx_proband = [n for n, _ in enumerate(tmp) if _.lower().find(proband_id) > -1]
+            idx = [header.index(_) for _ in ['chr_', 'pos_s', 'pos_e', 'sv_type', 'gn']]
+
 
             if len(idx_proband) == 1:
                 idx_proband = idx_proband[0]
@@ -1630,7 +1719,7 @@ class UDN_case():
             for i in f:
                 i = i.strip()
                 a = i.split('\t')
-                chr_, s, e, gn = [a[_] for _ in [1, 2, 3, 7]]
+                chr_, s, e, gn = [a[_] for _ in idx]
                 chr_ = chr_.lower()
                 proband_cn = a[idx_proband]
 
@@ -1731,9 +1820,15 @@ class UDN_case():
         header_suffix = '\t'.join(header_suffix)
 
         with open(fn_proband) as fp:
-            header = next(fp).strip().replace('copy_number', '')
+            # header = next(fp).strip().replace('copy_number', '')
+            header_raw = fp.readline().strip()
+            header = header_raw.replace('copy_number', '')
             header_prefix = '\t'.join(self.header_prefix)
             header = f'{header_prefix}\t{header}{header_suffix}'
+
+            header_list = header_raw.split('\t')
+            idx = [header_list.index(_) for _ in ['chr_', 'pos_s', 'pos_e', 'gn']]
+
             print(header, file=final)
 
             family_sv_cache = {}
@@ -1747,7 +1842,7 @@ class UDN_case():
             for i in fp:
                 i = i.strip()
                 a = i.split('\t')
-                _, chr_, s, e, gn = [a[_] for _ in [0, 1, 2, 3, 7]]
+                chr_, s, e, gn = [a[_] for _ in idx]
                 chr_ = chr_.lower()
 
                 s = int(s)
@@ -1832,7 +1927,6 @@ class UDN_case():
                         new = [matched[_] for _ in [-1, -2, -3, 1, 2, 0]]
                         info[sample_id] = new
                     else:  # the sv is not found in family, suppose to be normal
-                        cn = 'oo'
                         if chr_.lower().find('chrx') > -1 and sex == 1:
                             cn = 'oy'
                         elif chr_.lower().find('chry') > -1 and sex == 1:
@@ -1843,19 +1937,22 @@ class UDN_case():
                             cn = 'oo'
                         info[sample_id] = [cn, 'not_found'] + [''] * 4
 
-                if self.udn_match:
-                    i_udn_match = self.udn_match.get(gn) or 'na'
-                else:
-                    i_udn_match = 'na'
+                # if self.udn_match:  # a gene list provided by UDN gateway, usually not exist or not used
+                #     i_udn_match = self.udn_match.get(gn) or 'na'
+                # else:
+                #     i_udn_match = 'na'
 
                 # if not found in both amelie and udn_match, would skip this gene
-                if amelie == -99 and i_udn_match == 'na':
-                    # logger.info(f'{gn}:not found in both amelie and udn_match')
-                    continue
-                elif amelie == -99:  # not found in amelie but foudn in udn_match
-                    amelie = 999
+                # UDN match means that the gene in the UDN report from Baylor, force include these genes
 
-                res = f'{coord}\tna\tna\t\t{amelie}\t{i}'
+
+                # if amelie == -99 and i_udn_match == 'na':
+                #     # logger.info(f'{gn}:not found in both amelie and udn_match')
+                #     continue
+                # elif amelie == -99:  # not found in amelie but foudn in udn_match
+                #     amelie = 999
+
+                res = f'{coord}\tna\tna\t\t{amelie}\t{i}\t'
                 res_suffix_cn = []
                 res_suffix_gn = []
                 res_suffix_sv_type = []
@@ -1949,10 +2046,9 @@ def get_driver(driver, logger):
             exe_firefox = f'/home/chenh19/tools/geckodriver'
         driver = webdriver.Firefox(options=options, executable_path=exe_firefox)
         logger.warning('firefox initiated')
+        driver.get('https://www.google.com/')
         driver.save_screenshot('firefox_init.png')
-
     return driver
-
 
 
 def run_selenium(driver, url_omim, gn, gn_omim_id, logger):
@@ -1974,7 +2070,6 @@ def run_selenium(driver, url_omim, gn, gn_omim_id, logger):
     except:
         pass
 
-
     html = driver.page_source
     if html.find('Phenotype-Gene') < 0:
         logger.warning(f'seems an empty html returned: len={len(html)}')
@@ -1982,8 +2077,7 @@ def run_selenium(driver, url_omim, gn, gn_omim_id, logger):
 
     return driver, html
 
-
-def run_omim_scrapy(gn, gn_omim_id, logger, res_prev=None):
+def run_omim_scrapy(gn, gn_omim_id, logger, res_prev=None, driver=None):
     """
     get the omim disease discription
     return key=pheno_id, value=the description and clinicalfeatures text
@@ -1999,23 +2093,22 @@ def run_omim_scrapy(gn, gn_omim_id, logger, res_prev=None):
         logger.warning(f'multiple OMIM id find, gn={gn}, omim_id={gn_omim_id}')
         res = {}
         for omim_id_tmp  in omim_id_list:
-            res_tmp = run_omim_scrapy(gn, omim_id_tmp.strip().split('.', 1)[0], logger, res_prev=res)
+            res_tmp, driver = run_omim_scrapy(gn, omim_id_tmp.strip().split('.', 1)[0], logger, res_prev=res, driver=driver)
             if res_tmp:
                 res.update(res_tmp)
-        return res
+        return res, driver
     else:
         gn_omim_id = list(omim_id_list)[0].strip().split('.', 1)[0]
 
     # if gn == 'PKHD1':
     #     logger.error(f'gn=PKHD1, omim_id_list={omim_id_list}, gn_omim_id={gn_omim_id}')
 
-    driver = None
-
     url_omim = f'https://www.omim.org/entry/{gn_omim_id}'
     if d_omim_map:
         try:
             pheno_list = d_omim_map[gn_omim_id]
-            gene_page_scrapy = 0
+            if len(pheno_list) > 1:
+                gene_page_scrapy = 0
         except:
             logger.warning(f'gene not found in d_omim_map dict: {gn}  gn_omim_id={gn_omim_id} url={url_omim}')
 
@@ -2023,7 +2116,7 @@ def run_omim_scrapy(gn, gn_omim_id, logger, res_prev=None):
         try:
             r = requests.request('GET', url_omim, headers=headers).text
         except:
-            logger.warning(f'OMIM blocked (request), would try selenium: {gn}')
+            logger.warning(f'getting phenon list: OMIM blocked (request), would try selenium: {gn}')
             global_flag['omim_blocked'] = 1
 
         if global_flag['omim_blocked']:
@@ -2049,7 +2142,7 @@ def run_omim_scrapy(gn, gn_omim_id, logger, res_prev=None):
             rows = r.find('table').findAll('tr')
         except:
             logger.warning(f'no phenotype table found, gn={gn}')
-            return res_prev if res_prev else 0
+            return res_prev if res_prev else 0, driver
         rows = [_.findAll('td') for _ in rows]
         rows = [_ for _ in rows if _]
 
@@ -2076,6 +2169,7 @@ def run_omim_scrapy(gn, gn_omim_id, logger, res_prev=None):
                     pheno_list[int(pheno_id)] = pheno_desc
                 except:
                     logger.warning(f'wrong OMIM phenotype ID: {pheno_id}, info={info}')
+        logger.info(f'pheno list for {gn}: {pheno_list}')
 
     # scrapy the pheno page
     # get the descriptioin and clinical features
@@ -2116,4 +2210,6 @@ def run_omim_scrapy(gn, gn_omim_id, logger, res_prev=None):
         tmp = f'\n\n**{pheno_desc}**\n' + '\n'.join([desc, clin]).strip()
         tmp = tmp.strip()
         res[pheno_id] = tmp
-    return res_prev.update(res) if res_prev else res
+    tmp = res_prev.update(res) if res_prev else res
+
+    return tmp, driver
