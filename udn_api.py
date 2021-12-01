@@ -490,7 +490,6 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
             logger.error(f'fail to get relatives page using selenium')
             try:
                 response_relative = requests.request('GET', url_relative, headers=header_cookie).text
-
             except:
                 logger.error(f'fail to get relatives info: {udn}')
                 return 0
@@ -501,8 +500,8 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
                 driver.save_screenshot(f'{udn}.relatives_table.png')
             except:
                 logger.warning(f'{udn} : This case seems donnot have any relatives info !, check screenshot')
-                response_relative = driver.page_source
                 driver.save_screenshot(f'{udn}.no_relative_found.relatives_table.png')
+            response_relative = driver.page_source
 
         r = bs(response_relative, features='lxml')
         try:
