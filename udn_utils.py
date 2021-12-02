@@ -1028,8 +1028,8 @@ class UDN_case():
             except:
                 pass
         else:
-            logger.error('Annotation file header not found')
-            return None
+            logger.error('Annotation file header not found, use default')
+            cols = 'AnnotSV ID,SV chrom,SV start,SV end,SV length,SV type,ID,REF,ALT,QUAL,FILTER,INFO,FORMAT,991629-UDN064874,AnnotSV type,Gene name,NM,CDS length,tx length,location,location2,intersectStart,intersectEnd,DGV_GAIN_IDs,DGV_GAIN_n_samples_with_SV,DGV_GAIN_n_samples_tested,DGV_GAIN_Frequency,DGV_LOSS_IDs,DGV_LOSS_n_samples_with_SV,DGV_LOSS_n_samples_tested,DGV_LOSS_Frequency,GD_ID,GD_AN,GD_N_HET,GD_N_HOMALT,GD_AF,GD_POPMAX_AF,GD_ID_others,1000g_event,IMH_ID,IMH_AF,IMH_ID_others,promoters,dbVar_event,dbVar_variant,dbVar_status,TADcoordinates,ENCODEexperiments,GCcontent_left,GCcontent_right,Repeats_coord_left,Repeats_type_left,Repeats_coord_right,Repeats_type_right,ACMG,HI_CGscore,TriS_CGscore,DDD_status,DDD_mode,DDD_consequence,DDD_disease,DDD_pmids,HI_DDDpercent,delZ_ExAC,dupZ_ExAC,cnvZ_ExAC,synZ_ExAC,misZ_ExAC,pLI_ExAC,Mim Number,Phenotypes,Inheritance,morbidGenes,morbidGenesCandidates,AnnotSV ranking'.split(',')
 
         col_keep = {}
 
