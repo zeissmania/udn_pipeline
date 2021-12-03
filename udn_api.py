@@ -635,7 +635,7 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
             for _ in json['sequencereports']]
 
         files_raw = json['sequencingfiles']
-        logger.info(f'\t{rel_to_proband}: {sequence_type} seq_id={seq_id}  total files={len(files_raw)} ')
+        logger.info(f'\t{rel_to_proband}: {sequence_type} seq_id={seq_id}  total files={len(files_raw)} , ft_to_download={get_aws_ft}')
 
         for n_fl, ifl in enumerate(files_raw):
             # each file is like
