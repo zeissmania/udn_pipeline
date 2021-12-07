@@ -20,11 +20,13 @@ chr1    817859  DRAGEN:REF:chr1:817859-2649577  N       .       94      PASS    
 import os
 import sys
 import re
+import json
 import yaml
 import time
 import logging
 import logging.config
 import requests
+
 from bs4 import BeautifulSoup as bs
 import pickle
 # import pandas as pd
@@ -120,6 +122,39 @@ def line_count(fn):
 intermediate_folder = 'intermediate'
 thres_quality_score = 40
 
+
+
+def test_pheno_pattern(l_pheno, l_pheno_raw, logger):
+    patterns = []
+    for ipheno, ipheno_raw in zip(l_pheno, l_pheno_raw):
+        tmp = []
+        for _ in ipheno:
+            _ = _.lower()
+            if _[0] == '-':  # negative match, exclude
+                word = f'exclude: {_[1:]}'
+            else:
+                if _[0] == '@' or _.find('|') > 0:
+                    extra_flag = r'\b'
+                    if _[0] == '@':
+                        word = _[1:]
+                    else:
+                        word = _
+
+                    if word.find('|') > -1 and word.find('(') < 0:
+                        word = re.sub(r'\b((?:\w+\|)+\w+)', r'(\g<1>)', word)
+                else:
+                    word = _
+                    extra_flag = ''
+                word = fr'.*{extra_flag}({word}[a-z]*){extra_flag}'
+            tmp.append(word)
+        patterns.append([' '.join(ipheno), tmp])
+
+    tmp = json.dumps(patterns, indent=4)
+    logger.info(tmp)
+
+
+
+
 class UDN_case():
     def __init__(self, config_file):
         cfg = yaml.safe_load(open(config_file).read())
@@ -207,6 +242,8 @@ class UDN_case():
             self.get_annot_col()
         except:
             pass
+
+
 
     def omim_query(self, force_rerun=False):
         """
@@ -401,6 +438,12 @@ class UDN_case():
                 l_pheno.append([_.replace('+', ' ') for _ in a])
 
         logger.warning(l_pheno)
+
+
+        # test
+        # test_pheno_pattern(l_pheno, l_pheno_raw, logger)
+        # sys.exit(1)
+
 
         # refine the l_pheno,
 
@@ -689,6 +732,11 @@ class UDN_case():
         vcf_file_path = cfg['default']['vcf_file_path']
         # default is the same as path
         vcf_file_path = vcf_file_path or path or os.getcwd()
+        pw_origin = f'{vcf_file_path}/origin'
+        if os.path.exists(pw_origin):
+            vcf_file_path = pw_origin
+
+
         sv_caller = cfg.get('sv_caller') or 'dragen'
 
         family = {}
@@ -890,7 +938,7 @@ class UDN_case():
                     logger.warning(f'multiple vcf ({len(vcf)}) found, would use the file named as "updated" ')
                 else:
                     logger.error(
-                    f'multiple({len(vcf)}) VCF file for {v["lb"]}  {sample_id} under {vcf_file_path} found, please check ')
+                    f'multiple({len(vcf)}) VCF file for {v["lb"]}  {sample_id} under {vcf_file_path} found, please check \n\t{vcf} ')
                     exit_flag = 1
         if exit_flag:
             sys.exit(1)
@@ -1077,8 +1125,9 @@ class UDN_case():
         else:
             vcf_new = tmp[0] + '/new.' + tmp[1]
 
-        cmd = f"""{zcat} {vcf}|awk '!match($3, /DRAGEN:REF:/)' |gzip > {vcf_new} """
-        os.system(cmd)
+        if not os.path.exists(vcf_new):
+            cmd = f"""{zcat} {vcf}|awk '!match($3, /DRAGEN:REF:/)' |gzip > {vcf_new} """
+            os.system(cmd)
 
         size_new = os.path.getsize(vcf_new)
         size_old = os.path.getsize(vcf)
