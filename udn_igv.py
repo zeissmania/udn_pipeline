@@ -171,30 +171,40 @@ def main(pw, udn, logger):
 
     d_genes = igv_obj.get_gene_region()
 
-    with open(f'{pw}/igv.script.{udn}.txt', 'w') as out:
-        out.write(f"""genome hg38
-    SAM.QUALITY_THRESHOLD 13
-    snapshotDirectory {pwigv}
-    maxPanelHeight 2000
-    squish
-    setSleepInterval 500
-    new
+    lines_shared = []
+    lines_extra = []
+
+    lines_shared.append(f"""genome hg38
+SAM.QUALITY_THRESHOLD 13
+snapshotDirectory {pwigv}
+maxPanelHeight 2000
+squish
+setSleepInterval 500
+new
 
     """)
-        for _rank, url_bam, url_bai in bam_list:
-            out.write(f'load "{url_bam}" index="{url_bai}"\n')
-
-        out.write("""
+    lines_shared.append(f"""
     load http://hgdownload.cse.ucsc.edu/goldenPath/hg38/database/refGene.txt.gz
-    collapse refGene.txt.gz
+    collapse refGene.txt.gz""")
 
-    """)
-        for gn, v in d_genes.items():
-            for n, region in enumerate(v):
-                # suffix = 'gene_overview' if n == 0 else n
-                suffix = n + 1
-                region_short = '.' + region.split(':')[-1]
-                out.write(f'goto {region}\nsnapshot "{gn}.{suffix}{region_short}.png"\n\n')
+    for _rank, url_bam, url_bai in bam_list:
+        lines_shared.append(f'load "{url_bam}" index="{url_bai}"\n')
+
+    for gn, v in d_genes.items():
+        for n, region in enumerate(v):
+            # suffix = 'gene_overview' if n == 0 else n
+            suffix = n + 1
+            region_short = '.' + region.split(':')[-1]
+            lines_extra.append(f'goto {region}\nsnapshot "{gn}.{suffix}{region_short}.png"\n\n')
+
+
+    with open(f'{pw}/igv.script.{udn}.txt', 'w') as out:
+        print('\n'.join(lines_shared), file=out)
+
+    if len(lines_extra) > 0:
+        with open(f'{pw}/igv.script.{udn}.with_gene_range.txt', 'w') as out:
+            print('\n'.join(lines_shared + lines_extra), file=out)
+
 
 if __name__ == "__main__":
 

@@ -350,7 +350,7 @@ def add_data(ws, row, data, n_family, formats, sv_caller='dragen', dup_gn=False)
     values = [
             ['', exon_span, exon_span_tag, ''],
             [qual, '', '', ''],
-            [dgv, gnomad, '', ''],
+            [gnomad, dgv, '', ''],
             ['', '', '', ''],
             [rank, '✔', '', '']
     ]
@@ -358,8 +358,6 @@ def add_data(ws, row, data, n_family, formats, sv_caller='dragen', dup_gn=False)
        for n, iv in enumerate(v):
            iv = str(iv)
            ws.write_string(row + n, col, iv, cell_format=formats['fmt_txt'])
-
-
 
     # write the comment
 
