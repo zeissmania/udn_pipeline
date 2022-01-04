@@ -15,6 +15,18 @@ add the downloading data / uploading data to AWS server
 4. get the gene list in the extract step (prev in filter step)
 5. for vcf entry like below, the segment is super long, but it's not actually an SV, exlude it
 chr1    817859  DRAGEN:REF:chr1:817859-2649577  N       .       94      PASS    END=2649577;REFLEN=1831719      GT:SM:CN:BC:PE  ./.:1.00865:2:1428:7,138
+
+
+2021-12-21
+1. updated the annotSV to 3.1.1 version , the output file header and content changed a lot
+-typeOfAnnotation -> -annotationMode
+# -overlap , Minimum overlap (%) between user features (User BED) and the annotated SV to be reported Range values: [0-100], default = 100
+
+new column Exon_count, type=int
+
+The gain/loss af were split to  P_  and B_, P=pathogenic, B=benign. the AF thres can be set by parameter
+
+
 """
 
 import os
@@ -42,42 +54,46 @@ platform = sys.platform
 redundant_words = set('and,am,is,in,the,are,to,for,of,a,an,one,two,three,four,at,on,type,activity,increased,decreased,low,level,high'.split(','))
 
 sv_type_convert = {'<DEL>': 'deletion', '<DUP>': 'duplication'}
-col_keep_new_name = [
-    "anno_id", "chr_", "pos_s", "pos_e", "sv_len", "sv_type", "filter", "QUAL", "format", "data", 'data_end_flag', "gn", "exon_span",
-    "af_dgv_gain", "af_dgv_loss", "af_gnomad", "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance",
-    "annot_ranking", 'info']
 
 # this one, excluded the data, data_end_flag and format
 col_keep_final = [
-    "anno_id", "chr_", "pos_s", "pos_e", "sv_len", "sv_type", "filter", "QUAL", "gn", "exon_span",
-    "af_dgv_gain", "af_dgv_loss", "af_gnomad", "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance",
+    "anno_id", "chr_", "pos_s", "pos_e", "sv_len", "sv_type", "filter", "QUAL", "gn", "exon_span", 'exon_count',
+    "gain_b_source", 'gain_b_af',
+    "loss_b_source", 'loss_b_af',
+    "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance",
     "annot_ranking"]
 
+col_keep_new_name = [
+    "anno_id", "chr_", "pos_s", "pos_e", "sv_len", "sv_type", "filter", "QUAL", "format", "data", 'data_end_flag', "gn", "exon_span", 'exon_count',
+    "gain_b_source", 'gain_b_af',  "loss_b_source", 'loss_b_af',  "inv_b_source", 'inv_b_af',  "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance",
+    "annot_ranking", 'info']
 
-
-
-col_keep_raw_name = ['AnnotSV ID',
-                     'SV chrom',
-                     'SV start',
-                     'SV end',
-                     'SV length',
-                     'SV type',
+col_keep_raw_name = ['AnnotSV_ID',
+                     'SV_chrom',
+                     'SV_start',
+                     'SV_end',
+                     'SV_length',
+                     'SV_type',
                      'FILTER',
                      'QUAL',
                      'FORMAT',
                      'FORMAT',
-                     'AnnotSV type',
-                     'Gene name',
-                     'location',
-                     'DGV_GAIN_Frequency',
-                     'DGV_LOSS_Frequency',
-                     'GD_AF',
+                     'Annotation_mode',
+                     'Gene_name',
+                     'Location',
+                     'Exon_count',
+                     'B_gain_source',
+                     'B_gain_AFmax',
+                     'B_loss_source',
+                     'B_loss_AFmax',
+                     'B_inv_source',
+                     'B_inv_AFmax',
                      'DDD_mode',
                      'DDD_disease',
-                     'Mim Number',
-                     'Phenotypes',
-                     'Inheritance',
-                     'AnnotSV ranking',
+                     'OMIM_ID',
+                     'OMIM_phenotype',
+                     'OMIM_inheritance',
+                     'AnnotSV_ranking_score',
                      'INFO',
                      ]
 
@@ -327,7 +343,7 @@ class UDN_case():
 
             # logger.info(f'index# : {idx}\nheader={header}')
 
-            header_other_info = ['coord', 'sv_type', 'af_dgv_gain', 'af_dgv_loss', 'af_gnomad', 'filter']
+            header_other_info = ['coord', 'sv_type', 'af_dgv_gain', 'af_dgv_loss', 'filter']
             for _ in header_other_info:
                 idx[_] = header.index(_)
 
@@ -868,7 +884,7 @@ class UDN_case():
             mount = '-B /mnt/d'
         else:
             # dock_path = '/scratch/cqs/chenh19/dock/annotsv.sif'
-            dock_path = '/data/cqs/chenh19/dock/annotSV.sif'
+            dock_path = '/data/cqs/chenh19/dock/annotsv.sif'
             mount = ''
         # the annot_sv_rank and gnomad_AF filtering would only take effect on the proband, would not filter on the parent
 
@@ -1077,15 +1093,16 @@ class UDN_case():
                 pass
         else:
             logger.error('Annotation file header not found, use default')
-            cols = 'AnnotSV ID,SV chrom,SV start,SV end,SV length,SV type,ID,REF,ALT,QUAL,FILTER,INFO,FORMAT,991629-UDN064874,AnnotSV type,Gene name,NM,CDS length,tx length,location,location2,intersectStart,intersectEnd,DGV_GAIN_IDs,DGV_GAIN_n_samples_with_SV,DGV_GAIN_n_samples_tested,DGV_GAIN_Frequency,DGV_LOSS_IDs,DGV_LOSS_n_samples_with_SV,DGV_LOSS_n_samples_tested,DGV_LOSS_Frequency,GD_ID,GD_AN,GD_N_HET,GD_N_HOMALT,GD_AF,GD_POPMAX_AF,GD_ID_others,1000g_event,IMH_ID,IMH_AF,IMH_ID_others,promoters,dbVar_event,dbVar_variant,dbVar_status,TADcoordinates,ENCODEexperiments,GCcontent_left,GCcontent_right,Repeats_coord_left,Repeats_type_left,Repeats_coord_right,Repeats_type_right,ACMG,HI_CGscore,TriS_CGscore,DDD_status,DDD_mode,DDD_consequence,DDD_disease,DDD_pmids,HI_DDDpercent,delZ_ExAC,dupZ_ExAC,cnvZ_ExAC,synZ_ExAC,misZ_ExAC,pLI_ExAC,Mim Number,Phenotypes,Inheritance,morbidGenes,morbidGenesCandidates,AnnotSV ranking'.split(',')
+            cols = 'AnnotSV_ID;SV_chrom;SV_start;SV_end;SV_length;SV_type;Samples_ID;ID;REF;ALT;QUAL;FILTER;INFO;FORMAT;955567-UDN222476;Annotation_mode;CytoBand;Gene_name;Gene_count;Tx;Tx_start;Tx_end;Overlapped_tx_length;Overlapped_CDS_length;Overlapped_CDS_percent;Frameshift;Exon_count;Location;Location2;Dist_nearest_SS;Nearest_SS_type;Intersect_start;Intersect_end;RE_gene;P_gain_phen;P_gain_hpo;P_gain_source;P_gain_coord;P_loss_phen;P_loss_hpo;P_loss_source;P_loss_coord;P_ins_phen;P_ins_hpo;P_ins_source;P_ins_coord;P_snvindel_nb;P_snvindel_phen;B_gain_source;B_gain_coord;B_gain_AFmax;B_loss_source;B_loss_coord;B_loss_AFmax;B_ins_source;B_ins_coord;B_ins_AFmax;B_inv_source;B_inv_coord;B_inv_AFmax;TAD_coordinate;ENCODE_experiment;GC_content_left;GC_content_right;Repeat_coord_left;Repeat_type_left;Repeat_coord_right;Repeat_type_right;Gap_left;Gap_right;SegDup_left;SegDup_right;ENCODE_blacklist_left;ENCODE_blacklist_characteristics_left;ENCODE_blacklist_right;ENCODE_blacklist_characteristics_right;ACMG;HI;TS;DDD_HI_percent;DDD_status;DDD_mode;DDD_consequence;DDD_disease;DDD_pmid;ExAC_delZ;ExAC_dupZ;ExAC_cnvZ;ExAC_synZ;ExAC_misZ;GenCC_disease;GenCC_moi;GenCC_classification;GenCC_pmid;OMIM_ID;OMIM_phenotype;OMIM_inheritance;OMIM_morbid;OMIM_morbid_candidate;LOEUF_bin;GnomAD_pLI;ExAC_pLI;AnnotSV_ranking_score;AnnotSV_ranking_criteria;ACMG_class'.split(';')
 
         col_keep = {}
+        cols = [_.lower() for _ in cols]
 
         for new, raw in zip(col_keep_new_name, col_keep_raw_name):
             try:
-                col_keep[new] = cols.index(raw)
+                col_keep[new] = cols.index(raw.lower())
             except:
-                logger.error(f'column not found in annot file: {raw} (for {new} ) ')
+                logger.error(f'column not found in annot file: {raw} (for {new} ) header = {cols}')
                 sys.exit(1)
             # logger.info(f'{new} {raw} {cols.index(raw)}')
         # the actual "data" is the next column for "FORMAT"
@@ -1134,7 +1151,10 @@ class UDN_case():
 
         logger.info(f'AnnotSV: {sample_id}: {vcf_new}, size old = {size_old}, size new={size_new}')
 
-        cmd = f'{self.annotsv_app} -genomeBuild GRCh38 -typeOfAnnotation split -outputFile {f_anno_exp} -SVinputFile {vcf_new}  -SVminSize 1 >{pw}/{intermediate_folder}/{lb}.annotsv.log 2>&1'
+        # new options
+        # -overlap , Minimum overlap (%) between user features (User BED) and the annotated SV to be reported Range values: [0-100], default = 100
+
+        cmd = f'{self.annotsv_app} -genomeBuild GRCh38 -annotationMode split -outputFile {f_anno_exp} -SVinputFile {vcf_new} -overlap 40 -SVminSize 1 -benignAF 0.0001 >{pw}/{intermediate_folder}/{lb}.annotsv.log 2>&1'
 
         logger.debug(cmd)
         os.system(cmd)
@@ -1147,7 +1167,6 @@ class UDN_case():
         lb = self.family[sample_id]['lb']
         sv_caller = self.sv_caller
         type_short = self.family[sample_id]['type_short']
-        thres_gnomad_maf = self.thres_gnomad_maf
         col_keep = self.cols
 
 
@@ -1157,7 +1176,7 @@ class UDN_case():
         # type_short = the type of this file, P/M/F/S
 
         # ["anno_id", "chr_", "pos_s", "pos_e", "sv_type", "QUAL", "data", "gn", "sv_len", "exon_span",
-        #              "af_dgv_gain", "af_dgv_loss", "af_gnomad", "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance",
+        #              "af_dgv_gain", "af_dgv_loss",  "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance",
         #              "annot_ranking"]
         # treat the annot_SV_ranking column diffently between proband and parents
         # for the proband, we demand the rank >=2
@@ -1167,7 +1186,6 @@ class UDN_case():
             logger.info(f'filter file already exists: {lb}')
             return 0
         else:
-            col_gnomad_AF = col_keep['af_gnomad'] + 1
             # col_filter = col_keep['filter'] + 1
 
             # the col_filter is disabled, because for dragen,  the SV with FILTER as "cnvLenght" can still be valid (because the thres is 10k bp, which is too long)
@@ -1310,7 +1328,7 @@ class UDN_case():
 
         out = open(f_anno_extract, 'w')
         header = ["filter", "anno_id", "chr_", "pos_s", "pos_e", "sv_type", "qual", "exon_span_tag", "gn", "sv_len", "exon_span",
-                "af_dgv_gain", "af_dgv_loss", "af_gnomad", "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance",
+                "af_dgv_gain", "af_dgv_loss", "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance",
                 "annot_ranking"]
 
         svtype1 = {}
@@ -1350,9 +1368,14 @@ class UDN_case():
 
             for i in fp:
                 a = i.strip().split('\t')
-                anno_id, chr_, pos_s, pos_e, sv_len, sv_type, _filter, qual, gn, \
-                    exon_span, af_dgv_gain, af_dgv_loss, af_gnomad, \
-                    ddd_mode, ddd_disease, omim, phenotype, inheritance, annot_ranking = [a[col_keep[_]] for _ in col_keep_final]
+                anno_id, chr_, pos_s, pos_e, sv_len, sv_type, \
+                _filter, qual, gn, exon_span, exon_count, \
+                gain_b_source, gain_b_af, \
+                loss_b_source, loss_b_af, \
+                ddd_mode, ddd_disease, omim, \
+                phenotype, inheritance,annot_ranking = [a[col_keep[_]] for _ in col_keep_final]
+
+
 
                 # data = expon_span_tag/FORMAT
                 # sv_len = tx length (overlap of the SV and transcript)
@@ -1390,46 +1413,40 @@ class UDN_case():
                     # sv_type = 'NA'
                     # logger.warning(f'wrong sv_type format: sv_type={sv_type}  : {gn}  {anno_id}')
 
-                # gnomad
-                try:
-                    af_gnomad = float(af_gnomad)
-                    if af_gnomad == -1:
-                        af_gnomad = "-"
-                    elif af_gnomad >= 0.01:
-                        af_gnomad = f'{af_gnomad:.2f}'
-                    else:
-                        af_gnomad = f'{af_gnomad:.2e}'
-                except:
-                    af_gnomad = 'NA'
-                    logger.warning('wrong af_gnomad format: af_gnomad={af_gnomad}  : {gn}  {anno_id}')
-
                 # dgv gain
                 try:
-                    af_dgv_gain = float(af_dgv_gain)
+                    af_dgv_gain = float(gain_b_af) if gain_b_af else -1
                     if af_dgv_gain == -1:
                         af_dgv_gain = '-'
                     elif af_dgv_gain >= 0.01:
                         af_dgv_gain = f'{af_dgv_gain:.2f}'
                     else:
-                        af_dgv_gain = f'{af_dgv_gain:.2e}'
+                        af_dgv_gain = f'{af_dgv_gain:.4g}'
+
+                    # if af_dgv_gain != '-':
+                    #     af_dgv_gain = f'{af_dgv_gain}; {gain_b_source}'
                 except:
                     af_dgv_gain = 'NA'
                     logger.warning('wrong af_dgv_gain format: af_dgv_gain={af_dgv_gain}  : {gn}  {anno_id}')
 
                 # dgv loss
                 try:
-                    af_dgv_loss = float(af_dgv_loss)
+                    af_dgv_loss = float(loss_b_af)  if loss_b_af else -1
                     if af_dgv_loss == -1:
                         af_dgv_loss = '-'
                     elif af_dgv_loss >= 0.01:
                         af_dgv_loss = f'{af_dgv_loss:.2f}'
                     else:
-                        af_dgv_loss = f'{af_dgv_loss:.2e}'
+                        af_dgv_loss = f'{af_dgv_loss:.4g}'
+
+                    # if af_dgv_loss != '-':
+                    #     af_dgv_loss = f'{af_dgv_loss}; {loss_b_source}'
                 except:
                     af_dgv_loss = 'NA'
                     logger.warning('wrong af_dgv_loss format: af_dgv_loss={af_dgv_loss}  : {gn}  {anno_id}')
 
                 # exons_span_tag
+
                 exon_span_tag = 'please_check,this_is_init_state'
                 m = re.match(r'^(intron|exon|)\d+$', exon_span)
                 if m:
@@ -1530,7 +1547,7 @@ class UDN_case():
                     logger.error(copy_number_all)
                     sys.exit(1)
                 print('\t'.join([_filter, anno_id, chr_, pos_s, pos_e, sv_type, qual, exon_span_tag, gn,
-                                sv_len, exon_span, af_dgv_gain, af_dgv_loss, af_gnomad,
+                                sv_len, exon_span, af_dgv_gain, af_dgv_loss,
                                 ddd_mode, ddd_disease, omim, phenotype, inheritance, annot_ranking, copy_number_all]), file=out)
         out.close()
         if len(svtype1) > 0:
@@ -1593,7 +1610,7 @@ class UDN_case():
                 n+=1
                 a = i.strip().split('\t')
                 # ["anno_id", "chr_", "pos_s", "pos_e", "sv_type", "qual", "exon_span_tag", "gn", "sv_len", "exon_span",
-                #     "af_dgv_gain", "af_dgv_loss", "af_gnomad", "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance",
+                #     "af_dgv_gain", "af_dgv_loss",  "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance",
                 #     "annot_ranking", 'copy_number']
                 try:
                     chr_, s, e, sv_type, gn, cn = [a[_] for _ in idx]
@@ -1753,7 +1770,7 @@ class UDN_case():
             header_raw = f.readline()
             tmp = header_raw.split('\t')
             idx_proband = [n for n, _ in enumerate(tmp) if _.lower().find(proband_id) > -1]
-            idx = [header.index(_) for _ in ['chr_', 'pos_s', 'pos_e', 'sv_type', 'gn']]
+            idx = [tmp.index(_) for _ in ['chr_', 'pos_s', 'pos_e', 'sv_type', 'gn']]
 
 
             if len(idx_proband) == 1:
