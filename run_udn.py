@@ -48,7 +48,7 @@ force_report = args.force_report
 new = args.new
 
 if args.new:
-    flist_remove = ['intermediate', '*.err', '*.log', 'err_amelie*', 'UDN*amelie*', 'UDN*merged.sorted.*', ]
+    flist_remove = ['intermediate', '*.err', '*.log', 'err_amelie*', 'UDN*amelie*', 'UDN*merged.sorted.*', 'omim_*' ]
     # flist_remove = [f'"{_}"' for _ in flist_remove]
     tmp = ' '.join(flist_remove)
     os.system(f'rm -rf {tmp} 2>/dev/null')

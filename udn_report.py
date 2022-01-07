@@ -70,9 +70,13 @@ def main(prj, pw=None, fn_selected_genes=None, sv_caller='dragen'):
     idx_copy_nmber = header.index('annot_ranking') + 1
 
 
-    prev_columns = ["mut_type", "AMELIE", "anno_id", "chr_", "pos_s", "pos_e", "sv_type", "qual", "exon_span_tag", "gn", "sv_len", "exon_span", "af_dgv_gain", "af_dgv_loss", "af_gnomad", "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance", "annot_ranking"]
+    prev_columns = ["mut_type", "AMELIE", 'filter', "anno_id", "chr_", "pos_s", "pos_e", "sv_type", "qual", "exon_span_tag", "gn", "sv_len", "exon_span", "gain_af_max", "loss_af_max", 'gain_source', 'loss_source', "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance", "annot_ranking"]
 
-    idx_col_rank = header.index('AMELIE')
+    # n -1 because, in the following info list, the first element , mut_type is removed
+    idx = {_: n - 1 for n, _ in enumerate(prev_columns)}
+
+
+    idx_col_rank =header.index('AMELIE')
 
     # sort the rank
     col_rank = d.columns[idx_col_rank]
@@ -111,6 +115,13 @@ def main(prj, pw=None, fn_selected_genes=None, sv_caller='dragen'):
     bad = 0
     for i in d.itertuples(False, None):
         sv_type = i[0]
+        try:
+            sv_type.lower()
+        except:
+            print(i)
+            print(d.head())
+            sys.exit(1)
+
         if sv_type.lower() not in sv_type_conversion:
             if not sv_type.strip():
                 print(f'mut type not specified: {i}')
@@ -189,7 +200,7 @@ def main(prj, pw=None, fn_selected_genes=None, sv_caller='dragen'):
     # ws.merge_range(row, 0, row, total_col, note, cell_format=header2)
 
     # sort the rank with in he same sv type
-    col_comment = 17
+    col_comment = idx['phenotype']
     # first sort by comment len
     # v is a list
     sv_selected_sorted = [(k, sorted(v, key=lambda _: len(_[col_comment]), reverse=True)) for k, v in sv_selected.items()]
@@ -210,7 +221,7 @@ def main(prj, pw=None, fn_selected_genes=None, sv_caller='dragen'):
         prev_gn = 'demo111'
         gn_record = {}
         for info1 in info:
-            gn = info1[8]
+            gn = info1[idx['gn']]
             if gn == prev_gn:
                 dup_gn = 1
             else:
@@ -219,7 +230,7 @@ def main(prj, pw=None, fn_selected_genes=None, sv_caller='dragen'):
 
             # print(gn, dup_gn)
             prev_gn = gn
-            res, comment_info = add_data(ws, row, info1, n_family, formats, sv_caller=sv_caller, dup_gn=dup_gn)
+            res, comment_info = add_data(ws, row, info1, idx, n_family, formats, sv_caller=sv_caller, dup_gn=dup_gn)
             if res is not None:
                 row = res
                 gn_record[gn]['row_end'] = row - 1
@@ -239,6 +250,8 @@ def main(prj, pw=None, fn_selected_genes=None, sv_caller='dragen'):
             height = comment_info['height']
             comment_list = comment_info['comment_list']
             fmt_types = set(comment_list[::2])
+
+            # report xlsx,
             col_comment = 11 + n_family
             ws.merge_range(row_start, col_comment, row_end, col_comment, '', cell_format=formats['fmt_comment'])
 
@@ -268,14 +281,14 @@ def add_header(ws, row, sv_type_long, family_info, formats):
 
     row += 1
     merged_cell_col_idx = [0, 2, 3] + [_ + 4 for _ in range(n_family)] + [_ + 7 + n_family for _ in [0, 1, 2, 3, 4]]
-    merged_cell_value = ['Gene', 'Change', 'Effect'] + family_info +['Baylor WGS', 'Emedgene/OPAL', 'Yu Shyr', 'PreUDN Panel', 'Comments']
+    merged_cell_value = ['Gene', 'Change', 'Effect'] + family_info +['Baylor WGS', 'Emedgene', 'Yu Shyr', 'PreUDN Panel', 'Comments']
     for col, v in zip(merged_cell_col_idx, merged_cell_value):
         ws.merge_range(row, col, row + 3, col, v, cell_format=formats['header_main'])
 
 
     # pos
     col_idx = [1] + [4 + n_family + _ for _ in [0, 1, 2]]
-    values = [['Chr', 'Position', 'sv_len', ''], ['Quality', 'GQ', 'Coverage', ''], ['GnomAD', 'DGV(dup/del)', 'GERP', 'CADD'], ['Missense Z', 'LoF pLI', '', '']]
+    values = [['Chr', 'Position', 'sv_len', ''], ['Quality', 'GQ', 'Coverage', ''], ['dup', 'dup_source', 'del', 'del_source'], ['Missense Z', 'LoF pLI', '', '']]
 
     for col, v in zip(col_idx, values):
         for i_row, i in enumerate(v):
@@ -283,27 +296,29 @@ def add_header(ws, row, sv_type_long, family_info, formats):
     return row + 4
 
 
-def add_data(ws, row, data, n_family, formats, sv_caller='dragen', dup_gn=False):
+def add_data(ws, row, data, idx, n_family, formats, sv_caller='dragen', dup_gn=False):
     try:
-        rank, _, chr_, s, e, sv_type, qual, exon_span_tag, gn, sv_len, exon_span, dgv_gain, dgv_loss, gnomad, _, ddd_disease, _, phenotype, inher = data[:19]
+        # ["mut_type", "AMELIE", 'filter', "anno_id", "chr_", "pos_s", "pos_e", "sv_type", "qual", "exon_span_tag", "gn", "sv_len", "exon_span", "gain_af_max", "loss_af_max", "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance", "annot_ranking"]
+        rank, chr_, s, e, sv_type, qual, exon_span_tag, gn, sv_len, exon_span, gain_afmax, loss_afmax, gain_source, loss_source, phenotype = [data[idx[_]] for _ in ['AMELIE', 'chr_', 'pos_s', 'pos_e', 'sv_type', 'qual', 'exon_span_tag', 'gn', 'sv_len', 'exon_span', 'gain_af_max', 'loss_af_max', 'gain_source', 'loss_source', 'phenotype']]
     except:
-        print('wrong line format! ')
-        print(len(data[:19]))
+        print(f'wrong line format!, columns less than 19: {len(data)} ')
         print(data[:19])
     # exon_span_tag = '' if exon_span_tag == np.nan else exon_span_tag
-    cn_proband = data[20].replace('@', '\n')
+
+    col_in_proband = idx['annot_ranking'] + 1
+    cn_proband = data[col_in_proband].replace('@', '\n')
+
 
     if sv_caller == 'dragen':
-        cn_family = [_.replace('@', '\n') for _ in list(data[21:])]
+        cn_family = [_.replace('@', '\n') for _ in list(data[col_in_proband + 1:])]
     else:
-        cn_family = [_ for _ in list(data[21:])]
+        cn_family = [_ for _ in list(data[col_in_proband + 1:])]
 
     if len(cn_family) != n_family - 1:
         print(f'error, the family number count in file({len(cn_family)}) and Family info({n_family}) list are differnet !')
         sys.exit(1)
 
     pos = f'{s}-{e}'
-    dgv = f'{dgv_gain}/{dgv_loss}'
 
     comment = phenotype
 
@@ -350,7 +365,7 @@ def add_data(ws, row, data, n_family, formats, sv_caller='dragen', dup_gn=False)
     values = [
             ['', exon_span, exon_span_tag, ''],
             [qual, '', '', ''],
-            [gnomad, dgv, '', ''],
+            [gain_afmax, gain_source, loss_afmax, loss_source],  #['dup', 'dup_source', 'del', 'del_source']
             ['', '', '', ''],
             [rank, '✔', '', '']
     ]
