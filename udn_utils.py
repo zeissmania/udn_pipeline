@@ -286,7 +286,6 @@ class UDN_case():
         except:
             self.get_annot_col()
             cols = self.cols
-        header_added_col_n = len(self.header_prefix)
 
         fn_gene_comment = f'{pw_code}/omim.gene_comment.txt'
         fn_gene_description_omim = f'{pw_code}/omim.gene_description_omim.txt'
@@ -610,7 +609,6 @@ class UDN_case():
 
 
         # logger.info(f'OMIM query count={len(res)}')
-
 
 
         # tally the result
