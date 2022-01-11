@@ -1461,6 +1461,7 @@ UDN179293_Proband, UDN216310_Mother, UDN027382_Father (Case 222)"""
     return ' '.join(res)
 
 
+
 if __name__ == "__main__":
 
     import argparse as arg
@@ -1659,8 +1660,26 @@ if __name__ == "__main__":
         'Authorization': f'Token {token}',
     }
 
+
+    # get the current UDN list in current folder
+    udn_exist = {}  # key = pure_udn_id, v = folder name
+
+    folders = os.popen(f'ls -d */').read().split('\n')
+    for i in folders:
+        m = re.match(r'.*(UDN\d+)\W', i.rsplit('/', 1)[-1])
+        if m:
+            udn_exist[m.group(1).upper()] = i
+
+
     for udn_raw, udn, valid_family in validated:
-        os.system(f'mkdir -p {root}/{udn_raw}/origin 2>/dev/null')
+
+        if udn in udn_exist:
+            os.system(f'mv {udn_exist[udn]} {root}/{udn_raw}')
+
+            # rename the remote
+        else:
+            os.system(f'mkdir -p {root}/{udn_raw}/origin 2>/dev/null')
+
         os.chdir(f'{root}/{udn_raw}')
 
         logger = get_logger(f'{root}/{udn_raw}/{udn_raw}', level=args.v)
