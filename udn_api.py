@@ -1461,6 +1461,28 @@ UDN179293_Proband, UDN216310_Mother, UDN027382_Father (Case 222)"""
     return ' '.join(res)
 
 
+def upload_files(nodename, pw_accre_data, pw_accre_scratch, udn_raw, rename=False, udn_raw_old=None, initial=False):
+
+    if rename:
+        os.system(f"""sftp {nodename} <<< $'rename {pw_accre_data}/{udn_raw_old} {pw_accre_data}/{udn_raw};rename {pw_accre_scratch}/{udn_raw_old} {pw_accre_scratch}/{udn_raw};'
+        """)
+
+    # upload files
+    if initial:
+        logger.info(f'initial uploading to ACCRE: {udn_raw}')
+        os.system(f"""sftp {nodename} <<< $'mkdir {pw_accre_data}/{udn_raw}/origin/\\nmkdir {pw_accre_scratch}/{udn_raw}/\\nput -r * {pw_accre_data}/{udn_raw}/'  2>/dev/null >&2; touch {initial_upload_flag}""")
+    else:
+        fls = []  # file name can't contain space
+        fls.append(f'mkdir {pw_accre_data}/{udn_raw}/')
+        fls.append(f'mkdir {pw_accre_scratch}/{udn_raw}/')
+
+        for ifl in upload_file_list:
+            fls.append(f'put {ifl} {pw_accre_data}/{udn_raw}/')
+            fls.append(f'put {ifl} {pw_accre_scratch}/{udn_raw}/')
+        fls = '\\n'.join(fls)
+        logger.info(f'update {upload_file_list} to  ACCRE: {udn_raw}')
+        os.system(f"""sftp {nodename} <<< $'{fls}' >/dev/null 2>/dev/null""")
+
 
 if __name__ == "__main__":
 
@@ -1484,6 +1506,7 @@ if __name__ == "__main__":
     ps.add_argument('-showcred', help="""show the credential content and exit""", action='store_true')
     ps.add_argument('-reltable', '-rel', help="""force save the relative table, even in the parse_api_result mode""", action='store_true')
     ps.add_argument('-v', '-level', help="""set the logger level, default is info""", default='INFO', choices=['INFO', 'WARN', 'DEBUG', 'ERROR'])
+    ps.add_argument('-nodename', '-node', '-remote', help="remote node name, default is va", choices=['va', 'pc'])
     args = ps.parse_args()
     print(args)
 
@@ -1515,8 +1538,9 @@ if __name__ == "__main__":
     pw_script = os.path.realpath(__file__).rsplit('/', 1)[0]
 
 
+    nodename = args.nodename
     pw_accre_data = '/data/cqs/chenh19/udn'
-    pw_accre_scratch = '/fs0/members/chenh19/tmp/upload'
+    pw_accre_scratch = '/fs0/members/chenh19/tmp/upload' if nodename == 'va' else '/scratch/h_vangard_1/chenh19/udn/upload'
     # pw_accre_upload = pw_accre_scratch
 
     upload_file_list = ['pheno.keywords.txt', 'download.*.txt', 'download.*.md5']  # upload these files to scratch and data of ACCRE
@@ -1668,19 +1692,22 @@ if __name__ == "__main__":
     for i in folders:
         m = re.match(r'.*(UDN\d+)\W', i.rsplit('/', 1)[-1])
         if m:
-            udn_exist[m.group(1).upper()] = i
+            udn_exist[m.group(1).upper()] = re.sub('\/$', '', i)
 
 
     for udn_raw, udn, valid_family in validated:
 
         if udn in udn_exist:
             os.system(f'mv {udn_exist[udn]} {root}/{udn_raw}')
-
-            # rename the remote
+            rename_remote = True
+            udn_raw_old = udn_exist[udn].rsplit('/', 1)[-1]
         else:
             os.system(f'mkdir -p {root}/{udn_raw}/origin 2>/dev/null')
+            rename_remote = False
+            udn_raw_old = ''
 
-        os.chdir(f'{root}/{udn_raw}')
+        pw_case = f'{root}/{udn_raw}'
+        os.chdir(pw_case)
 
         logger = get_logger(f'{root}/{udn_raw}/{udn_raw}', level=args.v)
         logger.info(os.getcwd())
@@ -1708,44 +1735,14 @@ if __name__ == "__main__":
             logger.info(f'downloading CNV vcf file')
             os.system(f'bash download.cnv.{udn}.sh')
 
-        # upload files
+
         initial_upload_flag = 'origin/initial_uploaded'
         if upload and os.path.exists(fn_udn_api_pkl) and not force_upload and os.path.exists(initial_upload_flag):
-            fls = []  # file name can't contain space
-            fls.append(f'mkdir {pw_accre_data}/{udn_raw}/')
-            fls.append(f'mkdir {pw_accre_scratch}/{udn_raw}/')
+            initail_upload_toggle = False
 
-            for ifl in upload_file_list:
-                fls.append(f'put {ifl} {pw_accre_data}/{udn_raw}/')
-                fls.append(f'put {ifl} {pw_accre_scratch}/{udn_raw}/')
-            fls = '\\n'.join(fls)
-
-            logger.info(f'update {upload_file_list} to  ACCRE: {udn_raw}')
-            os.system(f"""sftp va <<< $'{fls}' >/dev/null 2>/dev/null""")
         else:
-            logger.info(f'initial uploading to ACCRE: {udn_raw}')
-            os.system(f"""sftp va <<< $'mkdir {pw_accre_data}/{udn_raw}/origin/\\nmkdir {pw_accre_scratch}/{udn_raw}/\\nput -r * {pw_accre_data}/{udn_raw}/'  2>/dev/null >&2; touch {initial_upload_flag}""")
+            initail_upload_toggle = True
 
-        fn_cnv_upload_flag = 'origin/cnv_uploaded'
-        if 'cnv' in update_aws_ft and not os.path.exists(fn_cnv_upload_flag):
-            # check cnv.vcf file on server
-            # here must link to the udn_raw folder and ls origin/*cnv.vcf.gz and not link to udn_raw/origin, because in the latter way, the return would not include the origin/ prefix, can't be used for later local set calc
-            cmd = f"""sftp va:{pw_accre_data}/{udn_raw}/ <<< 'ls origin/*cnv.vcf.gz' 2>/dev/null|sed '1,2d'"""
-            remote_cnv = os.popen(cmd).read().strip().split('\n')
-            remote_cnv = {_.strip() for _ in remote_cnv if _.strip()}
-            # print(remote_cnv)
-            # print(cmd)
-
-            local_cnv = set(glob.glob('origin/*cnv.vcf.gz'))
-            not_uploaded = local_cnv - remote_cnv
-            if len(not_uploaded) == 0:
-                logger.info(f'all CNV have been uploaded ({len(local_cnv)})')
-            else:
-                logger.warning(f'\ttotal CNV={len(local_cnv)}, not uploaded = {len(not_uploaded)}')
-                fls = '\\n'.join([f'put {_} {_}' for _ in not_uploaded])
-
-                cmd  = f"""sftp va:{pw_accre_data}/{udn_raw} <<< $'{fls}' >/dev/null;\ntouch {fn_cnv_upload_flag}"""
-                logger.info(cmd)
-                os.system(cmd)
+        upload_files(nodename, pw_accre_data, pw_accre_scratch, udn_raw, rename=rename_remote, udn_raw_old=udn_raw_old, initial=initail_upload_toggle)
 
         print('\n########################\n\n')
