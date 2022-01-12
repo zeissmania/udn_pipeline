@@ -1470,7 +1470,13 @@ def upload_files(nodename, pw_accre_data, pw_accre_scratch, udn_raw, rename=Fals
     # upload files
     if initial:
         logger.info(f'initial uploading to ACCRE: {udn_raw}')
-        os.system(f"""sftp {nodename} <<< $'mkdir {pw_accre_data}/{udn_raw}/origin/\\nmkdir {pw_accre_scratch}/{udn_raw}/\\nput -r * {pw_accre_data}/{udn_raw}/'  2>/dev/null >&2; touch {initial_upload_flag}""")
+        fls = []
+        for ifl in upload_file_list:
+            fls.append(f'put {ifl} {pw_accre_scratch}/{udn_raw}/')
+        fls = '\\n'.join(fls)
+
+        cmd = f"""sftp {nodename} <<< $'mkdir {pw_accre_data}/{udn_raw}/origin/\\nmkdir {pw_accre_scratch}/{udn_raw}/\\nput -r * {pw_accre_data}/{udn_raw}/\\n{fls}'  2>/dev/null >&2; touch {initial_upload_flag}"""
+        os.system(cmd)
     else:
         fls = []  # file name can't contain space
         fls.append(f'mkdir {pw_accre_data}/{udn_raw}/')
@@ -1480,7 +1486,7 @@ def upload_files(nodename, pw_accre_data, pw_accre_scratch, udn_raw, rename=Fals
             fls.append(f'put {ifl} {pw_accre_data}/{udn_raw}/')
             fls.append(f'put {ifl} {pw_accre_scratch}/{udn_raw}/')
         fls = '\\n'.join(fls)
-        logger.info(f'update {upload_file_list} to  ACCRE: {udn_raw}')
+        logger.info(f'update {upload_file_list} to  {nodename}: {udn_raw}')
         os.system(f"""sftp {nodename} <<< $'{fls}' >/dev/null 2>/dev/null""")
 
 
@@ -1527,7 +1533,7 @@ if __name__ == "__main__":
 
     pw_script = os.path.realpath(__file__).rsplit('/', 1)[0]
     lite = args.lite
-    upload = not args.noupload
+    upload = not args.noupload or force_upload
 
     if not args.fn_cred and os.path.exists('udn.credential.pkl.encrypt'):
         fn_cred = 'udn.credential.pkl.encrypt'
@@ -1690,21 +1696,25 @@ if __name__ == "__main__":
 
     folders = os.popen(f'ls -d */').read().split('\n')
     for i in folders:
-        m = re.match(r'.*(UDN\d+)\W', i.rsplit('/', 1)[-1])
+        i = re.sub(r'\/$', '', i).rsplit('/', 1)[-1]
+        m = re.match(r'.*(UDN\d+)(?:\W|$)', i)
         if m:
-            udn_exist[m.group(1).upper()] = re.sub('\/$', '', i)
+            udn_exist[m.group(1).upper()] = i
 
 
     for udn_raw, udn, valid_family in validated:
-
+        rename_remote = False
+        udn_raw_old = ''
         if udn in udn_exist:
-            os.system(f'mv {udn_exist[udn]} {root}/{udn_raw}')
-            rename_remote = True
             udn_raw_old = udn_exist[udn].rsplit('/', 1)[-1]
+            print(f'mv {root}/{udn_raw_old} {root}/{udn_raw}')
+            if udn_raw != udn_raw_old:
+                logger.warning(f'rename the folder, old = {udn_raw_old} , new = {udn_raw}')
+                os.system(f'mv {root}/{udn_raw_old} {root}/{udn_raw}')
+                rename_remote = True
         else:
             os.system(f'mkdir -p {root}/{udn_raw}/origin 2>/dev/null')
-            rename_remote = False
-            udn_raw_old = ''
+
 
         pw_case = f'{root}/{udn_raw}'
         os.chdir(pw_case)
@@ -1739,10 +1749,10 @@ if __name__ == "__main__":
         initial_upload_flag = 'origin/initial_uploaded'
         if upload and os.path.exists(fn_udn_api_pkl) and not force_upload and os.path.exists(initial_upload_flag):
             initail_upload_toggle = False
-
         else:
             initail_upload_toggle = True
 
-        upload_files(nodename, pw_accre_data, pw_accre_scratch, udn_raw, rename=rename_remote, udn_raw_old=udn_raw_old, initial=initail_upload_toggle)
+        if upload:
+            upload_files(nodename, pw_accre_data, pw_accre_scratch, udn_raw, rename=rename_remote, udn_raw_old=udn_raw_old, initial=initail_upload_toggle)
 
         print('\n########################\n\n')
