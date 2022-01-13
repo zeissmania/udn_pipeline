@@ -181,6 +181,10 @@ def build_upload_script_simple(pw, fn, remote_pw, fn_new=None):
     if not os.path.exists(fn):
         logger.warning(f'file not exist: {fn}')
         return 1
+
+    if os.path.exists(f'{pw}/shell_done/{fn_pure}.upload.sh'):
+        return 0
+
     fn_script = f'{pw}/shell/{fn_pure}.upload.sh'
     fn_status = f'{pw}/log/status.{fn_pure}.txt'
     with open(fn_script, 'w') as out:
