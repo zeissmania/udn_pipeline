@@ -721,7 +721,7 @@ def main(pw, script_list, info_file=None, remote_pw_in=None, updated_version_onl
     # parse the info file
     d, ct, script_list = parse_info_file(pw, info_file, remote_pw_in=remote_pw_in, ft=ft, updated_version_only=updated_version_only, script_list=script_list)
     if not lite:
-        build_script(pw, d)
+        build_script(pw, d, info_file)
     return ct, script_list
 
 
