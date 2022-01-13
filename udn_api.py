@@ -1487,6 +1487,7 @@ def upload_files(nodename, pw_accre_data, pw_accre_scratch, udn_raw, rename=Fals
             fls.append(f'put {ifl} {pw_accre_scratch}/{udn_raw}/')
         fls = '\\n'.join(fls)
         logger.info(f'update {upload_file_list} to  {nodename}: {udn_raw}')
+        logger.info(f'command = {fls}')
         os.system(f"""sftp {nodename} <<< $'{fls}' >/dev/null 2>/dev/null""")
 
 
