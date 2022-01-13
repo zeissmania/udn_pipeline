@@ -200,11 +200,12 @@ date +"%m-%d  %T">> {fn_status}
 
 if [[ "$remote_file_size" -eq "$local_size" ]];then
     echo {fn} successfully uploaded to {remote_pw}/  filesize=$local_size >> {fn_status}
+    mv "{fn_script}" {pw}/shell_done
 fi
 """)
 
 
-def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, updated_version_only=True):
+def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, updated_version_only=True, script_list=None):
     """
     the info file is like
     rel_to_proband\tfn\turl\tudn\tseq_type\tsize\tbuild\tmd5\turl_s3\tdate_upload\tremote_pw\n
@@ -213,9 +214,14 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
     ft  - a list, the file type for keep, default is fastq
     remote_base_dir, default is empty, would search from the root of the emedgen server , which is emg-auto-samples/Vanderbilt/upload/
     gzip only, a set, if the ext is found in this set, then, the file must be gziped to get involved. e.g. if vcf in gzip_only, then,  the file named .vcf$ would not be included
+
+    script_list,  in order to decide script run order across cases k = needdown, needup.
     """
     d = {}
     d_exist_all = {}
+
+
+    script_list = script_list or {'needdown': [], 'needup': []}
 
     if not isinstance(gzip_only, set):
         gzip_only = set()
@@ -430,6 +436,8 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                 del d[_][fn]
                 continue
             v = v1[fn]
+
+            fn_script = f'{pw}/shell/{fn}.download_upload.emedgene.sh'
             n_desired += 1
             if v['url'].lower() == 'na':
                 invalid_url.append(fn)
@@ -442,11 +450,12 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
 
             if not v['downloaded']:
                 need_upload.append(fn)
+                script_list['needdown'].append(fn_script)
                 # n_need_upload += 1
             else:
                 n_downloaded += 1
                 need_upload.append(fn)
-                # n_need_upload += 1
+                script_list['needup'].append(fn_script)
 
     n_need_upload = len(need_upload)
     logger.info(f'total files = {n_desired}, need_to_upload={n_need_upload}, already exist in server = {n_uploaded}, already downloaded = {n_downloaded}')
@@ -467,7 +476,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
 
     ct = {'total': n_desired, 'downloaded': n_downloaded, 'uploaded': n_uploaded, 'need_to_upload': n_need_upload}
 
-    return d, ct
+    return d, ct, script_list
 
 
 def refine_remote_pw(remote_pw):
@@ -675,7 +684,7 @@ def get_prj_name(pw):
         logger.error(f'invalid prj name specified, you may in the wrong working folder: {prj}, exit...')
         sys.exit(1)
 
-def main(pw, info_file=None, remote_pw_in=None, updated_version_only=True):
+def main(pw, script_list, info_file=None, remote_pw_in=None, updated_version_only=True):
     if not info_file:
         tmp = glob.glob(f'{pw}/download.info.*.txt')
         if len(tmp) == 0:
@@ -703,10 +712,10 @@ def main(pw, info_file=None, remote_pw_in=None, updated_version_only=True):
     for i in ['shell', 'shell_done', 'download', 'log']:
         os.makedirs(f'{pw}/{i}', exist_ok=True)
     # parse the info file
-    d, ct = parse_info_file(pw, info_file, remote_pw_in=remote_pw_in, ft=ft, updated_version_only=updated_version_only)
+    d, ct, script_list = parse_info_file(pw, info_file, remote_pw_in=remote_pw_in, ft=ft, updated_version_only=updated_version_only, script_list=script_list)
     if not lite:
         build_script(pw, d)
-    return ct
+    return ct, script_list
 
 
 if __name__ == "__main__":
@@ -795,6 +804,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     ct = {'total': 0, 'downloaded': 0, 'uploaded': 0, 'need_to_upload': 0}
+    script_list = {'needup': [], 'needdown': []}
 
     for ipw in pw:
         ipw = re.sub(r'/$', '', ipw)
@@ -803,9 +813,13 @@ if __name__ == "__main__":
         # logger.warning(f'path={ipw}')
         # continue
 
+        fn_md5 = glob.glob(f'{ipw}/shell/*.md5.upload.sh')
+        if len(fn_md5) > 0:
+            script_list['needup'].append(fn_md5[0])
+
         remote_base_prefix = f'{remote_base}/' if remote_base else ''
         remote_pw_in = remote_pw or f'{remote_base_prefix}{pw_core}'
-        ct_prj = main(ipw, remote_pw_in=remote_pw_in, updated_version_only=updated_version_only)
+        ct_prj, script_list = main(ipw, script_list, remote_pw_in=remote_pw_in, updated_version_only=updated_version_only)
 
         for k in ct:
             ct[k] += ct_prj[k]
@@ -814,3 +828,14 @@ if __name__ == "__main__":
 
     print('\n' + '#' * 50)
     print(json.dumps(ct, indent=4))
+
+
+    # build the script list
+    n_needup = len(script_list['needup'])
+    n_needdown = len(script_list['needdown'])
+
+    print(f'total scripts = {n_needup + n_needdown}')
+
+    with open(f'script_list.txt', 'w') as o:
+        print('\n'.join(script_list['needup']), file=o)
+        print('\n'.join(script_list['needdown']), file=o)
