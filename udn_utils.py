@@ -2191,7 +2191,7 @@ def run_omim_scrapy(gn, gn_omim_id, logger, res_prev=None, driver=None):
         try:
             gn_web = gn_web.text.rsplit(' ', 1)[-1]
         except:
-            logger.warning(f'gene name not found on website, OMIM_id={gn_omim_id}, gn={gn}, html={gn_web.}')
+            logger.warning(f'gene name not found on website, OMIM_id={gn_omim_id}, gn={gn}, html={gn_web}')
             return 0
 
         if gn_web != gn:
