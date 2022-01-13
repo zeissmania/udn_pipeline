@@ -1486,9 +1486,10 @@ def upload_files(nodename, pw_accre_data, pw_accre_scratch, udn_raw, rename=Fals
             fls.append(f'put {ifl} {pw_accre_data}/{udn_raw}/')
             fls.append(f'put {ifl} {pw_accre_scratch}/{udn_raw}/')
         fls = '\\n'.join(fls)
+        cmd = f"""sftp {nodename} <<< $'{fls}' >/dev/null 2>/dev/null"""
         logger.info(f'update {upload_file_list} to  {nodename}: {udn_raw}')
-        logger.info(f'command = {fls}')
-        os.system(f"""sftp {nodename} <<< $'{fls}' >/dev/null 2>/dev/null""")
+        logger.info(f'command = {cmd}')
+        os.system(cmd)
 
 
 if __name__ == "__main__":
@@ -1545,7 +1546,7 @@ if __name__ == "__main__":
     pw_script = os.path.realpath(__file__).rsplit('/', 1)[0]
 
 
-    nodename = args.nodename
+    nodename = args.nodename or 'va'
     pw_accre_data = '/data/cqs/chenh19/udn'
     pw_accre_scratch = '/fs0/members/chenh19/tmp/upload' if nodename == 'va' else '/scratch/h_vangard_1/chenh19/udn/upload'
     # pw_accre_upload = pw_accre_scratch
