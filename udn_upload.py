@@ -580,14 +580,14 @@ def build_script(pw, d, info_file):
 
             with open(fn_script, 'w') as out:
 
-                get_url = f"""awk -F "\\t" '$2=="{fn}"{{print $3}}' {info_file} """
-                print(get_url, file=o)
+                get_url = f"""url=$(awk -F "\\t" '$2=="{fn}"{{print $3}}' {info_file})"""
+                print(get_url, file=out)
 
                 if not skip_download and (args.force or not v['downloaded']):
                     if download_type == 'dropbox':
-                        print(f'dbxcli get "{url}"  "{fn_download}" > {pw}/log/download.{fn}.log 2>&1', file=out)
+                        print(f'dbxcli get "$url"  "{fn_download}" > {pw}/log/download.{fn}.log 2>&1', file=out)
                     else:
-                        print(f'wget "{url}" -c -O "{fn_download}" > {pw}/log/download.{fn}.log 2>&1', file=out)
+                        print(f'wget "$url" -c -O "{fn_download}" > {pw}/log/download.{fn}.log 2>&1', file=out)
 
                 print(f"""echo -n "" > {fn_status}""", file=out)
                 rm_cmd = ''
