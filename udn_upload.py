@@ -554,7 +554,7 @@ def refine_remote_pw(remote_pw):
         return remote_pw
 
 
-def build_script(pw, d):
+def build_script(pw, d, info_file):
     for _, v1 in d.items():
         for fn, v in v1.items():
             # {'size': size_exp, 'remote': f'{remote_pw}/{name}', 'url': url, 'downloaded': downloaded, 'uploaded': uploaded}
@@ -575,7 +575,14 @@ def build_script(pw, d):
 
             if url.lower() == 'na':
                 continue
+
+
+
             with open(fn_script, 'w') as out:
+
+                get_url = f"""awk -F "\\t" '$2=="{fn}"{{print $3}}' {info_file} """
+                print(get_url, file=o)
+
                 if not skip_download and (args.force or not v['downloaded']):
                     if download_type == 'dropbox':
                         print(f'dbxcli get "{url}"  "{fn_download}" > {pw}/log/download.{fn}.log 2>&1', file=out)
