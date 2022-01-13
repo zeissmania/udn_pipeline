@@ -755,7 +755,7 @@ if __name__ == "__main__":
     updated_version_only = not args.allversion
 
     if node_name.find('viccbiostat120') > -1:
-        dock = 'singularity -B /mnt exec /mnt/d/dock/centos.sif '
+        dock = 'singularity exec -B /mnt /mnt/d/dock/centos.sif '
     elif node_name.find('vampire') > -1:
         dock = 'singularity exec -B /fs0 /data/cqs/chenh19/dock/centos.sif '
 
