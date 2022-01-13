@@ -882,7 +882,7 @@ class UDN_case():
         elif machine_node.find('viccbiostat120') > -1:
             # personal desktop
             dock_path = '/mnt/d/dock/annotSV.sif'
-            mount = '-B /mnt/d'
+            mount = '-B /mnt/d -B /data'
         else:
             # dock_path = '/scratch/cqs/chenh19/dock/annotsv.sif'
             dock_path = '/data/cqs/chenh19/dock/annotsv.sif'
@@ -2186,12 +2186,12 @@ def run_omim_scrapy(gn, gn_omim_id, logger, res_prev=None, driver=None):
                 return 1
         r = bs(r, features='lxml')
 
-        gn_web = r.find('a', attrs={'oldtitle': 'HUGO Gene Nomenclature Committee.'})
+        gn_web = r.find('em', text=re.compile('HGNC Approved Gene Symbol'))
 
         try:
-            gn_web = gn_web.text
+            gn_web = gn_web.text.rsplit(' ', 1)[-1]
         except:
-            logger.warning(f'gene name not found on website, OMIM_id={gn_omim_id}, gn={gn}')
+            logger.warning(f'gene name not found on website, OMIM_id={gn_omim_id}, gn={gn}, html={gn_web.}')
             return 0
 
         if gn_web != gn:
