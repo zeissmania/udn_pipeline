@@ -57,7 +57,7 @@ sv_type_convert = {'<DEL>': 'deletion', '<DUP>': 'duplication'}
 
 # this one, excluded the data, data_end_flag and format
 col_keep_final = [
-    "anno_id", "chr_", "pos_s", "pos_e", "sv_len", "sv_type", "filter", "QUAL", "gn", "exon_span", 'exon_count',
+    "anno_id", "chr_", "pos_s", "pos_e", "sv_len", "sv_type", "filter", "QUAL", "gn", "exon_span",
     "gain_b_source", 'gain_b_af',
     "loss_b_source", 'loss_b_af',
     "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance",
@@ -342,7 +342,7 @@ class UDN_case():
 
             # logger.info(f'index# : {idx}\nheader={header}')
 
-            header_other_info = ['coord', 'sv_type', 'af_dgv_gain', 'af_dgv_loss', 'filter']
+            header_other_info = ['coord', 'sv_type', 'gain_af_max', 'loss_af_max', 'filter']
             for _ in header_other_info:
                 idx[_] = header.index(_)
 
@@ -438,6 +438,8 @@ class UDN_case():
         l_pheno = []
         l_pheno_raw = []
 
+        force_exact_match = {'mental', }  # the words in this set will force exact match
+
         with open(fn_pheno) as fp:
             for i in fp:
                 new = i.lower().split('#', 1)[0].strip()
@@ -447,6 +449,7 @@ class UDN_case():
 
                 a = re.split(r'\s+', new)
                 a = [_.strip() for _ in a if _.strip()]
+                a = [f'@{_}' if _ in force_exact_match else _ for _ in a]
 
                 if len(a) == 0:
                     continue
@@ -1147,7 +1150,7 @@ class UDN_case():
         size_new = os.path.getsize(vcf_new)
         size_old = os.path.getsize(vcf)
 
-        logger.info(f'AnnotSV: {sample_id}: {vcf_new}, size old = {size_old}, size new={size_new}')
+        logger.info(f'AnnotSV: {sample_id}: vcf new ={vcf_new}, size old = {size_old}, size new={size_new}')
 
         # new options
         # -overlap , Minimum overlap (%) between user features (User BED) and the annotated SV to be reported Range values: [0-100], default = 100
@@ -1173,9 +1176,6 @@ class UDN_case():
 
         # type_short = the type of this file, P/M/F/S
 
-        # ["anno_id", "chr_", "pos_s", "pos_e", "sv_type", "QUAL", "data", "gn", "sv_len", "exon_span",
-        #              "af_dgv_gain", "af_dgv_loss",  "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance",
-        #              "annot_ranking"]
         # treat the annot_SV_ranking column diffently between proband and parents
         # for the proband, we demand the rank >=2
         # for the parents, the rank have no limit
@@ -1326,7 +1326,7 @@ class UDN_case():
 
         out = open(f_anno_extract, 'w')
         header = ["filter", "anno_id", "chr_", "pos_s", "pos_e", "sv_type", "qual", "exon_span_tag", "gn", "sv_len", "exon_span",
-                "af_dgv_gain", "af_dgv_loss", "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance",
+                "gain_af_max", "loss_af_max", 'gain_source', 'loss_source', "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance",
                 "annot_ranking"]
 
         svtype1 = {}
@@ -1367,13 +1367,11 @@ class UDN_case():
             for i in fp:
                 a = i.strip().split('\t')
                 anno_id, chr_, pos_s, pos_e, sv_len, sv_type, \
-                _filter, qual, gn, exon_span, exon_count, \
+                _filter, qual, gn, exon_span, \
                 gain_b_source, gain_b_af, \
                 loss_b_source, loss_b_af, \
                 ddd_mode, ddd_disease, omim, \
                 phenotype, inheritance,annot_ranking = [a[col_keep[_]] for _ in col_keep_final]
-
-
 
                 # data = expon_span_tag/FORMAT
                 # sv_len = tx length (overlap of the SV and transcript)
@@ -1413,35 +1411,35 @@ class UDN_case():
 
                 # dgv gain
                 try:
-                    af_dgv_gain = float(gain_b_af) if gain_b_af else -1
-                    if af_dgv_gain == -1:
-                        af_dgv_gain = '-'
-                    elif af_dgv_gain >= 0.01:
-                        af_dgv_gain = f'{af_dgv_gain:.2f}'
+                    gain_af_max = float(gain_b_af) if gain_b_af else -1
+                    if gain_af_max == -1:
+                        gain_af_max = '-'
+                    elif gain_af_max >= 0.01:
+                        gain_af_max = f'{gain_af_max:.2f}'
                     else:
-                        af_dgv_gain = f'{af_dgv_gain:.4g}'
+                        gain_af_max = f'{gain_af_max:.4g}'
 
-                    # if af_dgv_gain != '-':
-                    #     af_dgv_gain = f'{af_dgv_gain}; {gain_b_source}'
+                    # if gain_af_max != '-':
+                    #     gain_af_max = f'{gain_af_max}; {gain_b_source}'
                 except:
-                    af_dgv_gain = 'NA'
-                    logger.warning('wrong af_dgv_gain format: af_dgv_gain={af_dgv_gain}  : {gn}  {anno_id}')
+                    gain_af_max = 'NA'
+                    logger.warning('wrong gain_af_max format: gain_af_max={gain_af_max}  : {gn}  {anno_id}')
 
                 # dgv loss
                 try:
-                    af_dgv_loss = float(loss_b_af)  if loss_b_af else -1
-                    if af_dgv_loss == -1:
-                        af_dgv_loss = '-'
-                    elif af_dgv_loss >= 0.01:
-                        af_dgv_loss = f'{af_dgv_loss:.2f}'
+                    loss_af_max = float(loss_b_af)  if loss_b_af else -1
+                    if loss_af_max == -1:
+                        loss_af_max = '-'
+                    elif loss_af_max >= 0.01:
+                        loss_af_max = f'{loss_af_max:.2f}'
                     else:
-                        af_dgv_loss = f'{af_dgv_loss:.4g}'
+                        loss_af_max = f'{loss_af_max:.4g}'
 
-                    # if af_dgv_loss != '-':
-                    #     af_dgv_loss = f'{af_dgv_loss}; {loss_b_source}'
+                    # if loss_af_max != '-':
+                    #     loss_af_max = f'{loss_af_max}; {loss_b_source}'
                 except:
-                    af_dgv_loss = 'NA'
-                    logger.warning('wrong af_dgv_loss format: af_dgv_loss={af_dgv_loss}  : {gn}  {anno_id}')
+                    loss_af_max = 'NA'
+                    logger.warning('wrong loss_af_max format: loss_af_max={loss_af_max}  : {gn}  {anno_id}')
 
                 # exons_span_tag
 
@@ -1545,7 +1543,7 @@ class UDN_case():
                     logger.error(copy_number_all)
                     sys.exit(1)
                 print('\t'.join([_filter, anno_id, chr_, pos_s, pos_e, sv_type, qual, exon_span_tag, gn,
-                                sv_len, exon_span, af_dgv_gain, af_dgv_loss,
+                                sv_len, exon_span, gain_af_max, loss_af_max, gain_b_source, loss_b_source,
                                 ddd_mode, ddd_disease, omim, phenotype, inheritance, annot_ranking, copy_number_all]), file=out)
         out.close()
         if len(svtype1) > 0:
@@ -1607,9 +1605,7 @@ class UDN_case():
             for i in fp:
                 n+=1
                 a = i.strip().split('\t')
-                # ["anno_id", "chr_", "pos_s", "pos_e", "sv_type", "qual", "exon_span_tag", "gn", "sv_len", "exon_span",
-                #     "af_dgv_gain", "af_dgv_loss",  "ddd_mode", "ddd_disease", "omim", "phenotype", "inheritance",
-                #     "annot_ranking", 'copy_number']
+
                 try:
                     chr_, s, e, sv_type, gn, cn = [a[_] for _ in idx]
                 except:
