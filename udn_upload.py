@@ -625,7 +625,7 @@ checklocal(){{
 
 }}
 
-checkremoet(){{
+checkremote(){{
     cd {pw}/download
     local_size=$(stat -c "%s" {fn_download} 2>/dev/null)
     # determine need to upload or not
