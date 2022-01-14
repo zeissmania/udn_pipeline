@@ -603,7 +603,7 @@ def build_script(pw, d, info_file):
 checklocal(){{
     local_size=$(stat -c "%s" {fn_download} 2>/dev/null)
     if [[ $local_size -eq 0 ]];then
-        rm {fn_download}
+        rm {fn_download} 2>/dev/null
         echo 1
         return
     fi
