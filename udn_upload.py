@@ -580,104 +580,121 @@ def build_script(pw, d, info_file):
             if url.lower() == 'na':
                 continue
 
-
-
             with open(fn_script, 'w') as out:
 
                 get_url = f"""url=$(awk -F "\\t" '$2=="{fn}"{{print $3}}' {info_file})"""
                 print(get_url, file=out)
-
-                if not skip_download and (args.force or not v['downloaded']):
-                    if download_type == 'dropbox':
-                        print(f'dbxcli get "$url"  "{fn_download}" > {pw}/log/download.{fn}.log 2>&1', file=out)
-                    else:
-                        print(f'wget "$url" -c -O "{fn_download}" > {pw}/log/download.{fn}.log 2>&1', file=out)
-
-                print(f"""echo -n "" > {fn_status}""", file=out)
                 rm_cmd = ''
                 if rm:
                     rm_cmd = f'    rm {fn_download}\n    rm {pw}/log/upload.{dest}.{fn}.log\n    rm {pw}/log/download.{fn}.log'
 
-                if dest == 'dropbox':
-                    print(f'{dock} dbxcli put {pw}/download/{fn} /{remote_pw}/{fn} > {pw}/log/upload.{dest}.{fn}.log 2>&1', file=out)
-                elif dest == 'emedgene':
-                    out.write(f"""
-local_size=$(stat -c "%s" {fn_download} 2>/dev/null)
-if [[ $local_size -eq 0 ]];then
-    echo empty file {fn_download}
-    rm {fn_download}
-    exit
-fi
 
-# check local file
-if [[ "{size_exp}" -ne "na" ]] & [[ "$local_size" -ne "{size_exp}" ]];then
-    echo local file not match with exp local_size=$local_size,  expected={size_exp}. skip uploading >> {fn_status}
-    exit
-fi
+                if download_type == 'dropbox':
+                   download_cmd = f'dbxcli get "$url"  "{fn_download}" > {pw}/log/download.{fn}.log 2>&1'
 
-# check md5sum
-if [[ ! -f {pw}/download/{fn}.md5 ]];then
-    md5sum  {fn_download} >{pw}/download/{fn}.md5 2>{pw}/download/{fn}.md5.log
-fi
+                   upload_cmd = f'{dock} dbxcli put {pw}/download/{fn} /{remote_pw}/{fn} > {pw}/log/upload.{dest}.{fn}.log 2>&1'
+                else:
+                    download_cmd = f'wget "$url" -c -O "{fn_download}" > {pw}/log/download.{fn}.log 2>&1'
 
-""")
-                    if ext == 'gz':
-                        out.write(f"""
-if [[ ! -f {pw}/download/{fn}.zcat.tail.txt ]];then
-    zcat {fn_download} |tail -20 >{pw}/download/{fn}.zcat.tail.txt 2>{pw}/download/{fn}.zcat.log
-fi
+                    upload_cmd = f'{dock} aws s3 cp {pw}/download/{fn} s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn} > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log'
 
-# # build the report
-# udn_fq_report {fn_download}  -tofile
 
-                        """)
-                    if not no_upload:
-                        cmd_tmp = '' if force_upload else f"""
+                cmd = f"""
+checklocal(){{
+    local_size=$(stat -c "%s" {fn_download} 2>/dev/null)
+    if [[ $local_size -eq 0 ]];then
+        rm {fn_download}
+        echo 1
+        return
+    fi
+
+    # check local file
+    if [[ "{size_exp}" -ne "na" ]] & [[ "$local_size" -ne "{size_exp}" ]];then
+        echo local file not match with exp local_size=$local_size,  expected={size_exp}. skip uploading >> {fn_status}
+        echo 1
+        return
+    else
+        # the local size is ok
+        echo 0
+    fi
+
+    # check md5sum
+    if [[ ! -f {pw}/download/{fn}.md5 ]];then
+        md5sum  {fn_download} >{pw}/download/{fn}.md5 2>{pw}/download/{fn}.md5.log
+    fi
+
+}}
+
+checkremoet(){{
+    cd {pw}/download
+    local_size=$(stat -c "%s" {fn_download} 2>/dev/null)
+    # determine need to upload or not
+    remote_file_size=$({dock} aws s3 ls emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn}|grep "{fn}$" | tr -s " "|cut -d " " -f 3)
+    if [[ "{size_exp}" != "na" ]] & [[ "$local_size" -ne "{size_exp}" ]];then
+        echo "wrong_size"
+    elif [[ "$remote_file_size" -eq "{size_exp}" ]];then
+        echo {fn} successfully uploaded to {remote_pw}/  filesize={size_exp} >> {fn_status}
+        echo already_uploaded
+    elif [[ "{size_exp}" = "na" ]] & [[ "$local_size" -eq "$remote_file_size" ]];then
+        echo size check is not specified, remote_file_size=$remote_file_size local_filesize=$local_size >> {fn_status}
+        echo already_uploaded
+    elif    [[ -z $remote_file_size ]];then
+        echo not uploaded yet  >> {fn_status}
+        echo upload
+    else
+        echo remote size not correct: remote = $remote_file_size, exp = {size_exp}
+        echo upload
+    fi
+
+}}
+
+postupload(){{
     mv {pw}/shell/{fn}.download_upload.{dest}.sh {pw}/shell_done/{fn}.download_upload.{dest}.sh
     {rm_cmd}
-    exit
-"""
-                        out.write(f"""
-cd {pw}/download
-# determine need to upload or not
-remote_file_size=$({dock} aws s3 ls emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn}|grep "{fn}$" | tr -s " "|cut -d " " -f 3)
-if [[ -z $remote_file_size ]];then
-   echo not uploaded yet  >> {fn_status}
-elif [[ "$remote_file_size" -eq "{size_exp}" ]];then
-    echo {fn} successfully uploaded to {remote_pw}/  filesize={size_exp} >> {fn_status}
-    {cmd_tmp}
-elif [[ "{size_exp}" = "na" ]] & [[ "$local_size" -eq "$remote_file_size" ]];then
-    echo size check is not specified, remote_file_size=$remote_file_size local_filesize=$local_size >> {fn_status}
-    {cmd_tmp}
-else
-    echo before uploading, file size not match: actual remote size=$remote_file_size, local_size=$local_size,  expected={size_exp}: {fn} >> {fn_status}
-    exit
+    exit 0
+}}
+
+
+
+download_status=$(checklocal)
+upload_status=$(checkremote)
+
+if [[ $upload_status = "already_uploaded" ]];then
+    postupload
+    exit 0
 fi
 
 
+if [[ $download_status -eq 1 ]];then
+    {download_cmd}
+    download_status=$(checklocal)
+    if [[ $download_status -eq 1 ]];then
+        echo download not completed >> {fn_status}
+        exit 1
+    fi
+fi
+
+
+# local size is ok, try upload
 echo start uploading >> {fn_status}
 date +"%m-%d  %T">> {fn_status}
-{dock} aws s3 cp {pw}/download/{fn} s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn} > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log
-echo upload completed
-date +"%m-%d  %T">> {fn_status}
-remote_file_size=$({dock} aws s3 ls emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn}|head -1|tr -s " "|cut -d " " -f 3)
-if [[ "$remote_file_size" -eq "{size_exp}" ]];then
-    echo {fn} successfully uploaded to {remote_pw}/  filesize={size_exp} >> {fn_status}
-    mv {pw}/shell/{fn}.download_upload.{dest}.sh {pw}/shell_done/{fn}.download_upload.{dest}.sh
-    {rm_cmd}
-    exit
-elif [[ "{size_exp}" = "na" ]];then
-    if [[ "$local_size" -eq "$remote_file_size" ]];then
-        echo size check is not specified, remote_file_size=$remote_file_size local_filesize=$local_size >> {fn_status}
-        mv {pw}/shell/{fn}.download_upload.{dest}.sh {pw}/shell_done/{fn}.download_upload.{dest}.sh
-        {rm_cmd}
-        exit
-    else
-        echo ERROR! localsize - $local_size  not match with remote size - $remote_file_size >> {fn_status}
-    fi
+
+{upload_cmd}
+echo upload finish >> {fn_status}
+date +"%m-%d  %T"  >> {fn_status}
+upload_status=$(checkremote)
+if [[ $upload_status = "already_uploaded" ]];then
+    postupload
+    exit 0
 else
-    echo after uploading, file size not match: local=$local_size , remote actual=$remote_file_size, expected={size_exp}: {fn} >> {fn_status}
-fi""")
+    echo "fail to upload"
+    exit 1
+fi
+
+                """
+                print(cmd, file=out)
+
+
 
 def get_prj_name(pw):
     # get project name, not used
