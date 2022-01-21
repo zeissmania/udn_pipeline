@@ -1373,8 +1373,7 @@ default:
         p_trailing = '_' + p_trailing if p_trailing else ''
         remote_pw = m[1] + p_trailing
 
-    out_info.write('rel_to_proband\tfn\turl\tudn\tseq_type\tsize\tbuild\tmd5\turl_s3\n')
-
+    out_info.write('rel_to_proband\tfn\turl\tudn\tseq_type\tsize\tbuild\tmd5\turl_s3\tupload_type\tdownload_type\tremote_pw\n')
 
     for rel_to_proband, irel in res.items():
         if not irel.get('files'):
