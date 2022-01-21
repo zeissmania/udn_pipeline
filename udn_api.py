@@ -696,13 +696,32 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
             completed = ifl['complete']
 
             try:
-                fl_loc = ifl['file_data']['locations'][0]
+                fl_loc = ifl['file_data']['locations']
                 fl_meta = ifl['file_data']['metadata']
             except:
                 logger.error(f"wrong file json: {ifl}")
-                sys.exit(1)
+                raise
+            else:
+                try:
+                    fl_loc = fl_loc[0]
+                except:
+                    fl_loc = 'NA'
+                    logger.warning(f'file_locations is empty : {fn}')
+
 
             fn = ifl['file_data']['filename']
+
+            if re.match(r'.+\.bai$', fn):
+                pass
+            elif re.match(r'.+\.bam$', fn):
+                pass
+            elif re.match(r'.+\.g?vcf', fn):
+                pass
+            elif re.match(r'.+\.fastq.gz$', fn):
+                pass
+            else:
+                logger.warning(f'unkown filetype: {sequence_type}: {fn}')
+                continue
 
             # use fileserviceuuid key, rather than the uuid key
             file_uuid = ifl['fileserviceuuid']
@@ -718,8 +737,8 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
                 fl_url = fl_loc['url']
                 fl_size = fl_loc['filesize']
             except:
-                logger.warning(f'unexpected fl_info {fn}: {fl_loc}')
-                fl_url = fl_size = 'NA'
+                # logger.debug(f'unexpected fl_info {fn}: {fl_loc}')
+                fl_url = fl_size = fl_loc
 
     #         metadata
     #                 sequenceid
@@ -738,17 +757,7 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
                 logger.warning(f'unexpected fl meta info  {fn}: {fl_meta}')
                 fl_assembly = fl_md5 = 'NA'
 
-            if re.match(r'.+\.bai$', fn):
-                pass
-            elif re.match(r'.+\.bam$', fn):
-                pass
-            elif re.match(r'.+\.g?vcf', fn):
-                pass
-            elif re.match(r'.+\.fastq.gz$', fn):
-                pass
-            else:
-                logger.warning(f'unkown filetype: {sequence_type}: {fn}')
-                continue
+
 
             # to get the actual amazon presined URL, there is a trick.
             # on each file URL, the click action is binded to
@@ -1488,7 +1497,7 @@ def upload_files(nodename, pw_accre_data, pw_accre_scratch, udn_raw, rename=Fals
         fls = '\\n'.join(fls)
         cmd = f"""sftp {nodename} <<< $'{fls}' >/dev/null 2>/dev/null"""
         logger.info(f'update {upload_file_list} to  {nodename}: {udn_raw}')
-        logger.info(f'command = {cmd}')
+        # logger.info(f'command = {cmd}')
         os.system(cmd)
 
 
@@ -1709,7 +1718,7 @@ if __name__ == "__main__":
         udn_raw_old = ''
         if udn in udn_exist:
             udn_raw_old = udn_exist[udn].rsplit('/', 1)[-1]
-            print(f'mv {root}/{udn_raw_old} {root}/{udn_raw}')
+            # print(f'mv {root}/{udn_raw_old} {root}/{udn_raw}')
             if udn_raw != udn_raw_old:
                 logger.warning(f'rename the folder, old = {udn_raw_old} , new = {udn_raw}')
                 os.system(f'mv {root}/{udn_raw_old} {root}/{udn_raw}')
