@@ -54,20 +54,20 @@ ft_convert.update({_: _ for _ in ft_convert.values()})
 def getlogger():
     import logging
     prefix = 'download_upload_udn'
-    fn_log = f'{prefix}.log'
-    fn_err = f'{prefix}.err'
+    fn_log = f'{prefix}.debug.log'
+    fn_err = f'{prefix}.info.log'
     fmt = logging.Formatter('%(asctime)s  %(levelname)-9s   %(funcName)-10s   line: %(lineno)-5s   %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(fmt)
     console.setLevel('INFO')
 
     fh_file = logging.FileHandler(fn_log, mode='w', encoding='utf8')
-    fh_err = logging.FileHandler(fn_err, mode='a', encoding='utf8')
+    fh_err = logging.FileHandler(fn_err, mode='w', encoding='utf8')
 
     fh_file.setLevel('DEBUG')
     fh_file.setFormatter(fmt)
 
-    fh_err.setLevel('ERROR')
+    fh_err.setLevel('INFO')
     fh_err.setFormatter(fmt)
 
     logger = logging.getLogger(__file__)
