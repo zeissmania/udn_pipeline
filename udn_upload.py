@@ -39,9 +39,11 @@ ps.add_argument('-lite', '-ck', help="""toggle, just check, donot build script""
 ps.add_argument('-force', '-f', help="""force create the shell file, even it already exist on the server""", action='store_true')
 ps.add_argument('-skip_download', '-skip', '-nodown', help="""skip download the files""", action='store_true')
 ps.add_argument('-allversion', '-all', help="""include all versions even the updated version exist""", action='store_true')
+ps.add_argument('-remote_flat', '-no_remote_sub_folder', '-flat', help="""don't create remote subfolders""", action='store_true')
 ps.add_argument('-force_upload', '-forceup', '-fu', help="""force upload the file to server, even the file size match with remote""", action='store_true')
 
 args = ps.parse_args()
+
 
 ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'gvcf', 'fq': 'fastq', 'vcf': 'vcf'}
 ft_convert.update({_: _ for _ in ft_convert.values()})
@@ -76,17 +78,17 @@ def getlogger():
     return logger
 
 
-def build_remote_subfolder(name):
+def build_remote_subfolder(name, dest):
     if demo:
         logger.info(f'demo mode, skip building remote subfolder')
         return 0
     if dest == 'dropbox':
         logger.info(f'\tcreating subfolder: {name}')
-        os.system(f'{dock} dbxcli mkdir {name}/ >>{dest}.create_folder.log 2>{dest}.create_folder.log')
+        os.system(f'{dock} dbxcli mkdir "{name}/" >>{dest}.create_folder.log 2>{dest}.create_folder.log')
     elif dest == 'emedgene':
         logger.info(f'building_subfolder Vanderbilt/upload/{name}/')
         # os.system(f'{dock} aws s3api put-object --profile {profile} --bucket emg-auto-samples --key Vanderbilt/upload/{name}/ >>{dest}.create_folder.log 2>{dest}.create_folder.log')
-        os.system(f'{dock} aws s3api put-object --bucket emg-auto-samples --key Vanderbilt/upload/{name}/ >>{dest}.create_folder.log 2>{dest}.create_folder.log')
+        os.system(f'{dock} aws s3api put-object --bucket emg-auto-samples --key "Vanderbilt/upload/{name}/" >>{dest}.create_folder.log 2>{dest}.create_folder.log')
 
 def get_file_extension(fn):
 
@@ -112,9 +114,9 @@ def get_remote_file_list(pw, dest, remote_pw):
     fn_exist = f'{pw}/remote.existing_files.{remote_pw_plain}.txt'
     # if not os.path.exists(fn_exist_complete):
     if dest == 'dropbox':
-        os.system(f'{dock} dbxcli ls -R /{remote_pw} -l > {fn_exist}')
+        os.system(f'{dock} dbxcli ls -R "/{remote_pw}" -l > {fn_exist}')
     elif dest == 'emedgene':
-        os.system(f'{dock} aws s3 ls emg-auto-samples/Vanderbilt/upload/{remote_pw}/ --recursive > {fn_exist}')
+        os.system(f'{dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}/" --recursive > {fn_exist}')
 
     d_exist = {}
     sub_folders = set()
@@ -191,14 +193,14 @@ def build_upload_script_simple(pw, fn, remote_pw, fn_new=None):
         out.write(f"""#! /usr/bin/env bash
 date +"%m-%d  %T">> {fn_status}
 local_size=$(stat -c "%s" {fn} 2>/dev/null)
-remote_file_size=$({dock} aws s3 ls emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_pure}|head -1|tr -s " "|cut -d " " -f 3)
+remote_file_size=$({dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_pure}"|head -1|tr -s " "|cut -d " " -f 3)
 
 if [[ "$local_size" -eq "$remote_file_size" ]];then
     echo already uploaded: {fn}
     exit 0
 fi
 
-{dock} aws s3 cp {fn} s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_pure} > {pw}/log/upload.{dest}.{fn_pure}.log 2>&1
+{dock} aws s3 cp {fn} "s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_pure}" > {pw}/log/upload.{dest}.{fn_pure}.log 2>&1
 echo upload completed > {pw}/log/upload.{dest}.{fn_pure}.log
 date +"%m-%d  %T">> {fn_status}
 
@@ -209,14 +211,14 @@ fi
 """)
 
 
-def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, updated_version_only=True, script_list=None):
+def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, updated_version_only=True, script_list=None, no_upload=False, remote_flat=False):
     """
     the info file is like
     rel_to_proband\tfn\turl\tudn\tseq_type\tsize\tbuild\tmd5\turl_s3\tdate_upload\tremote_pw\n
     the last column is optional
     return is a dict key = filename, value = dict,   url, remote_full_path, expected_size, download_type
     ft  - a list, the file type for keep, default is fastq
-    remote_base_dir, default is empty, would search from the root of the emedgen server , which is emg-auto-samples/Vanderbilt/upload/
+    remote_base_dir, default is empty, would search from the root of the emedgene server , which is emg-auto-samples/Vanderbilt/upload/
     gzip only, a set, if the ext is found in this set, then, the file must be gziped to get involved. e.g. if vcf in gzip_only, then,  the file named .vcf$ would not be included
 
     script_list,  in order to decide script run order across cases k = needdown, needup.
@@ -243,21 +245,22 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
         d_exist_all[remote_pw_in] = (d_exist, sub_folders)
 
     # build script for md5 file
-    fn_md5 = glob.glob(f'{pw}/download.*.md5')
-    if len(fn_md5) == 0:
-        logger.warning(f'expected md5 file not found')
-    else:
-        if len(fn_md5) > 1:
-            logger.warning(f'more than one md5 file found, only first would be uploaded: {fn_md5}')
-        fn_md5 = fn_md5[0]
-        fn_new = fn_md5.rsplit('/', 1)[-1].replace('download.', '')
-
-        if fn_new in d_exist:
-            logger.info(f'{fn_md5} already uploaded')
+    if not no_upload:
+        fn_md5 = glob.glob(f'{pw}/download.*.md5')
+        if len(fn_md5) == 0:
+            logger.warning(f'expected md5 file not found')
         else:
-            # build the script
-            # logger.info(f'upload md5 file')
-            build_upload_script_simple(pw, fn_md5, remote_pw_in, fn_new=fn_new)
+            if len(fn_md5) > 1:
+                logger.warning(f'more than one md5 file found, only first would be uploaded: {fn_md5}')
+            fn_md5 = fn_md5[0]
+            fn_new = fn_md5.rsplit('/', 1)[-1].replace('download.', '')
+
+            if fn_new in d_exist:
+                logger.info(f'{fn_md5} already uploaded')
+            else:
+                # build the script
+                # logger.info(f'upload md5 file')
+                build_upload_script_simple(pw, fn_md5, remote_pw_in, fn_new=fn_new)
 
     with open(info_file) as fp:
         header = fp.readline()
@@ -268,26 +271,64 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
             logger.error('file size not found in the info file header! exit')
             sys.exit(1)
 
+        idx = {}
+        for _ in ['upload_type', 'download_type', 'remote_pw']:
+            try:
+                idx[_] = a.index(_)
+            except:
+                idx[_] = 'NA'
+
+
         for i in fp:
             if not i.strip():
                 continue
             a = i.split('\t')
             a = [_.strip() for _ in a]
             try:
-                rel, fn, url, iudn, download_type = a[:5]
+                rel, fn, url, iudn = a[:4]
                 size_exp = a[idx_size]
             except:
                 logger.error(f'wrong info format: {a}')
                 continue
-            download_type = download_type.lower()
-            if download_type != 'dropbox':
-                download_type = 'wget'
+
+            download_type = 'wget'
+            try:
+                tmp = a[idx['download_type']].strip()
+                if tmp:
+                    download_type = tmp
+            except:
+                pass
+
+            fatal = 0
+            if download_type not in {'wget', 'dropbox'}:
+                logger.error(f'invalid download type: {download_type}, valid = wget or dropbox')
+                fatal = 1
+
+            upload_type = 'emedgene'
+            try:
+                tmp = a[idx['upload_type']].strip()
+                if tmp:
+                    upload_type = tmp
+            except:
+                pass
+
+            if upload_type not in {'emedgene', 'dropbox'}:
+                logger.error(f'invalid upload_type: {upload_type}, valid = emedgene or dropbox')
+                fatal = 1
+
+            if fatal:
+                sys.exit(1)
+
 
             # get the remote_pw
             try:
-                remote_pw = a[9]
+                remote_pw = a[idx['remote_pw']].strip()
+                if not remote_pw:
+                    if not remote_pw_in:
+                        logger.error('must specify the remote_pw, in info file or by parameter, exit..')
+                        return 1
+                    remote_pw = remote_pw_in
                 remote_pw = refine_remote_pw(remote_pw)
-
             except:
                 if not remote_pw_in:
                     logger.error('must specify the remote_pw, in info file or by parameter, exit..')
@@ -325,7 +366,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
             if iudn == 'na':
                 iudn = ''
             name = f'{rel}{iudn}'
-            name = re.sub(r'^[\W_]*(.*?)[\W_]*$', '\g<1>', name)
+            name = re.sub(r'^[\W_]*(.*?)[\W_]*$', r'\g<1>', name)
 
             # if url.lower() == 'na':
             #     logger.warning(f'URL = NA : {fn}')
@@ -363,7 +404,8 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                     logger.warning(f'file uploaded, but size not match. exp = {size_exp}, remote={size_remote}')
                     uploaded = 0
 
-            v = {'size': size_exp, 'download_type': download_type, 'url': url, 'remote': f'{remote_pw}/{name}', 'downloaded': downloaded or uploaded, 'uploaded': uploaded, 'size_remote': f'{size_remote:,}'}
+            remote_pw_final = f'{remote_pw}' if remote_flat else f'{remote_pw}/{name}'
+            v = {'size': size_exp, 'download_type': download_type, 'upload_type': upload_type, 'url': url, 'remote': remote_pw_final, 'downloaded': downloaded or uploaded, 'uploaded': uploaded, 'size_remote': f'{size_remote:,}'}
             try:
                 d[remote_pw][fn] = v
             except:
@@ -390,9 +432,9 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
     logger.debug(f'subfolder exp = {sub_folders_exp}')
 
     sub_folder_to_build = sub_folders_exp - sub_folders_exist
-    if not demo:
+    if not demo and not no_upload:
         for i in sub_folder_to_build:
-            build_remote_subfolder(i)
+            build_remote_subfolder(i, dest=upload_type)
     if len(sub_folder_to_build) > 0:
         logger.info(f'demo build remote subfolder {sub_folder_to_build}')
     else:
@@ -498,7 +540,7 @@ def refine_remote_pw(remote_pw):
 
     # get the remote folder list
     fn_all_folder = 'all_folders.txt'
-    os.system(f'{dock} aws s3 ls emg-auto-samples/Vanderbilt/upload/{remote_base_dir} > {fn_all_folder} ')
+    os.system(f'{dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_base_dir}" > {fn_all_folder} ')
     all_remote_folders = {}
     pattern = re.compile(r'.*(UDN\d+)(.*|$)')
     n = 0
@@ -558,7 +600,7 @@ def refine_remote_pw(remote_pw):
         return remote_pw
 
 
-def build_script(pw, d, info_file):
+def build_script(pw, d, info_file, no_upload=False):
     for _, v1 in d.items():
         for fn, v in v1.items():
             # {'size': size_exp, 'remote': f'{remote_pw}/{name}', 'url': url, 'downloaded': downloaded, 'uploaded': uploaded}
@@ -566,6 +608,7 @@ def build_script(pw, d, info_file):
             size_exp = v['size']
             remote_pw = v['remote']
             download_type = v['download_type']
+            upload_type = v['upload_type']
             ext = fn.rsplit('.', 1)[-1]
 
             fn_download = f'{pw}/download/{fn}'
@@ -591,13 +634,13 @@ def build_script(pw, d, info_file):
 
                 if download_type == 'dropbox':
                    download_cmd = f'dbxcli get "$url"  "{fn_download}" > {pw}/log/download.{fn}.log 2>&1'
-
-                   upload_cmd = f'{dock} dbxcli put {pw}/download/{fn} /{remote_pw}/{fn} > {pw}/log/upload.{dest}.{fn}.log 2>&1'
-                else:
+                elif download_type == 'wget':
                     download_cmd = f'wget "$url" -c -O "{fn_download}" > {pw}/log/download.{fn}.log 2>&1'
 
-                    upload_cmd = f'{dock} aws s3 cp {pw}/download/{fn} s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn} > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log'
-
+                if upload_type == 'dropbox':
+                    upload_cmd = f'{dock} dbxcli put {pw}/download/{fn} "/{remote_pw}/{fn}" > {pw}/log/upload.{dest}.{fn}.log 2>&1'
+                elif upload_type == 'emedgene':
+                    upload_cmd = f'{dock} aws s3 cp "{pw}/download/{fn}" "s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn}" > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log'
 
                 cmd = f"""
 checklocal(){{
@@ -624,12 +667,14 @@ checklocal(){{
     fi
 
 }}
-
+"""
+                if upload_type == 'emedgene':
+                    cmd += f"""
 checkremote(){{
     cd {pw}/download
     local_size=$(stat -c "%s" {fn_download} 2>/dev/null)
     # determine need to upload or not
-    remote_file_size=$({dock} aws s3 ls emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn}|grep "{fn}$" | tr -s " "|cut -d " " -f 3)
+    remote_file_size=$({dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn}"|grep "{fn}$" | tr -s " "|cut -d " " -f 3)
     if [[ "{size_exp}" != "na" ]] & [[ "$local_size" -ne "{size_exp}" ]];then
         echo "wrong_size"
     elif [[ "$remote_file_size" -eq "{size_exp}" ]];then
@@ -647,16 +692,33 @@ checkremote(){{
     fi
 
 }}
+"""
+                else:
+                    # there is no way for dropbox to get byte file size
+                    cmd += f"""
+checkremote(){{
+    file_exist_from_remote=$({dock} dbxcli ls -l "/{remote_pw}/"|grep "{fn}")
+    if [[ ! -z "$file_exist_from_remote" ]];then
+        echo alrady_uploaded
+    else
+        echo upload
+    fi
 
+}}
+
+                    """
+                cmd += f"""
 postupload(){{
     mv {pw}/shell/{fn}.download_upload.{dest}.sh {pw}/shell_done/{fn}.download_upload.{dest}.sh
     {rm_cmd}
     exit 0
 }}
 
-
-
 download_status=$(checklocal)
+
+"""
+                if not no_upload:
+                    cmd += f"""
 upload_status=$(checkremote)
 
 if [[ $upload_status = "already_uploaded" ]];then
@@ -664,6 +726,8 @@ if [[ $upload_status = "already_uploaded" ]];then
     exit 0
 fi
 
+"""
+                cmd += f"""
 
 if [[ $download_status -eq 1 ]];then
     {download_cmd}
@@ -673,7 +737,9 @@ if [[ $download_status -eq 1 ]];then
         exit 1
     fi
 fi
-
+"""
+                if not no_upload:
+                    cmd += f"""
 
 # local size is ok, try upload
 echo start uploading >> {fn_status}
@@ -690,10 +756,8 @@ else
     echo "fail to upload"
     exit 1
 fi
-
                 """
                 print(cmd, file=out)
-
 
 
 def get_prj_name(pw):
@@ -712,7 +776,7 @@ def get_prj_name(pw):
         logger.error(f'invalid prj name specified, you may in the wrong working folder: {prj}, exit...')
         sys.exit(1)
 
-def main(pw, script_list, info_file=None, remote_pw_in=None, updated_version_only=True):
+def main(pw, script_list, info_file=None, remote_pw_in=None, updated_version_only=True, no_upload=False, remote_flat=False):
     if not info_file:
         tmp = glob.glob(f'{pw}/download.info.*.txt')
         if len(tmp) == 0:
@@ -732,7 +796,6 @@ def main(pw, script_list, info_file=None, remote_pw_in=None, updated_version_onl
     pw = re.sub('/$', '', pw)
     remote_pw_in = remote_pw_in or pw.rsplit('/', 1)[-1]
 
-
     # print(f'pw={pw}, info={info_file} remote_pw_in={remote_pw_in}')
     # return 0
 
@@ -740,9 +803,9 @@ def main(pw, script_list, info_file=None, remote_pw_in=None, updated_version_onl
     for i in ['shell', 'shell_done', 'download', 'log']:
         os.makedirs(f'{pw}/{i}', exist_ok=True)
     # parse the info file
-    d, ct, script_list = parse_info_file(pw, info_file, remote_pw_in=remote_pw_in, ft=ft, updated_version_only=updated_version_only, script_list=script_list)
+    d, ct, script_list = parse_info_file(pw, info_file, remote_pw_in=remote_pw_in, ft=ft, updated_version_only=updated_version_only, script_list=script_list, no_upload=no_upload, remote_flat=remote_flat)
     if not lite:
-        build_script(pw, d, info_file)
+        build_script(pw, d, info_file, no_upload=no_upload)
     return ct, script_list
 
 
@@ -754,6 +817,8 @@ if __name__ == "__main__":
     convert2 = {'emedgene': 'emedgene', 'em': 'emedgene', 'ed':'emedgene', 'pacbio': 'pacbio', 'pac': 'pacbio'}
     dest = convert1[args.dest]
     demo = args.demo
+
+    remote_flat = args.remote_flat
     lite = args.lite
     if lite:
         demo=True
@@ -842,12 +907,12 @@ if __name__ == "__main__":
         # continue
 
         fn_md5 = glob.glob(f'{ipw}/shell/*.md5.upload.sh')
-        if len(fn_md5) > 0:
+        if len(fn_md5) > 0 and not no_upload:
             script_list['needup'].append(fn_md5[0])
 
         remote_base_prefix = f'{remote_base}/' if remote_base else ''
         remote_pw_in = remote_pw or f'{remote_base_prefix}{pw_core}'
-        ct_prj, script_list = main(ipw, script_list, remote_pw_in=remote_pw_in, updated_version_only=updated_version_only)
+        ct_prj, script_list = main(ipw, script_list, remote_pw_in=remote_pw_in, updated_version_only=updated_version_only, no_upload=no_upload, remote_flat=remote_flat)
 
         for k in ct:
             ct[k] += ct_prj[k]

@@ -1888,7 +1888,6 @@ class UDN_case():
 
             header_list = header_raw.split('\t')
             idx = [header_list.index(_) for _ in ['chr_', 'pos_s', 'pos_e', 'gn']]
-
             print(header, file=final)
 
             family_sv_cache = {}
@@ -2011,8 +2010,7 @@ class UDN_case():
                 #     continue
                 # elif amelie == -99:  # not found in amelie but foudn in udn_match
                 #     amelie = 999
-
-                res = f'{coord}\tna\tna\t\t{amelie}\t{i}\t'
+                res = f'{coord}\tna\tna\t\t{amelie}\t{i}'
                 res_suffix_cn = []
                 res_suffix_gn = []
                 res_suffix_sv_type = []
@@ -2026,9 +2024,8 @@ class UDN_case():
 
                 res_suffix = res_suffix_cn + res_suffix_gn + res_suffix_sv_type + res_suffix_overlap
 
-                res_suffix = '\t'.join(res_suffix)
-
-                res += res_suffix
+                res = [res] + res_suffix
+                res = '\t'.join(res)
                 print(res, file=final)
         final.close()
 
@@ -2038,6 +2035,7 @@ class UDN_case():
 
         import pandas as pd
         df = pd.read_csv(merged_table, sep='\t')
+
         # try:
         #     df['coord'] =  df['chr_'] + ':' + df['pos_s'].astype(str) + "-" + df['pos_e'].astype(str)
         # except:
