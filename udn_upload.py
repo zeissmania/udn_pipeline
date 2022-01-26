@@ -15,6 +15,21 @@ input = info file. columns
 8=md5, no effect
 9=url_s3, no effect
 10=optional, remote pw
+
+the following columns are must for the info file
+'rel_to_proband', 'fn', 'url', 'udn', 'size'
+
+optional = 'upload_type', 'download_type', 'remote_pw'
+
+rule of remote pw
+
+1. get relative(rel) and pure_udn(iudn) info from info.text
+2. get the root remote_pw path, first check the  column remote_pw,
+if not found, then used the remote_pw_in, the default folder
+
+name = f'{rel}{iudn}'
+remote_pw_final = f'{remote_pw}' if remote_flat else f'{remote_pw}/{name}'
+
 """
 import os, sys, re, glob
 import json
@@ -235,8 +250,16 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
     ft = ft or ['fastq']
     # remote_base_pw = set()
 
+    fn_all_folder = 'all_folders.txt'
+    try:
+        os.unlink(fn_all_folder)
+    except:
+        pass
+
     logger.info(f'remote_pw_in={remote_pw_in}')
     remote_pw_in = refine_remote_pw(remote_pw_in)
+
+
     logger.info(f'remote_pw afer refine={remote_pw_in}')
     try:
         d_exist, sub_folders = d_exist_all[remote_pw_in]
@@ -262,17 +285,12 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                 # logger.info(f'upload md5 file')
                 build_upload_script_simple(pw, fn_md5, remote_pw_in, fn_new=fn_new)
 
+    logger.info('start parsing')
     with open(info_file) as fp:
         header = fp.readline()
         a = [_.strip() for _ in header.split('\t')]
-        try:
-            idx_size = a.index('size')
-        except:
-            logger.error('file size not found in the info file header! exit')
-            sys.exit(1)
-
         idx = {}
-        for _ in ['upload_type', 'download_type', 'remote_pw']:
+        for _ in ['upload_type', 'download_type', 'remote_pw', 'rel_to_proband', 'fn', 'url', 'udn', 'size']:
             try:
                 idx[_] = a.index(_)
             except:
@@ -285,11 +303,11 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
             a = i.split('\t')
             a = [_.strip() for _ in a]
             try:
-                rel, fn, url, iudn = a[:4]
-                size_exp = a[idx_size]
+                rel, fn, url, iudn, size_exp = [a[idx[_]] for _ in ['rel_to_proband', 'fn', 'url', 'udn', 'size']]
             except:
                 logger.error(f'wrong info format: {a}')
-                continue
+                logger.error(f'idx = {idx}')
+                raise
 
             download_type = 'wget'
             try:
@@ -328,7 +346,8 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                         logger.error('must specify the remote_pw, in info file or by parameter, exit..')
                         return 1
                     remote_pw = remote_pw_in
-                remote_pw = refine_remote_pw(remote_pw)
+                else:
+                    remote_pw = refine_remote_pw(remote_pw)
             except:
                 if not remote_pw_in:
                     logger.error('must specify the remote_pw, in info file or by parameter, exit..')
@@ -336,6 +355,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                 remote_pw = remote_pw_in
 
             # remote_base_pw.add(remote_pw)
+
 
             try:
                 d_exist, sub_folders = d_exist_all[remote_pw]
@@ -367,6 +387,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                 iudn = ''
             name = f'{rel}{iudn}'
             name = re.sub(r'^[\W_]*(.*?)[\W_]*$', r'\g<1>', name)
+
 
             # if url.lower() == 'na':
             #     logger.warning(f'URL = NA : {fn}')
@@ -404,6 +425,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                     logger.warning(f'file uploaded, but size not match. exp = {size_exp}, remote={size_remote}')
                     uploaded = 0
 
+
             remote_pw_final = f'{remote_pw}' if remote_flat else f'{remote_pw}/{name}'
             v = {'size': size_exp, 'download_type': download_type, 'upload_type': upload_type, 'url': url, 'remote': remote_pw_final, 'downloaded': downloaded or uploaded, 'uploaded': uploaded, 'size_remote': f'{size_remote:,}'}
             try:
@@ -423,6 +445,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
         sub_folders_exist |= i
 
     logger.debug(f'remote existing subfolders = {sub_folders_exist}')
+
 
     sub_folders_exp = set()
     for v1 in d.values():
@@ -540,7 +563,8 @@ def refine_remote_pw(remote_pw):
 
     # get the remote folder list
     fn_all_folder = 'all_folders.txt'
-    os.system(f'{dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_base_dir}" > {fn_all_folder} ')
+    if not os.path.exists(fn_all_folder):
+        os.system(f'{dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_base_dir}" > {fn_all_folder} ')
     all_remote_folders = {}
     pattern = re.compile(r'.*(UDN\d+)(.*|$)')
     n = 0
@@ -630,7 +654,6 @@ def build_script(pw, d, info_file, no_upload=False):
                 rm_cmd = ''
                 if rm:
                     rm_cmd = f'    rm {fn_download}\n    rm {pw}/log/upload.{dest}.{fn}.log\n    rm {pw}/log/download.{fn}.log'
-
 
                 if download_type == 'dropbox':
                    download_cmd = f'dbxcli get "$url"  "{fn_download}" > {pw}/log/download.{fn}.log 2>&1'
@@ -930,5 +953,6 @@ if __name__ == "__main__":
     print(f'total scripts = {n_needup + n_needdown}')
 
     with open(f'script_list.txt', 'w') as o:
-        print('\n'.join(script_list['needup']), file=o)
-        print('\n'.join(script_list['needdown']), file=o)
+        for k in ['needup', 'needdown']:
+            if len(script_list[k]) > 0:
+                print('\n'.join(script_list[k]), file=o)
