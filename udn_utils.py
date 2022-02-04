@@ -474,6 +474,7 @@ class UDN_case():
             for symbol, word in symbol_to_word.items():
                 s = re.sub(symbol, f'**{word}**', s)
             s = re.sub(r'\*\*\*\*', '**', s)
+            s = re.sub(r'\*\*\s+\*\*', ' ', s)
             # # **developmental **delay**,
             # s = re.sub(r'\*\*(\w[^*]*?\s)\*\*(\w[^*]*?)\w\*\*', r' **\g<1>\g<2>**', s)
             # # s = re.sub(r'\*\*\s+\*\*', ' ', s)
@@ -515,6 +516,8 @@ class UDN_case():
             comment_compact = comment.lower().replace('\n', '')
             comment_list = comment.split('\n')
             comment_list = [_.strip() for _ in comment_list]
+
+            comment_list = ['### ' + icomment if icomment[:2] == '**' and icomment[-2:] == '**' else icomment for icomment in comment_list]
 
             # query the phenotype
             highlighted_words = set() | redundant_words
@@ -646,10 +649,11 @@ class UDN_case():
             if len(match) > 0:
                 gene_match.add(gn)
                 n1 += 1
-
                 print(f'## {n1}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\n{match}\n{partial_match}\n{copy_number}', file=out_full_match)
                 print(comment, file=out_full_match)
                 print('#' * 50 + '\n\n\n', file=out_full_match)
+
+
         for v in res2:
             gn = v[0]
             if gn in gene_match:
