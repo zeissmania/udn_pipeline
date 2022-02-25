@@ -637,7 +637,7 @@ class UDN_case():
                 logger.debug(f'gene with no OMIM description: {gn}')
                 continue
             n3 += 1
-            print(f'## {n3}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\n{match}\n{partial_match}\n{copy_number}\n\n### main', file=out_all_genes)  # all genes
+            print(f'## {n3}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\n{match}\n{partial_match}\n{copy_number}\n\n### main\n\n', file=out_all_genes)  # all genes
             print(comment, file=out_all_genes)
             print('#' * 50 + '\n\n\n', file=out_all_genes)
 
@@ -649,7 +649,7 @@ class UDN_case():
             if len(match) > 0:
                 gene_match.add(gn)
                 n1 += 1
-                print(f'## {n1}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\n{match}\n{partial_match}\n{copy_number}\n\n### main', file=out_full_match)
+                print(f'## {n1}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\n{match}\n{partial_match}\n{copy_number}\n\n### main\n\n', file=out_full_match)
                 print(comment, file=out_full_match)
                 print('#' * 50 + '\n\n\n', file=out_full_match)
 
@@ -662,7 +662,7 @@ class UDN_case():
             partial_match = '\n'.join(partial_match)
             if len(partial_match) > 0:
                 n2 += 1
-                print(f'## {n2}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\n{partial_match}{copy_number}\n\n### main', file=out_partial_match)
+                print(f'## {n2}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\n{partial_match}{copy_number}\n\n### main\n\n', file=out_partial_match)
                 print(comment, file=out_partial_match)
                 print('#' * 50 + '\n\n\n', file=out_partial_match)
         out_full_match.close()
