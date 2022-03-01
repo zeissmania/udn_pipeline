@@ -427,6 +427,8 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
 
 
             remote_pw_final = f'{remote_pw}' if remote_flat else f'{remote_pw}/{name}'
+            remote_pw_final = re.sub(r'/$', '', remote_pw_final)
+
             v = {'size': size_exp, 'download_type': download_type, 'upload_type': upload_type, 'url': url, 'remote': remote_pw_final, 'downloaded': downloaded or uploaded, 'uploaded': uploaded, 'size_remote': f'{size_remote:,}'}
             try:
                 d[remote_pw][fn] = v
