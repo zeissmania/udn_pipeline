@@ -329,7 +329,7 @@ def format_comment(comment):
     return '\n\n'.join(tmp)
 
 
-def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_passed_in=None, sequence_type_desired=None, demo=False, get_aws_ft=None, udn_raw=None, valid_family=None, lite_mode=None, udn_proband=None, gzip_only=None, driver=None, sv_caller='dragen'):
+def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_passed_in=None, sequence_type_desired=None, demo=False, get_aws_ft=None, udn_raw=None, valid_family=None, lite_mode=None, udn_proband=None, gzip_only=None, driver=None, sv_caller='dragen', newname_prefix=None):
     """
     rel_to_proband, if run as proband, this is None, otherwize, this func is called during geting the relatives of proband, and specified
     info_passed_in,  {'affected': rel_aff, 'seq_status': have_seq}   include the affect state, sequenced_state, only valid when called during geting the relatives of proband, and specified
@@ -802,7 +802,7 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
 
     if rel_to_proband == 'Proband':
         try:
-            parse_api_res(res_all, cookie_token=cookie_token, udn_raw=udn_raw, valid_family=valid_family, driver=driver, sv_caller=sv_caller)
+            parse_api_res(res_all, cookie_token=cookie_token, udn_raw=udn_raw, valid_family=valid_family, driver=driver, sv_caller=sv_caller, newname_prefix=newname_prefix)
         except:
             logger.error(f'fail to parse the result dict, try again')
             raise
@@ -1023,7 +1023,7 @@ def validate_download_link(url):
 
     # return True
 
-def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None, demo=False, udn_raw=None, valid_family=None, gzip_only=None, driver=None, sv_caller='dragen'):
+def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None, demo=False, udn_raw=None, valid_family=None, gzip_only=None, driver=None, sv_caller='dragen', newname_prefix=None):
     """
     res = {proband: {}, relative: [{family1}, {family2}]}
     1. build a report for the proband
@@ -1373,8 +1373,10 @@ default:
         p_trailing = '_' + p_trailing if p_trailing else ''
         remote_pw = m[1] + p_trailing
 
-    out_info.write('rel_to_proband\tfn\turl\tudn\tseq_type\tsize\tbuild\tmd5\turl_s3\tupload_type\tdownload_type\tremote_pw\n')
+    out_info.write('rel_to_proband\tfn\trename\turl\tudn\tseq_type\tsize\tbuild\tmd5\turl_s3\tupload_type\tdownload_type\tremote_pw\n')
 
+
+    check_dup = {}
     for rel_to_proband, irel in res.items():
         if not irel.get('files'):
             continue
@@ -1386,6 +1388,15 @@ default:
             size = ifl['size']
             build = ifl['build']
             md5 = ifl['md5']
+            if newname_prefix and re.match(r'.+\.vcf', fn):
+                newname = f'{newname_prefix}_{rel_to_proband}'
+                try:
+                    n_prev = check_dup[newname]
+                except:
+                    check_dup[newname] = 0
+                else:
+                    check_dup[newname] += 1
+                    newname = f'{newname}_{n_prev + 1}'
 
             seq_type = ifl.get('seq_type')
 
@@ -1406,7 +1417,7 @@ default:
             elif other_download:
                 out_other.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
 
-            out_info.write(f'{rel_to_proband}\t{fn}\t{url}\t{udn}\t{seq_type}\t{size}\t{build}\t{md5}\t{url_s3}\n')
+            out_info.write(f'{rel_to_proband}\t{fn}\t{newname}\t{url}\t{udn}\t{seq_type}\t{size}\t{build}\t{md5}\t{url_s3}\n')
             out_md5.write(f'{md5}  {fn}\n')
 
     try:
@@ -1523,6 +1534,8 @@ if __name__ == "__main__":
     ps.add_argument('-reltable', '-rel', help="""force save the relative table, even in the parse_api_result mode""", action='store_true')
     ps.add_argument('-v', '-level', help="""set the logger level, default is info""", default='INFO', choices=['INFO', 'WARN', 'DEBUG', 'ERROR'])
     ps.add_argument('-nodename', '-node', '-remote', help="remote node name, default is va", choices=['va', 'pc'])
+    ps.add_argument('-rename', '-newname', help="rename the case name to this, only valid for vcf file, number should match with prj number", nargs='*')
+
     args = ps.parse_args()
     print(args)
 
@@ -1530,6 +1543,9 @@ if __name__ == "__main__":
 
     force_upload = args.force_upload
     sv_caller = args.sv_caller
+
+    newname_prefix_l = args.rename
+
 
     save_rel_table = args.reltable
     headless = not args.show
@@ -1711,8 +1727,14 @@ if __name__ == "__main__":
         if m:
             udn_exist[m.group(1).upper()] = i
 
+    if newname_prefix_l:
+        if len(newname_prefix_l) != len(validated):
+            logger.error(f'number of newname label ({len(newname_prefix_l)}) should match number of cases({len(validated)}), quit...')
+    else:
+        newname_prefix_l = [None for _ in validated]
 
-    for udn_raw, udn, valid_family in validated:
+    for tmp, newname_prefix in zip(validated, newname_prefix_l):
+        udn_raw, udn, valid_family = tmp
         rename_remote = False
         udn_raw_old = ''
         if udn in udn_exist:
@@ -1724,7 +1746,6 @@ if __name__ == "__main__":
                 rename_remote = True
         else:
             os.system(f'mkdir -p {root}/{udn_raw}/origin 2>/dev/null')
-
 
         pw_case = f'{root}/{udn_raw}'
         os.chdir(pw_case)
@@ -1742,12 +1763,12 @@ if __name__ == "__main__":
             else:
                 renew_amazon_link = args.renew
 
-            driver = parse_api_res(res, cookie_token=cookie_token, update_aws_ft=update_aws_ft, renew_amazon_link=renew_amazon_link, demo=demo, udn_raw=udn_raw, valid_family=valid_family, gzip_only=gzip_only, driver=driver, sv_caller=sv_caller)
+            driver = parse_api_res(res, cookie_token=cookie_token, update_aws_ft=update_aws_ft, renew_amazon_link=renew_amazon_link, demo=demo, udn_raw=udn_raw, valid_family=valid_family, gzip_only=gzip_only, driver=driver, sv_caller=sv_caller, newname_prefix=newname_prefix)
 
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
         else:
-            res, driver = get_all_info(udn, cookie_token=cookie_token, demo=demo, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite, udn_proband=udn, gzip_only=gzip_only, driver=driver, sv_caller=sv_caller)
+            res, driver = get_all_info(udn, cookie_token=cookie_token, demo=demo, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite, udn_proband=udn, gzip_only=gzip_only, driver=driver, sv_caller=sv_caller, newname_prefix=newname_prefix)
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
 

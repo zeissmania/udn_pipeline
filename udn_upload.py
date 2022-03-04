@@ -290,7 +290,10 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
         header = fp.readline()
         a = [_.strip() for _ in header.split('\t')]
         idx = {}
-        for _ in ['upload_type', 'download_type', 'remote_pw', 'rel_to_proband', 'fn', 'url', 'udn', 'size']:
+        for _ in ['upload_type', 'download_type', 'remote_pw', 'rel_to_proband', 'fn', 'url', 'udn', 'size', 'rename']:
+        # rename, if set, will change both the filename and vcf header of this file to this (if no relative suffix found, will also add the relative)
+        # rename is only valid for vcf files.
+
             try:
                 idx[_] = a.index(_)
             except:
@@ -389,6 +392,16 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
             name = re.sub(r'^[\W_]*(.*?)[\W_]*$', r'\g<1>', name)
 
 
+            rename = None
+            try:
+                tmp = a[idx['rename']].strip()
+                if tmp and ext == 'vcf':
+                    rename = tmp
+                    if not re.match('.*(father|dad|mother|mom|sister|brother|sibling|mate|pate|cousin|uncle|aunt)', rename):
+                        rename = f'{rename}_{rel}'
+            except:
+                pass
+
             # if url.lower() == 'na':
             #     logger.warning(f'URL = NA : {fn}')
 
@@ -429,7 +442,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
             remote_pw_final = f'{remote_pw}' if remote_flat else f'{remote_pw}/{name}'
             remote_pw_final = re.sub(r'/$', '', remote_pw_final)
 
-            v = {'size': size_exp, 'download_type': download_type, 'upload_type': upload_type, 'url': url, 'remote': remote_pw_final, 'downloaded': downloaded or uploaded, 'uploaded': uploaded, 'size_remote': f'{size_remote:,}'}
+            v = {'size': size_exp, 'download_type': download_type, 'upload_type': upload_type, 'url': url, 'remote': remote_pw_final, 'downloaded': downloaded or uploaded, 'uploaded': uploaded, 'size_remote': f'{size_remote:,}', 'rename': rename}
             try:
                 d[remote_pw][fn] = v
             except:
@@ -636,6 +649,7 @@ def build_script(pw, d, info_file, no_upload=False):
             download_type = v['download_type']
             upload_type = v['upload_type']
             ext = fn.rsplit('.', 1)[-1]
+            rename = v['rename']
 
             fn_download = f'{pw}/download/{fn}'
             # fn_download_chunk = fn_download.replace('.gz', '')
@@ -661,11 +675,6 @@ def build_script(pw, d, info_file, no_upload=False):
                    download_cmd = f'dbxcli get "$url"  "{fn_download}" > {pw}/log/download.{fn}.log 2>&1'
                 elif download_type == 'wget':
                     download_cmd = f'wget "$url" -c -O "{fn_download}" > {pw}/log/download.{fn}.log 2>&1'
-
-                if upload_type == 'dropbox':
-                    upload_cmd = f'{dock} dbxcli put {pw}/download/{fn} "/{remote_pw}/{fn}" > {pw}/log/upload.{dest}.{fn}.log 2>&1'
-                elif upload_type == 'emedgene':
-                    upload_cmd = f'{dock} aws s3 cp "{pw}/download/{fn}" "s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn}" > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log'
 
                 cmd = f"""
 checklocal(){{
@@ -763,6 +772,21 @@ if [[ $download_status -eq 1 ]];then
     fi
 fi
 """
+                # rename the vcf and bgzip
+                if rename:
+                    fn = f'{rename}.vcf.gz'
+                    cmd += f"""
+# rename the fq file
+bcftools view {fn_download}|bcftools reheader -s  <(echo "{rename}") |bgzip > {pw}/download/{fn}.tmp
+mv {pw}/download/{fn}.tmp {pw}/download/{fn}
+bgzip -r {pw}/download/{fn}
+                    """
+
+                if upload_type == 'dropbox':
+                    upload_cmd = f'{dock} dbxcli put {pw}/download/{fn} "/{remote_pw}/{fn}" > {pw}/log/upload.{dest}.{fn}.log 2>&1'
+                elif upload_type == 'emedgene':
+                    upload_cmd = f'{dock} aws s3 cp "{pw}/download/{fn}" "s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn}" > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log'
+
                 if not no_upload:
                     cmd += f"""
 
@@ -783,7 +807,7 @@ else
 fi
                 """
                 print(cmd, file=out)
-
+            os.chmod(fn_script, 0o755)
 
 def get_prj_name(pw):
     # get project name, not used
