@@ -1388,7 +1388,8 @@ default:
             size = ifl['size']
             build = ifl['build']
             md5 = ifl['md5']
-            if newname_prefix and re.match(r'.+\.vcf', fn):
+            newname = ''
+            if newname_prefix and re.match(r'.+\.vcf', fn.lower()) and not re.match(r'(cnv|joint)', fn.lower()):
                 newname = f'{newname_prefix}_{rel_to_proband}'
                 try:
                     n_prev = check_dup[newname]
@@ -1772,7 +1773,7 @@ if __name__ == "__main__":
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
 
-        if not lite:
+        if not lite and 'cnv' in update_aws_ft:
             logger.info(f'downloading CNV vcf file')
             os.system(f'bash download.cnv.{udn}.sh')
 
