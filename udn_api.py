@@ -322,7 +322,6 @@ def get_file_extension(fn):
         logger.warning(f'unclear file type: {fn}')
         return None, None
 
-
 def format_comment(comment):
     tmp = [_.strip() for _ in comment.split('\n') if _.strip()]
     tmp = [f'#### {_}' if len(_) < 50 and _[-1] == ':' else _ for _ in tmp]
@@ -553,8 +552,8 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
                 rel_seq += 1
                 rel_to_proband_tmp = f'{rel_to_proband_tmp}#{rel_seq}'
 
-
-            res_all, driver = get_all_info(rel_udn, cookie_token, rel_to_proband=rel_to_proband_tmp, res_all=res_all, info_passed_in={'affected': rel_aff, 'seq_status': have_seq}, demo=demo, get_aws_ft=get_aws_ft, valid_family=valid_family, lite_mode=lite_mode, udn_proband=udn_proband, driver=driver)
+# sequence_type_desired=None, demo=False, get_aws_ft=None, udn_raw=None, valid_family=None, lite_mode=None, udn_proband=None, gzip_only=None, driver=None, sv_caller='dragen', newname_prefix=None
+            res_all, driver = get_all_info(rel_udn, cookie_token, rel_to_proband=rel_to_proband_tmp, res_all=res_all, info_passed_in={'affected': rel_aff, 'seq_status': have_seq}, sequence_type_desired=sequence_type_desired, demo=demo, get_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite_mode, udn_proband=udn_proband, gzip_only=gzip_only, driver=driver, sv_caller=sv_caller, newname_prefix=newname_prefix)
             # logger.info(res_all.keys())
 
         # patient dignosis
@@ -615,8 +614,14 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
     files = []
     res['bayler_report'] = []
 
+
+    seq_type_available = [seq_type_convert[json['sequencing_type']] for json in json_all]
+
+
     for json in json_all:
         seq_id = json["id"]
+        res.setdefault('seq_id', []).append(seq_id)
+
         sequence_type_raw = json['sequencing_type']
         try:
             sequence_type = seq_type_convert[sequence_type_raw]
@@ -626,6 +631,8 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
 
         if sequence_type in sequence_type_desired  or'all' in  sequence_type_desired or sequence_type == 'reanalysis':
             logger.info(f'desired seq type found: {sequence_type}')
+        elif len(set(sequence_type_desired) & set(seq_type_available)) == 0:
+            logger.info(f'no desired seq type found, will use whichever seq type found: available type = {seq_type_available}')
         else:
             logger.warning(f'{rel_to_proband}: skipped due to unmatch sequence type, seq_id = {seq_id}, desired={sequence_type_desired} found={sequence_type}')
             continue
@@ -720,7 +727,7 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
             elif re.match(r'.+\.fastq.gz$', fn):
                 pass
             else:
-                logger.warning(f'unkown filetype: {sequence_type}: {fn}')
+                logger.debug(f'unkown filetype: {sequence_type}: {fn}')
                 continue
 
             # use fileserviceuuid key, rather than the uuid key
@@ -1481,12 +1488,11 @@ UDN179293_Proband, UDN216310_Mother, UDN027382_Father (Case 222)"""
     return ' '.join(res)
 
 
-def upload_files(nodename, pw_accre_data, pw_accre_scratch, udn_raw, rename=False, udn_raw_old=None, initial=False):
+def upload_files(nodename, pw_accre_data, pw_accre_scratch, udn_raw, rename=False, udn_raw_old=None, initial=False, upload_only=False):
 
     if rename:
         os.system(f"""sftp {nodename} <<< $'rename {pw_accre_data}/{udn_raw_old} {pw_accre_data}/{udn_raw};rename {pw_accre_scratch}/{udn_raw_old} {pw_accre_scratch}/{udn_raw};'
         """)
-
     # upload files
     if initial:
         logger.info(f'initial uploading to ACCRE: {udn_raw}')
@@ -1494,16 +1500,25 @@ def upload_files(nodename, pw_accre_data, pw_accre_scratch, udn_raw, rename=Fals
         for ifl in upload_file_list:
             fls.append(f'put {ifl} {pw_accre_scratch}/{udn_raw}/')
         fls = '\\n'.join(fls)
+        sftp_cmd = ''
+        if not upload_only:
+            sftp_cmd += f"""mkdir {pw_accre_data}/{udn_raw}/origin/\\nput -r * {pw_accre_data}/{udn_raw}/"""
 
-        cmd = f"""sftp {nodename} <<< $'mkdir {pw_accre_data}/{udn_raw}/origin/\\nmkdir {pw_accre_scratch}/{udn_raw}/\\nput -r * {pw_accre_data}/{udn_raw}/\\n{fls}'  2>/dev/null >&2; touch {initial_upload_flag}"""
+        sftp_cmd += f"mkdir {pw_accre_scratch}/{udn_raw}/\\n{fls}"
+
+        cmd = f"sftp {nodename} <<< $'{sftp_cmd}' 2>/dev/null >&2;touch {initial_upload_flag}"
+
         os.system(cmd)
     else:
         fls = []  # file name can't contain space
-        fls.append(f'mkdir {pw_accre_data}/{udn_raw}/')
+        if not upload_only:
+            fls.append(f'mkdir {pw_accre_data}/{udn_raw}/')
         fls.append(f'mkdir {pw_accre_scratch}/{udn_raw}/')
 
         for ifl in upload_file_list:
-            fls.append(f'put {ifl} {pw_accre_data}/{udn_raw}/')
+            if not upload_only:
+                fls.append(f'put {ifl} {pw_accre_data}/{udn_raw}/')
+
             fls.append(f'put {ifl} {pw_accre_scratch}/{udn_raw}/')
         fls = '\\n'.join(fls)
         cmd = f"""sftp {nodename} <<< $'{fls}' >/dev/null 2>/dev/null"""
@@ -1512,24 +1527,40 @@ def upload_files(nodename, pw_accre_data, pw_accre_scratch, udn_raw, rename=Fals
         os.system(cmd)
 
 
+def parse_seq_url(res):
+    for rel_to_proband, v1 in res.items():
+        print(rel_to_proband)
+        try:
+            urls = [f'https://gateway.undiagnosed.hms.harvard.edu/patient/sequence/{_}/files/' for _ in v1['seq_id']]
+        except:
+            logger.error(f'seq ID not found in API result, please check')
+            break
+
+        print('\t' + '\n\t'.join(urls))
+
+
+
 if __name__ == "__main__":
 
     import argparse as arg
     from argparse import RawTextHelpFormatter
     ps = arg.ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
     ps.add_argument('udn', help="""one or multiple UDN ID, sep by space, could also contain the prefix, eg. 11_UDN123456.  if only selected family number are needed, append with @, eg. UDN123@UDN456_father@UDN_789@mother, in this case, other family member would not be resolved""", nargs='*')
+    ps.add_argument('-pw', help='working path, default is udn/cases, if use current folder, specify as . or pwd', default=None)
     ps.add_argument(
         '-fn_cred', '-cred',
         help="""filename for the credential file, must include the UDN token, login email, login username(vunetID), login_password""")
     ps.add_argument('-create', '-encry', '-enc', help="""enter into create credential mode""", action='store_true')
     ps.add_argument('-sv_caller', '-svcaller', '-svsoftware', help="""the software used for sv calling, default=dragen, alt=pacbio""", default='dragen', choices=['pacbio', 'dragen'])
     ps.add_argument('-update_cred', '-uc',  help="""update the credential info""", action='store_true')
-    ps.add_argument('-demo', help="""do not resolve the amazon link, just check the raw link. apply to both post and new query""", action='store_true')
+    ps.add_argument('-url', '-urlonly', '-ckfls', help='get the files URL only (for each family member) and quit', action='store_true'),
+    ps.add_argument('-demo', help="""don't resolve the aws download URL""", action='store_true')
     ps.add_argument('-ft', help="""could be multiple, if specified, would only update the amazon URL for these file types, if gzip only, add the .gz suffix. e.g. vcf.gz  would not match .vcf$""", nargs='*', default=None)
     ps.add_argument('-renew', '-new', '-update', help="""flag, update the amazon shared link. default is not renew""", action='store_true')
     ps.add_argument('-lite', help="""flag, donot download the cnv files and the bayler report""", action='store_true')
     ps.add_argument('-noupload', '-noup', help="""don't upload the files to ACCRE""", action='store_true')
     ps.add_argument('-force_upload', '-fu', help="""force upload all files to ACCRE""", action='store_true')
+    ps.add_argument('-upload_only', '-uo', help="""only upload the files to upload folder, not to the data analysis folder""", action='store_true')
     ps.add_argument('-show', '-chrome', '-noheadless', help="""disable headless mode""", action='store_true')
     ps.add_argument('-showcred', help="""show the credential content and exit""", action='store_true')
     ps.add_argument('-reltable', '-rel', help="""force save the relative table, even in the parse_api_result mode""", action='store_true')
@@ -1551,7 +1582,9 @@ if __name__ == "__main__":
     save_rel_table = args.reltable
     headless = not args.show
     if platform == 'darwin':
-        root = '/Users/files/work/cooperate/udn/cases'
+        root = args.pw or '/Users/files/work/cooperate/udn/cases'
+        if root.lower() in ['.', 'pwd']:
+            root = os.getcwd()
         os.chdir(root)
     else:
         logger.info('platform= {platform}')
@@ -1569,6 +1602,9 @@ if __name__ == "__main__":
 
     demo = args.demo
     pw_script = os.path.realpath(__file__).rsplit('/', 1)[0]
+    urlonly = args.url
+
+    upload_only = args.upload_only
 
 
     nodename = args.nodename or 'va'
@@ -1763,7 +1799,12 @@ if __name__ == "__main__":
                 renew_amazon_link = False
             else:
                 renew_amazon_link = args.renew
+            # url only
+            if urlonly:
+                parse_seq_url(res)
+                continue
 
+            # regular
             driver = parse_api_res(res, cookie_token=cookie_token, update_aws_ft=update_aws_ft, renew_amazon_link=renew_amazon_link, demo=demo, udn_raw=udn_raw, valid_family=valid_family, gzip_only=gzip_only, driver=driver, sv_caller=sv_caller, newname_prefix=newname_prefix)
 
             with open(fn_udn_api_pkl, 'wb') as out:
@@ -1772,6 +1813,10 @@ if __name__ == "__main__":
             res, driver = get_all_info(udn, cookie_token=cookie_token, demo=demo, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite, udn_proband=udn, gzip_only=gzip_only, driver=driver, sv_caller=sv_caller, newname_prefix=newname_prefix)
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
+
+            if urlonly:
+                parse_seq_url(res)
+                continue
 
         if not lite and 'cnv' in update_aws_ft:
             logger.info(f'downloading CNV vcf file')
@@ -1785,6 +1830,6 @@ if __name__ == "__main__":
             initail_upload_toggle = True
 
         if upload:
-            upload_files(nodename, pw_accre_data, pw_accre_scratch, udn_raw, rename=rename_remote, udn_raw_old=udn_raw_old, initial=initail_upload_toggle)
+            upload_files(nodename, pw_accre_data, pw_accre_scratch, udn_raw, rename=rename_remote, udn_raw_old=udn_raw_old, initial=initail_upload_toggle, upload_only=upload_only)
 
         print('\n########################\n\n')
