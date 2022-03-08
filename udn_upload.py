@@ -396,11 +396,19 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
             try:
                 tmp = a[idx['rename']].strip()
                 if tmp and ext == 'vcf':
+                    m_tmp = re.match(r'.*\b(indel|snp)([a-z]*)[\W_]', fn, flags=re.I)
+                    if m_tmp:
+                        rename_suffix = '_' + ''.join(m_tmp.groups())
+                    else:
+                        rename_suffix = ''
+
                     rename = tmp
-                    if not re.match('.*(father|dad|mother|mom|sister|brother|sibling|mate|pate|cousin|uncle|aunt)', rename):
-                        rename = f'{rename}_{rel}'
+                    if not re.match('.*(father|dad|mother|mom|sister|brother|sibling|mate|pate|cousin|uncle|aunt|proband)', rename.lower()):
+                        rename = f'{rename}_{rel[:-1]}{rename_suffix}'
             except:
+                raise
                 pass
+
 
             # if url.lower() == 'na':
             #     logger.warning(f'URL = NA : {fn}')
@@ -665,7 +673,7 @@ def build_script(pw, d, info_file, no_upload=False):
 
             with open(fn_script, 'w') as out:
 
-                get_url = f"""url=$(awk -F "\\t" '$2=="{fn}"{{print $3}}' {info_file})"""
+                get_url = f"""url=$(awk -F "\\t" '$2=="{fn}" {{print $4}}' {info_file})"""
                 print(get_url, file=out)
                 rm_cmd = ''
                 if rm:
@@ -775,10 +783,13 @@ fi
                 # rename the vcf and bgzip
                 if rename:
                     fn = f'{rename}.vcf.gz'
+                    # prev command is
+                    # bcftools view --no-version {fn_download}|bcftools reheader -s  <(echo "{rename}") |bgzip > {pw}/download/{fn}.tmp
+                    # mv {pw}/download/{fn}.tmp {pw}/download/{fn}
+
                     cmd += f"""
 # rename the fq file
-bcftools view {fn_download}|bcftools reheader -s  <(echo "{rename}") |bgzip > {pw}/download/{fn}.tmp
-mv {pw}/download/{fn}.tmp {pw}/download/{fn}
+vcf_deid {fn_download} -newname {rename} |bgzip > {pw}/download/{fn}
 bgzip -r {pw}/download/{fn}
                     """
 
