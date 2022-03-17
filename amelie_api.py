@@ -36,8 +36,6 @@ def create_patient(taskname, genelist, pheno_hpo_list):
             'phenotypesArea': "\n".join(pheno_hpo_list),
             'genotypesArea': '\n'.join(genelist),
 
-            # 'genotypesArea': '\n'.join(genelist),
-            # 'phenotypesArea': '\n'.join(hpo)
             })
 
     return r.json()['patient_id']
@@ -318,9 +316,88 @@ def get_response(prj, genelist, pheno_hpo_list):
     print(f'Fail to get response from AMELIE. timeout={timeout}s')
     return 0
 
+def query_genelist_api(data):
+    url = 'https://amelie.stanford.edu/api/gene_list_api/'
+    r = requests.post(
+        url,
+        verify=False,
+        data=data)
+    try:
+        return r.json()
+    except:
+        return 0
 
 
-def main(prj, genelist, pheno_hpo_list, pheno_for_match, pw=None, pw_main=None, force=False):
+def main(prj, genelist, pheno_hpo_list, pw, force=False):
+    # force toggle, run the parse and query process even if the file already exist
+    print('\tnow running amelie')
+    pw = pw or os.getcwd()
+
+    # print(\tgenelist)
+    if not isinstance(genelist, list):
+        genelist = open(genelist).read().strip().split('\n')
+        genelist = [_.strip() for _ in genelist if _.strip()]
+    # print(f'\tlen genelist = {len(genelist)}')
+
+    # print(\tpheno_hpo_list)
+    if not isinstance(pheno_hpo_list, list):
+        pheno_hpo_list = open(pheno_hpo_list).read().strip().split('\n')
+        pheno_hpo_list = [_.strip() for _ in pheno_hpo_list if _.strip()]
+    phenotypes = ','.join(pheno_hpo_list)
+
+    n_genes = len(genelist)
+
+    # print(f'\tlen HPO list = {len(pheno_hpo_list)}')
+    json_pdict = f'{prj}.amelie.pkl'
+    json_res = []  # is a list of list. each  element is a gene, like
+
+    # ['CACNA1C',
+    # [['26227324', 36.348135596969556],  # pid, score
+    # ['28211989', 28.82416813203869],
+    # ['27034553', 27.804954354849674],
+    # ['22106044', 25.36226509548468],
+    # ['33985586', 24.464163141829033]]]
+    if not os.path.exists(json_pdict) or force:
+        # deal with the situation that gene list larger than 1000
+        n_gene_k = int(n_genes/1000)
+        genelist_new = []
+        for i in range(n_gene_k):
+            genelist_new.append(genelist[1000 * i: 1000 * (i+1)])
+        if n_genes % 1000 > 0:
+            genelist_new.append(genelist[n_gene_k * 1000:])
+
+        for i, igenelist in enumerate(genelist_new):
+            data = {'patientName': f'{prj}_{i}',
+                    'phenotypes': phenotypes,
+                    'genes': ','.join(igenelist),
+              }
+            tmp = query_genelist_api(data)
+            if tmp:
+                json_res.extend(tmp)
+            else:
+                print('ERROR, fail to get AMELIE result')
+        with open(json_pdict, 'wb') as o:
+            pickle.dump(json_res, file=o)
+
+    else:
+        print('amelie.pkl exist: {json_pdict}')
+        # json_res = eval(open(json_pdict).read())
+        json_res = pickle.load(open(json_pdict, 'rb'))
+
+    gene_score = []
+    for i in json_res:
+        gn = i[0]
+        scores = sorted([_[1] for _ in i[1]], reverse=True)
+        gene_score.append(f'{gn}\t{scores[0]:.2f}')
+
+    fn_amelie_lite = f'{pw}/{prj}.amelie.lite.txt'
+    print(fn_amelie_lite)
+    with open(fn_amelie_lite, 'w') as o:
+        print('\n'.join(gene_score), file=o)
+
+
+
+def main_old(prj, genelist, pheno_hpo_list, pheno_for_match, pw=None, pw_main=None, force=False):
     # force toggle, run the parse and query process even if the file already exist
     print('\tnow running amelie')
     pw = pw or os.getcwd()

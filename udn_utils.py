@@ -959,7 +959,7 @@ class UDN_case():
                     logger.warning(f'multiple vcf ({len(vcf)}) found, would use the file named as "updated" ')
                 else:
                     logger.error(
-                    f'multiple({len(vcf)}) VCF file for {v["lb"]}  {sample_id} under {vcf_file_path} found, please check \n\t{vcf} ')
+                    f'multiple({len(vcf)}) VCF file for {v}, UDN={sample_id} under {vcf_file_path} found, please check \n\t{vcf} ')
                     exit_flag = 1
         if exit_flag:
             sys.exit(1)
@@ -1665,10 +1665,6 @@ class UDN_case():
             bad_genes = line_count(f'{pw}/err_amelie.{prj}.genes_not_added.txt')
             logger.warning(f'AMELIE missing genes: {bad_genes}/{total_genes} not included in AMELIE query')
 
-        if os.path.exists(f'{pw}/err_amelie.{prj}.HPO_not_added.txt'):
-            bad_hpo = line_count(f'{pw}/err_amelie.{prj}.HPO_not_added.txt')
-            logger.warning(f'AMELIE missing HPOs: {bad_hpo}/{total_hpo} not included in AMELIE query')
-
 
     def query_amelie(self, force=False) -> 'build all the amelie result files':
         """
@@ -1679,10 +1675,18 @@ class UDN_case():
         logger = self.logger
 
         fn = f'{pw}/{prj}.amelie.lite.txt'
+
         if os.path.exists(fn) and not force:
-            logger.info('amelie query already done')
-            self.check_amelie_missing()
-            return 0
+            try:
+                self.amelie_dict = self.get_amelie_dict()
+            except:
+                logger.info(f'rerun amelie query')
+                os.system(f'rm {fn} 2>/dev/null')
+                force=True
+            else:
+                logger.info('amelie query already done')
+                # self.check_amelie_missing()
+                return 0
         logger.info('getting information from AMELIE')
 
         fn_genelist = f'{pw}/{intermediate_folder}/{prj}.genelist'
@@ -1694,8 +1698,10 @@ class UDN_case():
         if total_genes > 1000:
             logger.warning(f'the gene list for AMELIE is larger than 1000, ({total_genes}), would split the genelist')
 
-        amelie_api.main(prj, fn_genelist, fn_hop_pure_id, self.pheno_file_select, f'{pw}/{intermediate_folder}', pw_main=pw, force=force)
-        self.check_amelie_missing()
+        # main(prj, genelist, pheno_hpo_list, pw=None, pw_main=None, force=False)
+        amelie_api.main(prj, fn_genelist, fn_hop_pure_id, pw=pw, force=force)
+        logger.info('amelie done')
+        # self.check_amelie_missing()
 
         # # link the final amelie files
         # os.system(f'ln {pw}/{intermediate_folder}/{prj}.amelie.matched_query.txt {pw} 2>/dev/null')
@@ -1711,14 +1717,15 @@ class UDN_case():
         logger = self.logger
         fn = f'{pw}/{prj}.amelie.lite.txt'
 
-        if not os.path.exists(fn):
-            logger.error(f'amelie result not found: {fn}, would use dummy amelie score')
-            fn_genelist = f'{pw}/{intermediate_folder}/{prj}.genelist'
-            return {gn.strip(): 0 for gn in open(fn_genelist) if gn.strip()}
-
-        d_amelie = [_.strip().split('\t') for _ in open(fn)]
-        d_amelie = {k: v for k, v in d_amelie}
-        logger.info(f'AMELIE count = {len(d_amelie)}')
+        try:
+            d_amelie = [_.strip().split('\t') for _ in open(fn)]
+            d_amelie = {k: v for k, v in d_amelie}
+            logger.info(f'AMELIE count = {len(d_amelie)}')
+        except:
+            if not os.path.exists(fn):
+                logger.error(f'amelie result not found: {fn}, would use dummy amelie score')
+                fn_genelist = f'{pw}/{intermediate_folder}/{prj}.genelist'
+                return {gn.strip(): 0 for gn in open(fn_genelist) if gn.strip()}
 
         return d_amelie
 
