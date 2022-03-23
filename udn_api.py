@@ -599,10 +599,6 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
     #     logger.warning(f'Family member with same relative to proband: {rel_to_proband}')
 
     json_all = json
-    if len(json_all) > 1:
-        logger.warning(f'multi: {len(json_all)}  records found for sequences API, would use {sequence_type_desired}')
-    elif not json or len(json_all) == 0:
-        logger.error(f'\t{rel_to_proband}: fail to get sequencing json')
 
     # json_all is a list
     # each element is a dict, which is a sequencing request like
@@ -615,8 +611,18 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
     res['bayler_report'] = []
 
 
-    seq_type_available = [seq_type_convert[json['sequencing_type']] for json in json_all]
+    seq_type_available = [seq_type_convert.get(json['sequencing_type']) or json['sequencing_type'] for json in json_all]
 
+    if len(json_all) > 1:
+        logger.warning(f'multi seq type found ({len(seq_type_available)}): {seq_type_available}')
+    elif not json or len(json_all) == 0:
+        logger.error(f'\t{rel_to_proband}: fail to get sequencing json')
+
+    use_all_seq_res = 0
+    if len(set(sequence_type_desired) & set(seq_type_available)) == 0:
+        use_all_seq_res = 1
+
+    res['seq_json_all'] = json_all
 
     for json in json_all:
         seq_id = json["id"]
@@ -630,11 +636,11 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
             continue
 
         if sequence_type in sequence_type_desired  or'all' in  sequence_type_desired or sequence_type == 'reanalysis':
-            logger.info(f'desired seq type found: {sequence_type}')
-        elif len(set(sequence_type_desired) & set(seq_type_available)) == 0:
-            logger.info(f'no desired seq type found, will use whichever seq type found: available type = {seq_type_available}')
+            logger.info(f'\tdesired seq type found: {sequence_type}')
+        elif use_all_seq_res:
+            logger.warning(f'\tusing data from {sequence_type}')
         else:
-            logger.warning(f'{rel_to_proband}: skipped due to unmatch sequence type, seq_id = {seq_id}, desired={sequence_type_desired} found={sequence_type}')
+            logger.warning(f'\tskipped due to unmatch sequence type, seq_id = {seq_id}, desired={sequence_type_desired} found={sequence_type}')
             continue
 
         res['bayler_report'] += [
@@ -1538,6 +1544,40 @@ def parse_seq_url(res):
 
         print('\t' + '\n\t'.join(urls))
 
+def parse_phillips_map_file(fn):
+    if not os.path.exists(fn):
+        logger.error(f'file not exist: {fn}')
+        sys.exit(1)
+    invalid_lines = []
+    udn_list = []
+    rename_list = []
+    with open(fn) as f:
+        for i in f:
+            i = i.strip()
+            if not i:
+                continue
+            try:
+                udn, casename = re.split(r'\s+', i)
+            except:
+                invalid_lines.append(i)
+                continue
+            udn = udn.upper()
+            if not re.match(r'UDN\d+$', udn):
+                invalid_lines.append(i)
+                continue
+
+            if casename.lower().find('case') < 0:
+                casename = f'case_{casename}'
+
+
+            udn_list.append(udn)
+            rename_list.append(casename)
+    if len(invalid_lines) > 0:
+        logger.error(f'invalid lines found for {fn}:\n' + '\n'.join(invalid_lines))
+        sys.exit(1)
+
+    return udn_list, rename_list
+
 
 
 if __name__ == "__main__":
@@ -1567,16 +1607,31 @@ if __name__ == "__main__":
     ps.add_argument('-v', '-level', help="""set the logger level, default is info""", default='INFO', choices=['INFO', 'WARN', 'DEBUG', 'ERROR'])
     ps.add_argument('-nodename', '-node', '-remote', help="remote node name, default is va", choices=['va', 'pc'])
     ps.add_argument('-rename', '-newname', help="rename the case name to this, only valid for vcf file, number should match with prj number", nargs='*')
+    ps.add_argument('-phillips', '-philips', '-phil', help="run the tasks for Phillips, need to rename the case. argument = filename for UDN-case number map")
+
 
     args = ps.parse_args()
+
+    pw_accre_scratch_suffix = ''
+    fn_phillips = args.phillips
+    if fn_phillips:
+        args.ft = ['vcf']
+        args.pw = '.'
+        args.upload_only = True
+        args.lite = True
+        args.udn, args.rename = parse_phillips_map_file(fn_phillips)
+        pw_accre_scratch_suffix = '/upload_for_phillips'
+
     print(args)
 
+
     udn_list = args.udn or [os.getcwd().rsplit('/')[-1]]
+    newname_prefix_l = args.rename
+    ft_input = args.ft
 
     force_upload = args.force_upload
     sv_caller = args.sv_caller
 
-    newname_prefix_l = args.rename
 
 
     save_rel_table = args.reltable
@@ -1610,6 +1665,9 @@ if __name__ == "__main__":
     nodename = args.nodename or 'va'
     pw_accre_data = '/data/cqs/chenh19/udn'
     pw_accre_scratch = '/fs0/members/chenh19/tmp/upload' if nodename == 'va' else '/scratch/h_vangard_1/chenh19/udn/upload'
+
+
+    pw_accre_scratch += pw_accre_scratch_suffix
     # pw_accre_upload = pw_accre_scratch
 
     upload_file_list = ['pheno.keywords.txt', 'download.*.txt', 'download.*.md5']  # upload these files to scratch and data of ACCRE
@@ -1617,12 +1675,12 @@ if __name__ == "__main__":
     gzip_only = set()
     update_aws_ft = set()
 
-    if args.ft is None:
+    if ft_input is None:
         update_aws_ft = ['cnv', 'fastq']
     else:
         err = 0
-        args.ft = [_ for _ in args.ft if _.strip()]
-        for i in args.ft:
+        ft_input = [_ for _ in ft_input if _.strip()]
+        for i in ft_input:
             ext = i.replace('.gz', '')
             if i[-2:] == 'gz':
                 gzip_only.add(ext)
@@ -1767,6 +1825,7 @@ if __name__ == "__main__":
     if newname_prefix_l:
         if len(newname_prefix_l) != len(validated):
             logger.error(f'number of newname label ({len(newname_prefix_l)}) should match number of cases({len(validated)}), quit...')
+            sys.exit(1)
     else:
         newname_prefix_l = [None for _ in validated]
 
@@ -1788,7 +1847,7 @@ if __name__ == "__main__":
         os.chdir(pw_case)
 
         logger = get_logger(f'{root}/{udn_raw}/{udn_raw}', level=args.v)
-        logger.info(os.getcwd())
+        logger.info(os.getcwd() + f', rename to {newname_prefix}' if newname_prefix else '')
 
         fn_udn_api_pkl = f'{root}/{udn_raw}/{udn}.udn_api_query.pkl'
 
