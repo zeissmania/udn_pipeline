@@ -405,10 +405,18 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                     rename = tmp
                     if not re.match('.*(father|dad|mother|mom|sister|brother|sibling|mate|pate|cousin|uncle|aunt|proband)', rename.lower()):
                         rename = f'{rename}_{rel[:-1]}{rename_suffix}'
-            except:
-                raise
-                pass
+                    else:
+                        # if rename_suffix:
+                        #     with open('/fs0/members/chenh19/tmp/upload/upload_for_phillips/batch2/rename_vcf.txt', 'a') as o:
+                        #         print(f'mv {pw}/download/{rename}.vcf.gz {pw}/download/{rename}{rename_suffix}.vcf.gz', file=o)
 
+                        rename = f'{rename}{rename_suffix}'
+
+            except:
+                logger.error('rename column not found in header')
+                raise
+            if rename:
+                logger.info(f'fn = {fn}, rename = {rename}, suffix={rename_suffix}')
 
             # if url.lower() == 'na':
             #     logger.warning(f'URL = NA : {fn}')
@@ -791,6 +799,8 @@ fi
 # rename the fq file
 vcf_deid {fn_download} -newname {rename} |bgzip > {pw}/download/{fn}
 bgzip -r {pw}/download/{fn}
+ln -sf {fn_download} {pw}/download/{rename}.link
+
                     """
 
                 if upload_type == 'dropbox':
