@@ -1238,6 +1238,13 @@ def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft
             out.write(v+'\n')
 
     if not os.path.exists(f'pheno.keywords.txt'):
+        with open(f'origin/{udn}.terms.txt') as f:
+            content = f.read()
+
+        with open('pheno.keywords.txt', 'w') as o:
+            print('# if need to exact match the word, add @ prefix\n#if this line is a regex pattern, use ! as prefix\n\n', file=o)
+            o.write(content)
+
         os.system(f'cp origin/{udn}.terms.txt pheno.keywords.txt')
 
 
