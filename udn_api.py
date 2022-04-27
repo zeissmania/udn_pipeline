@@ -1586,6 +1586,18 @@ def parse_phillips_map_file(fn):
     return udn_list, rename_list
 
 
+# get the filelist
+if args.fn:
+    if os.path.isfile(args.fn):
+        flist = open(args.fn)
+    else:
+        print(f'file not exist! ({args.fn})\nexit')
+        sys.exit()
+elif not sys.stdin.isatty():  # stdin
+    flist = sys.stdin
+else:  # no stdin, no filename
+    print('please input something! stdin, filelist / folder path')
+    sys.exit()
 
 if __name__ == "__main__":
 
@@ -1626,11 +1638,11 @@ if __name__ == "__main__":
         args.pw = '.'
         args.upload_only = True
         args.lite = True
+        args.renew = True
         args.udn, args.rename = parse_phillips_map_file(fn_phillips)
         pw_accre_scratch_suffix = '/upload_for_phillips'
 
     print(args)
-
 
     udn_list = args.udn or [os.getcwd().rsplit('/')[-1]]
     newname_prefix_l = args.rename
