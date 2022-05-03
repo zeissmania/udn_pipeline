@@ -445,7 +445,12 @@ class UDN_case():
                 new = i.lower().split('#', 1)[0].strip()
                 if not new:  # pure comment line
                     continue
+
                 l_pheno_raw.append(i.strip())
+
+                if new[0] == '!':  # regex pattern
+                    l_pheno.append([new])
+                    continue
 
                 a = re.split(r'\s+', new)
                 a = [_.strip() for _ in a if _.strip()]
@@ -456,11 +461,6 @@ class UDN_case():
                 l_pheno.append([_.replace('+', ' ') for _ in a])
 
         logger.warning(l_pheno)
-
-
-        # test
-        # test_pheno_pattern(l_pheno, l_pheno_raw, logger)
-        # sys.exit(1)
 
 
         # refine the l_pheno,
@@ -546,12 +546,20 @@ class UDN_case():
                                 word = _
                             if word.find('|') > -1 and word.find('(') < 0:
                                 word = re.sub(r'\b((?:\w+\|)+\w+)', r'(\g<1>)', word)
+                            pattern_suffix = r'[a-z]*'
+
+                        elif _[0] == '!':  # the input is the regex pattern
+                            word = _[1:]
+                            extra_flag = ''
+                            pattern_suffix = ''
+
                         else:
                             word = _
                             extra_flag = ''
+                            pattern_suffix = r'[a-z]*'
 
                         #  {word}s  means that, the word could contain an extra s
-                        m = re.match(fr'.*{extra_flag}({word}[a-z]*){extra_flag}', comment_compact)
+                        m = re.match(fr'.*{extra_flag}({word}{pattern_suffix}){extra_flag}', comment_compact)
 
                         # if debug:
                         #     logger.info(m)

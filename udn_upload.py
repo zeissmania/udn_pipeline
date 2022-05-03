@@ -32,6 +32,7 @@ remote_pw_final = f'{remote_pw}' if remote_flat else f'{remote_pw}/{name}'
 
 """
 import os, sys, re, glob
+from termcolor import colored
 import json
 import platform
 import time
@@ -40,7 +41,9 @@ import argparse as arg
 from argparse import RawTextHelpFormatter
 ps = arg.ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
 ps.add_argument('dest', help="""the destinition for the uploading, valid = dropbox/db, emedgene/em/ed""", choices=['emedgene', 'em', 'ed', 'dropbox', 'db'], nargs='?', default='emedgene')
-ps.add_argument('info_file', help="""the file containing the amazon download link, usually like download.info.UDN945671.txt""", nargs='?', default=None)
+ps.add_argument('-info_file', '-info', '-fn', help="""the file containing the amazon download link, usually like download.info.UDN945671.txt""", nargs='?', default=None)
+ps.add_argument('-simple', help="""simple mode, for uploading local file to dropbox only. the info file can have only 2 columns, col name = fn, remote, which is the local file path and remote path, will upload the local file to dropbox folder""", action='store_true')
+
 ps.add_argument('-remote', '-r', '-remote_pw', dest='remote_pw', help="""the remote path, if not exist, would create one. start from the root path, donot include the leading and ending slash. dropbox is like UDN12345/proband_UDN12345  for emedgene is like UDN12345, if the remote folder is not in the root path, include all the path from root, e.g. cases_202107/34_269_AA_UDN616750""", default=None, nargs='?')
 ps.add_argument('-remote_base', '-r_base', '-rbase', '-rb', help="remote path base, default is from the root of the remote folder")
 ps.add_argument('-ft', help="""the file type to upload, could be multiple types sep by space, such as fastq, fq, vcf, bam, default = fastq""", nargs='*')
@@ -290,7 +293,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
         header = fp.readline()
         a = [_.strip() for _ in header.split('\t')]
         idx = {}
-        for _ in ['upload_type', 'download_type', 'remote_pw', 'rel_to_proband', 'fn', 'url', 'udn', 'size', 'rename']:
+        for _ in ['upload_type', 'download_type', 'remote_pw', 'rel_to_proband', 'fn', 'url', 'udn', 'size', 'rename', 'sample_list']:
         # rename, if set, will change both the filename and vcf header of this file to this (if no relative suffix found, will also add the relative)
         # rename is only valid for vcf files.
 
@@ -411,6 +414,8 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                         #         print(f'mv {pw}/download/{rename}.vcf.gz {pw}/download/{rename}{rename_suffix}.vcf.gz', file=o)
 
                         rename = f'{rename}{rename_suffix}'
+                sample_list = a[idx['sample_list']].strip()
+                sample_list = re.sub(r'\W+', ' ', sample_list)
 
             except:
                 logger.error('rename column not found in header')
@@ -458,7 +463,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
             remote_pw_final = f'{remote_pw}' if remote_flat else f'{remote_pw}/{name}'
             remote_pw_final = re.sub(r'/$', '', remote_pw_final)
 
-            v = {'size': size_exp, 'download_type': download_type, 'upload_type': upload_type, 'url': url, 'remote': remote_pw_final, 'downloaded': downloaded or uploaded, 'uploaded': uploaded, 'size_remote': f'{size_remote:,}', 'rename': rename}
+            v = {'size': size_exp, 'download_type': download_type, 'upload_type': upload_type, 'url': url, 'remote': remote_pw_final, 'downloaded': downloaded or uploaded, 'uploaded': uploaded, 'size_remote': f'{size_remote:,}', 'rename': rename, 'sample_list': sample_list}
             try:
                 d[remote_pw][fn] = v
             except:
@@ -567,7 +572,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
         print(f'{n_need_upload}/{n_desired} files need to be uploaded')
         print('\t' + '\n\t'.join(need_upload))
         if n_invalid_url > 0:
-            print(f'ERROR: {n_invalid_url} files with NA url:\n\t' + '\n\t'.join(invalid_url))
+            print(colored(f'ERROR: {n_invalid_url} files with NA url:\n\t' + '\n\t'.join(invalid_url), 'red'))
 
     else:
         print('\n', '*' * 50)
@@ -656,6 +661,14 @@ def refine_remote_pw(remote_pw):
 
 
 def build_script(pw, d, info_file, no_upload=False):
+    with open(info_file) as f:
+      header = f.readline().strip().split('\t')
+      try:
+        idx_url = header.index('url') + 1
+        # print(f'index of url = {idx_url}')
+      except:
+        print(colored('ERROR, fail to get URL from header of info file: header = {header}', 'red'))
+        sys.exit(1)
     for _, v1 in d.items():
         for fn, v in v1.items():
             # {'size': size_exp, 'remote': f'{remote_pw}/{name}', 'url': url, 'downloaded': downloaded, 'uploaded': uploaded}
@@ -666,6 +679,7 @@ def build_script(pw, d, info_file, no_upload=False):
             upload_type = v['upload_type']
             ext = fn.rsplit('.', 1)[-1]
             rename = v['rename']
+            sample_list = v['sample_list']
 
             fn_download = f'{pw}/download/{fn}'
             # fn_download_chunk = fn_download.replace('.gz', '')
@@ -680,8 +694,8 @@ def build_script(pw, d, info_file, no_upload=False):
                 continue
 
             with open(fn_script, 'w') as out:
-
-                get_url = f"""url=$(awk -F "\\t" '$2=="{fn}" {{print $4}}' {info_file})"""
+             
+                get_url = f"""url=$(awk -F "\\t" '$2=="{fn}" {{print ${idx_url} }}' {info_file})"""
                 print(get_url, file=out)
                 rm_cmd = ''
                 if rm:
@@ -783,7 +797,7 @@ if [[ $download_status -eq 1 ]];then
     {download_cmd}
     download_status=$(checklocal)
     if [[ $download_status -eq 1 ]];then
-        echo download not completed >> {fn_status}
+        echo download failed >> {fn_status}
         exit 1
     fi
 fi
@@ -794,10 +808,11 @@ fi
                     # prev command is
                     # bcftools view --no-version {fn_download}|bcftools reheader -s  <(echo "{rename}") |bgzip > {pw}/download/{fn}.tmp
                     # mv {pw}/download/{fn}.tmp {pw}/download/{fn}
+                    # sample list example: 971146-  971147-
 
                     cmd += f"""
 # rename the fq file
-vcf_deid {fn_download} -newname {rename} |bgzip > {pw}/download/{fn}
+vcf_deid {fn_download} -newname {rename} -sample_list {sample_list}|bgzip > {pw}/download/{fn}
 bgzip -r {pw}/download/{fn}
 ln -sf {fn_download} {pw}/download/{rename}.link
 
@@ -879,9 +894,56 @@ def main(pw, script_list, info_file=None, remote_pw_in=None, updated_version_onl
     return ct, script_list
 
 
+def simple_upload(infofile):
+
+    os.makedirs('shell', exist_ok=True)
+    all_scripts = open('all_scripts.sh', 'w')
+
+    with open(infofile) as f:
+        header = f.readline().strip().split('\t')
+        header = [_.lower() for _ in header]
+
+        exp = {'fn', 'remote'}
+        not_found = exp - set(header)
+        if len(not_found) > 0:
+            logger.error(f'columns not found: {not_found}')
+            sys.exit(1)
+
+        idx = {k: header.index(k) for k in exp}
+
+        for i in f:
+            a = i.strip().split('\t')
+
+            if len(a) == 0:
+                continue
+
+            fn, remote_pw = [a[idx[_]] for _ in ['fn', 'remote']]
+
+            fn_lite = fn.rsplit('/', 0)[-1]
+            fn_script = f'shell/{fn_lite}.upload.sh'
+            with open(fn_script, 'w') as o:
+                print(f'dbxcli put "{fn}" "/{remote_pw}/{fn_lite}"', file=o)
+
+            print(fn_script, file=all_scripts)
+    all_scripts.close()
+
+
+
 if __name__ == "__main__":
 
     logger = getlogger()
+
+    simple_mode = args.simple
+    if simple_mode:
+        infofile = args.info_file
+        if not infofile:
+            logger.error(f'for simple mode, you must specify the info file')
+            sys.exit(1)
+
+        simple_upload(infofile)
+        sys.exit(0)
+
+
 
     convert1 = {'dropbox': 'dropbox', 'db': 'dropbox', 'emedgene': 'emedgene', 'em': 'emedgene', 'ed':'emedgene'}
     convert2 = {'emedgene': 'emedgene', 'em': 'emedgene', 'ed':'emedgene', 'pacbio': 'pacbio', 'pac': 'pacbio'}
