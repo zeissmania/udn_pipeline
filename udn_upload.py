@@ -32,6 +32,7 @@ remote_pw_final = f'{remote_pw}' if remote_flat else f'{remote_pw}/{name}'
 
 """
 import os, sys, re, glob
+from termcolor import colored
 import json
 import platform
 import time
@@ -571,7 +572,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
         print(f'{n_need_upload}/{n_desired} files need to be uploaded')
         print('\t' + '\n\t'.join(need_upload))
         if n_invalid_url > 0:
-            print(f'ERROR: {n_invalid_url} files with NA url:\n\t' + '\n\t'.join(invalid_url))
+            print(colored(f'ERROR: {n_invalid_url} files with NA url:\n\t' + '\n\t'.join(invalid_url), 'red'))
 
     else:
         print('\n', '*' * 50)
@@ -660,6 +661,14 @@ def refine_remote_pw(remote_pw):
 
 
 def build_script(pw, d, info_file, no_upload=False):
+    with open(info_file) as f:
+      header = f.readline().strip().split('\t')
+      try:
+        idx_url = header.index('url') + 1
+        # print(f'index of url = {idx_url}')
+      except:
+        print(colored('ERROR, fail to get URL from header of info file: header = {header}', 'red'))
+        sys.exit(1)
     for _, v1 in d.items():
         for fn, v in v1.items():
             # {'size': size_exp, 'remote': f'{remote_pw}/{name}', 'url': url, 'downloaded': downloaded, 'uploaded': uploaded}
@@ -685,8 +694,8 @@ def build_script(pw, d, info_file, no_upload=False):
                 continue
 
             with open(fn_script, 'w') as out:
-
-                get_url = f"""url=$(awk -F "\\t" '$2=="{fn}" {{print $4}}' {info_file})"""
+             
+                get_url = f"""url=$(awk -F "\\t" '$2=="{fn}" {{print ${idx_url} }}' {info_file})"""
                 print(get_url, file=out)
                 rm_cmd = ''
                 if rm:
@@ -788,7 +797,7 @@ if [[ $download_status -eq 1 ]];then
     {download_cmd}
     download_status=$(checklocal)
     if [[ $download_status -eq 1 ]];then
-        echo download not completed >> {fn_status}
+        echo download failed >> {fn_status}
         exit 1
     fi
 fi
