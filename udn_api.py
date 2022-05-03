@@ -30,6 +30,7 @@ from selenium import webdriver
 import selenium.common.exceptions as sel_exp
 from selenium.webdriver.support.ui import WebDriverWait as wait
 import udn_igv
+from termcolor import colored
 
 from bs4 import BeautifulSoup as bs
 # basic settings
@@ -719,7 +720,7 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
                     fl_loc = fl_loc[0]
                 except:
                     fl_loc = 'NA'
-                    logger.warning(f'file_locations is empty : {fn}')
+                    logger.error(colored(f'file_locations is empty : {ifl}, \nfilename = {ifl.get("filename") or ""}\nurl= https://gateway.undiagnosed.hms.harvard.edu/patient/sequence/{seq_id}/files/#\n\n', 'red'))
 
 
             fn = ifl['file_data']['filename']
@@ -1169,7 +1170,7 @@ def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft
                 cookie_token, download, res_source = get_amazon_download_link(fn, file_uuid, cookie_token, seq_id=seq_id, demo=demo, driver=driver, file_uuid_js=file_uuid_js)
                 if not download:
                     download = 'NA'
-                    logger.warning(f'      {fn}:fail to get amazon link')
+                    logger.warning(colored(f'      {fn}:fail to get amazon link', 'red'))
                     continue
                 logger.info(f'      {fn}: update amazon_link done ({res_source})')
                 ifl['download'] = download
@@ -1393,8 +1394,7 @@ default:
         p_trailing = '_' + p_trailing if p_trailing else ''
         remote_pw = m[1] + p_trailing
 
-    out_info.write('rel_to_proband\tfn\trename\turl\tudn\tseq_type\tsize\tbuild\tmd5\turl_s3\tupload_type\tdownload_type\tremote_pw\n')
-
+    out_info.write('rel_to_proband\tfn\trename\tsample_list\turl\tudn\tseq_type\tsize\tbuild\tmd5\turl_s3\tupload_type\tdownload_type\tremote_pw\n')
 
     check_dup = {}
     for rel_to_proband, irel in res.items():
@@ -1409,15 +1409,30 @@ default:
             build = ifl['build']
             md5 = ifl['md5']
             newname = ''
+            newname_base = ''
+
+            ext, gz = get_file_extension(fn)
+
+            if ext not in update_aws_ft:
+                # logger.info(f'skipped due to not target file type: {ext}')
+                continue
+
             if newname_prefix and re.match(r'.+\.vcf', fn.lower()) and not re.match(r'(cnv|joint)', fn.lower()):
-                newname = f'{newname_prefix}_{rel_to_proband}'
-                try:
-                    n_prev = check_dup[newname]
-                except:
-                    check_dup[newname] = 0
+                # 971146-UDN131930-P_971147-UDN771313-M_reheadered.joint.repeats.merged.vcf.gz
+                newname_base = f'{newname_prefix}_{rel_to_proband}'
+
+                fn_prune = fn.rsplit('/', 1)[-1].replace('.vcf', '').replace('.gz', '').replace('.tbi', '')
+                m = re.match(r'.*UDN\d+-[a-zA-Z]+[\W_]+(.*)', fn_prune)
+                if m:
+                    newname = f'{newname_base}_{m.group(1)}'
                 else:
-                    check_dup[newname] += 1
-                    newname = f'{newname}_{n_prev + 1}'
+                    try:
+                        n_prev = check_dup[newname_base]
+                    except:
+                        check_dup[newname_base] = 0
+                    else:
+                        check_dup[newname_base] += 1
+                        newname = f'{newname_base}_{n_prev + 1}'
 
             seq_type = ifl.get('seq_type')
 
@@ -1438,7 +1453,7 @@ default:
             elif other_download:
                 out_other.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
 
-            out_info.write(f'{rel_to_proband}\t{fn}\t{newname}\t{url}\t{udn}\t{seq_type}\t{size}\t{build}\t{md5}\t{url_s3}\n')
+            out_info.write(f'{rel_to_proband}\t{fn}\t{newname}\t{newname_base}\t{url}\t{udn}\t{seq_type}\t{size}\t{build}\t{md5}\t{url_s3}\n')
             out_md5.write(f'{md5}  {fn}\n')
 
     try:
@@ -1586,18 +1601,6 @@ def parse_phillips_map_file(fn):
     return udn_list, rename_list
 
 
-# get the filelist
-if args.fn:
-    if os.path.isfile(args.fn):
-        flist = open(args.fn)
-    else:
-        print(f'file not exist! ({args.fn})\nexit')
-        sys.exit()
-elif not sys.stdin.isatty():  # stdin
-    flist = sys.stdin
-else:  # no stdin, no filename
-    print('please input something! stdin, filelist / folder path')
-    sys.exit()
 
 if __name__ == "__main__":
 
@@ -1619,6 +1622,7 @@ if __name__ == "__main__":
     ps.add_argument('-lite', help="""flag, donot download the cnv files and the bayler report""", action='store_true')
     ps.add_argument('-noupload', '-noup', help="""don't upload the files to ACCRE""", action='store_true')
     ps.add_argument('-force_upload', '-fu', help="""force upload all files to ACCRE""", action='store_true')
+    ps.add_argument('-force_rerun', '-force', help="""force rerun the API query, ignore the local pikcle file""", action='store_true')
     ps.add_argument('-upload_only', '-uo', help="""only upload the files to upload folder, not to the data analysis folder""", action='store_true')
     ps.add_argument('-show', '-chrome', '-noheadless', help="""disable headless mode""", action='store_true')
     ps.add_argument('-showcred', help="""show the credential content and exit""", action='store_true')
@@ -1630,7 +1634,7 @@ if __name__ == "__main__":
 
 
     args = ps.parse_args()
-
+    case_prefix = ''
     pw_accre_scratch_suffix = ''
     fn_phillips = args.phillips
     if fn_phillips:
@@ -1638,14 +1642,19 @@ if __name__ == "__main__":
         args.pw = '.'
         args.upload_only = True
         args.lite = True
-        args.renew = True
+        # args.renew = True
         args.udn, args.rename = parse_phillips_map_file(fn_phillips)
         pw_accre_scratch_suffix = '/upload_for_phillips'
+        case_prefix = fn_phillips.rsplit('/', 1)[-1].rsplit('.', 1)[0].replace('_rerun', '') + '_'
 
     print(args)
 
+    force = args.force_rerun
     udn_list = args.udn or [os.getcwd().rsplit('/')[-1]]
     newname_prefix_l = args.rename
+    if newname_prefix_l:
+        newname_prefix_l = [re.sub('case[\W_]+', '', _) for _ in newname_prefix_l]
+
     ft_input = args.ft
 
     force_upload = args.force_upload
@@ -1794,9 +1803,16 @@ if __name__ == "__main__":
     # validate udn
     p = re.compile(r'(?:.*)?(UDN\d+)')
     validated = []
-    for i in udn_list:
+    for n, i in enumerate(udn_list):
         i = [_.strip() for _ in i.split('@')]
-        udn_raw = i[0]
+        try:
+            case_sn = f'case{newname_prefix_l[n]}_'
+        except:
+            case_sn = ''
+
+        case_prefix_tmp = case_prefix.replace(case_sn, '')
+
+        udn_raw = case_prefix_tmp + case_sn + i[0]
 
         if len(i) == 1:
             valid_family = None
@@ -1862,6 +1878,8 @@ if __name__ == "__main__":
         else:
             os.system(f'mkdir -p {root}/{udn_raw}/origin 2>/dev/null')
 
+
+        logger.info(f'now running {udn_raw}')
         pw_case = f'{root}/{udn_raw}'
         os.chdir(pw_case)
 
@@ -1870,7 +1888,7 @@ if __name__ == "__main__":
 
         fn_udn_api_pkl = f'{root}/{udn_raw}/{udn}.udn_api_query.pkl'
 
-        if os.path.exists(fn_udn_api_pkl):
+        if os.path.exists(fn_udn_api_pkl) and not force:
             logger.info('directly load API query result from pickle file')
             res = pickle.load(open(fn_udn_api_pkl, 'rb'))
             if demo:
@@ -1898,7 +1916,7 @@ if __name__ == "__main__":
 
         if not lite and 'cnv' in update_aws_ft:
             logger.info(f'downloading CNV vcf file')
-            os.system(f'bash download.cnv.{udn}.sh')
+            os.system(f'bash download.cnv.{udn}.sh >/dev/null 2>&1')
 
 
         initial_upload_flag = 'origin/initial_uploaded'
