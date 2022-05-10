@@ -287,18 +287,9 @@ class UDN_case():
             self.get_annot_col()
             cols = self.cols
 
-        fn_gene_comment = f'{pw_code}/omim.gene_comment.txt'
-        fn_gene_description_omim = f'{pw_code}/omim.gene_description_omim.txt'
-        fn_gene_description_omim_pkl = f'{pw_code}/omim.gene_description_omim.pkl'
-
-        if os.path.exists(f'{pw}/{udn}.omim_match_gene.txt'):
-            logger.info(f'OMIM match already done')
-            return 0
-
         if not force_rerun and os.path.exists(f'{pw}/omim_match_gene.{udn}.md'):
             logger.debug(f'OMIM query report already done')
             return 0
-
 
         if not os.path.exists(fn_pheno) or os.path.getsize(fn_pheno) < 10:
             fn_pheno = f'{self.pw}/origin/{self.prj}.terms.txt'
@@ -387,7 +378,9 @@ class UDN_case():
 
         # logger.warning(f'POU6F2:{d_gene["POU6F2"]}')
 
-        d_gene_comment = {}
+        fn_gene_description_omim = f'{pw_code}/omim.gene_description_omim.txt'
+        fn_gene_description_omim_pkl = f'{pw_code}/omim.gene_description_omim.pkl'
+
         d_gene_comment_scrapy = {}
         d_gene_comment_scrapy_new = {}
 
@@ -398,37 +391,31 @@ class UDN_case():
                 d_gene_comment_scrapy = pickle.load(f)
         else:
             logger.info(f'file not found: {fn_gene_description_omim_pkl}')
-            for d1, fn1 in zip([d_gene_comment, d_gene_comment_scrapy], [fn_gene_comment, fn_gene_description_omim]):
-                new = 1
-                try:
-                    with open(fn1) as fp:
-                        for i in fp:
-                            i = i.strip()
-                            if not i.strip():
-                                try:
-                                    if gn not in d1:
-                                        d1[gn] = comment
-                                except:
-                                    continue
-                                new = 1
-                            elif new == 1 and len(i) < 30:
-                                gn = i
-                                new = 0
-                                comment = ''
-                            elif new == 1:
-                                logger.warning(f'wrong gene name found in {pw_code}/gene_comment.txt: {i}')
-                                gn = 'wrong'
-                                continue
-                            else:
-                                comment += i + '\n'
-                except:
-                    logger.warning(f'{fn1} not exist')
-                    with open(fn1, 'w') as out:
-                        pass
+            new = 1
+            with open(fn_gene_description_omim) as fp:
+                for i in fp:
+                    i = i.strip()
+                    if not i.strip():
+                        try:
+                            if gn not in d_gene_comment_scrapy:
+                                d_gene_comment_scrapy[gn] = comment
+                        except:
+                            continue
+                        new = 1
+                    elif new == 1 and len(i) < 30:
+                        gn = i
+                        new = 0
+                        comment = ''
+                    elif new == 1:
+                        logger.warning(f'wrong gene name found in {fn_gene_description_omim}: {i}')
+                        gn = 'wrong'
+                        continue
+                    else:
+                        comment += i + '\n'
 
         logger.info(f'local total gene number with OMIM description={len(d_gene_comment_scrapy)}')
 
-        gene_with_omim = set(d_gene) & set(list(d_gene_comment_scrapy) + list(d_gene_comment))
+        gene_with_omim = set(d_gene) & set(d_gene_comment_scrapy)
         logger.info(f'gene count in merged.sorted.tsv: {len(d_gene)}')
         logger.info(f'gene count in with OMIM description: {len(gene_with_omim)}')
 
@@ -489,10 +476,7 @@ class UDN_case():
             if gn in res:
                 continue  # avoid the duplicate running
             res[gn] = [[], [], '', cover_exon_flag, amelie_score, copy_number]  # match pheno, partial match pheno, comment, cover_exon_flag, amelie rank
-            if gn in d_gene_comment:
-                comment = d_gene_comment[gn] + '\n'
-            else:
-                comment = ''
+            comment = ''
 
             if gn in d_gene_comment_scrapy:
                 comment_raw = d_gene_comment_scrapy[gn]
@@ -1692,7 +1676,6 @@ class UDN_case():
                 os.system(f'rm {fn} 2>/dev/null')
                 force=True
             else:
-                logger.info('amelie query already done')
                 # self.check_amelie_missing()
                 return 0
         logger.info('getting information from AMELIE')

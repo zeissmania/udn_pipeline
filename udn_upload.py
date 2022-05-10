@@ -32,7 +32,6 @@ remote_pw_final = f'{remote_pw}' if remote_flat else f'{remote_pw}/{name}'
 
 """
 import os, sys, re, glob
-from termcolor import colored
 import json
 import platform
 import time
@@ -200,7 +199,7 @@ def build_upload_script_simple(pw, fn, remote_pw, fn_new=None):
     fn_pure = fn_pure.rsplit('/', 1)[-1]
     if not os.path.exists(fn):
         logger.warning(f'file not exist: {fn}')
-        return 1
+        return 0
 
     if os.path.exists(f'{pw}/shell_done/{fn_pure}.upload.sh'):
         return 0
@@ -215,18 +214,24 @@ remote_file_size=$({dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_
 
 if [[ "$local_size" -eq "$remote_file_size" ]];then
     echo already uploaded: {fn}
+    mv "{fn_script}" {pw}/shell_done
     exit 0
 fi
 
 {dock} aws s3 cp {fn} "s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_pure}" > {pw}/log/upload.{dest}.{fn_pure}.log 2>&1
-echo upload completed > {pw}/log/upload.{dest}.{fn_pure}.log
-date +"%m-%d  %T">> {fn_status}
+
+remote_file_size=$({dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_pure}"|head -1|tr -s " "|cut -d " " -f 3)
 
 if [[ "$remote_file_size" -eq "$local_size" ]];then
     echo {fn} successfully uploaded to {remote_pw}/  filesize=$local_size >> {fn_status}
     mv "{fn_script}" {pw}/shell_done
 fi
+
+echo upload completed > {pw}/log/upload.{dest}.{fn_pure}.log
+echo upload completed >> {fn_status}
+date +"%m-%d  %T">> {fn_status}
 """)
+    return fn_script
 
 
 def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, updated_version_only=True, script_list=None, no_upload=False, remote_flat=False):
@@ -286,7 +291,9 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
             else:
                 # build the script
                 # logger.info(f'upload md5 file')
-                build_upload_script_simple(pw, fn_md5, remote_pw_in, fn_new=fn_new)
+                fnscript = build_upload_script_simple(pw, fn_md5, remote_pw_in, fn_new=fn_new)
+                if fnscript:
+                    script_list['needup'].append(fnscript)
 
     logger.info('start parsing')
     with open(info_file) as fp:
@@ -572,7 +579,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
         print(f'{n_need_upload}/{n_desired} files need to be uploaded')
         print('\t' + '\n\t'.join(need_upload))
         if n_invalid_url > 0:
-            print(colored(f'ERROR: {n_invalid_url} files with NA url:\n\t' + '\n\t'.join(invalid_url), 'red'))
+            print(f'ERROR: {n_invalid_url} files with NA url:\n\t' + '\n\t'.join(invalid_url))
 
     else:
         print('\n', '*' * 50)
@@ -661,14 +668,6 @@ def refine_remote_pw(remote_pw):
 
 
 def build_script(pw, d, info_file, no_upload=False):
-    with open(info_file) as f:
-      header = f.readline().strip().split('\t')
-      try:
-        idx_url = header.index('url') + 1
-        # print(f'index of url = {idx_url}')
-      except:
-        print(colored('ERROR, fail to get URL from header of info file: header = {header}', 'red'))
-        sys.exit(1)
     for _, v1 in d.items():
         for fn, v in v1.items():
             # {'size': size_exp, 'remote': f'{remote_pw}/{name}', 'url': url, 'downloaded': downloaded, 'uploaded': uploaded}
@@ -694,8 +693,8 @@ def build_script(pw, d, info_file, no_upload=False):
                 continue
 
             with open(fn_script, 'w') as out:
-             
-                get_url = f"""url=$(awk -F "\\t" '$2=="{fn}" {{print ${idx_url} }}' {info_file})"""
+
+                get_url = f"""url=$(awk -F "\\t" '$2=="{fn}" {{print $4}}' {info_file})"""
                 print(get_url, file=out)
                 rm_cmd = ''
                 if rm:
@@ -720,14 +719,28 @@ checklocal(){{
         echo local file not match with exp local_size=$local_size,  expected={size_exp}. skip uploading >> {fn_status}
         echo 1
         return
-    else
-        # the local size is ok
-        echo 0
     fi
 
     # check md5sum
     if [[ ! -f {pw}/download/{fn}.md5 ]];then
         md5sum  {fn_download} >{pw}/download/{fn}.md5 2>{pw}/download/{fn}.md5.log
+    fi
+
+    md5_exp=$(grep -h "{fn}" {pw}/download.UDN*.md5 |head -1|cut -d " " -f1)
+    md5_local=$(head -1 {pw}/download/{fn}.md5|cut -d " " -f1)
+
+    if [[ -z $md5_exp ]];then
+        echo expected md5 not found : {fn} >> {fn_status}
+        echo 0
+    elif [[ md5_exp == md5_local ]];then
+        echo good, md5 match!  >> {fn_status}
+        echo 0
+    else
+        echo 1
+        echo ERROR, md5 not match! {fn_download}; exp=$md5_exp , local=$md5_local  >> {fn_status}
+
+        echo $(date): ERROR, md5 not match! {fn_download}; exp=$md5_exp , local=$md5_local  >> /fs0/members/chenh19/tmp/upload/error.md5_not_match.files.txt
+
     fi
 
 }}
@@ -1038,9 +1051,9 @@ if __name__ == "__main__":
         # logger.warning(f'path={ipw}')
         # continue
 
-        fn_md5 = glob.glob(f'{ipw}/shell/*.md5.upload.sh')
-        if len(fn_md5) > 0 and not no_upload:
-            script_list['needup'].append(fn_md5[0])
+        # fn_md5 = glob.glob(f'{ipw}/shell/*.md5.upload.sh')
+        # if len(fn_md5) > 0 and not no_upload:
+        #     script_list['needup'].append(fn_md5[0])
 
         remote_base_prefix = f'{remote_base}/' if remote_base else ''
         remote_pw_in = remote_pw or f'{remote_base_prefix}{pw_core}'
