@@ -1,0 +1,321 @@
+#! /usr/bin/env python3
+"""
+get the OMIM info
+return = dict, k1 = gene, pheno.
+value for gene = k: gn, v = linked OMIM pheno ID
+value for pheno, k = OMIM pheno ID, v = description
+"""
+import os, sys, re, pickle
+from selenium.webdriver.support.ui import WebDriverWait as wait
+import time
+import random
+
+pw = os.path.realpath(__file__).rsplit('/', 1)[0]
+
+import logging
+prefix = 'get_omim_from_scratch'
+fn_log = f'{prefix}.log'
+
+fmt = logging.Formatter('%(asctime)s  %(levelname)-6s %(funcName)-20s  line: %(lineno)-5s  %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+
+console = logging.StreamHandler(sys.stdout)
+console.setFormatter(fmt)
+console.setLevel('INFO')
+
+fh_file = logging.FileHandler(fn_log, mode='w', encoding='utf8')
+
+fh_file.setLevel('DEBUG')
+fh_file.setFormatter(fmt)
+
+try:
+    logger = logging.getLogger(__file__)
+except:
+    logger = logging.getLogger('terminal')
+logger.setLevel('DEBUG')
+logger.addHandler(console)
+logger.addHandler(fh_file)
+
+
+
+
+fn = f'{pw}/mim2gene.txt'
+fn_pkl = f'{pw}/omim_description.scrapy.pkl'
+
+if not os.path.exists(fn):
+    logger.error(f'mim2gene.txt file not found in {pw}')
+    sys.exit(1)
+
+def get_driver(driver, logger):
+    try:
+        driver.current_url
+    except:
+        from selenium import webdriver
+        from selenium.webdriver.firefox.options import Options
+        options = Options()
+        options.headless = False
+        platform = sys.platform
+        if platform == 'darwin':
+            exe_firefox = '/Users/files/work/package/firefox/geckodriver'
+        else:
+            exe_firefox = f'/home/chenh19/tools/geckodriver'
+        driver = webdriver.Firefox(options=options, executable_path=exe_firefox)
+        logger.warning('firefox initiated')
+        driver.get('https://www.google.com/')
+        driver.save_screenshot('firefox_init.png')
+    return driver
+
+def cleanup_memory(logger):
+    try:
+        logger.debug('now killing the chrome process')
+    except:
+        print('\tnow killing the chrome process')
+    try:
+        driver.close()
+        driver.quit()
+    except:
+        pass
+    os.system("""ps -ef|grep -i "chrome"|awk '{print $2}'|sort|uniq|parallel 'kill -9 {} 2>/dev/null' """)
+    os.system("""ps -ef|grep -i "firefox"|awk '{print $2}'|sort|uniq|parallel 'kill -9 {} 2>/dev/null' """)
+
+
+def gn_to_pheno(driver, gn, gene_id, n_query):
+    """
+    return
+    None - error, page not loaded
+    'empty',  no linked phenotype for this gene
+    list, element = [pheno_id, pheno_name, merged_title]
+    """
+
+    url = f'https://www.omim.org/entry/{gene_id}'
+
+    driver.get(url)
+    n_query[0] = n_query[0] + 1
+    try:
+        # test if the page is ready
+        wait(driver, 5).until(lambda _: _.find_element_by_xpath('//a[@id="preferredTitle"]'))
+    except:
+        try:
+            if driver.find_element_by_xpath('//p[contains(text(), "has been blocked because it was identified as a crawler")]'):
+                logger.error('fail to scrapy because blocked by OMIM website')
+                return 'blocked'
+        except:
+            pass
+
+        logger.warning(f'page not loaded for {gn}, omim gene id = {gene_id}')
+        return None
+
+    try:
+        ele = driver.find_element_by_xpath('//div[./span/strong[text()="Gene-Phenotype Relationships"]]')
+    except:
+        return 'empty'
+
+    try:
+        tb = ele.find_element_by_xpath('./following-sibling::div/table/tbody')
+        rows = tb.find_elements_by_tag_name('tr')
+        rows = [[cell.text for cell in _.find_elements_by_tag_name('td')] for _ in rows]
+    except:
+        logger.warning(f'gene-pheno section found, but fail to get table: {gn} - {gene_id}')
+        raise
+        return None
+
+    res = []
+    dedup = set()
+    for i in rows:
+        # ['6q25.3', '?ACAT2 deficiency', '614055', 'IC', '1']
+        # location, pheno, pheno_id, inher, pheno_mapping_key
+        # the row can be 5 columns or 4 columns
+        try:
+            pheno, pheno_id, inher, k = i[-4:]
+        except:
+            logger.warning(f'wrong gene-pheno map row gene={gn}, gene_id = {gene_id}, row =  {i}')
+            continue
+        # like Intellectual developmental disorder and retinitis pigmentosa, 618195 (3), AR
+        title = f'{pheno}, {pheno_id} ({k}), {inher}'
+        if pheno_id not in dedup:
+            res.append([pheno, pheno_id, title])
+            dedup.add(pheno_id)
+
+    logger.info(f'\t    pheno count: nrow = {len(rows)}, dedup = {len(res)}')
+    return res
+
+def get_pheno_detail(driver, pheno_id, pheno_title, n_query):
+    """
+    return
+    None, there is error to get the description
+    str,  the whole description
+    """
+    url = f'https://www.omim.org/entry/{pheno_id}'
+    driver.get(url)
+    n_query[0] = n_query[0] + 1
+    try:
+        # test if the page is ready
+        wait(driver, 5).until(lambda _: _.find_element_by_xpath('//a[@id="preferredTitle"]'))
+    except:
+        logger.warning(f'page not loaded for {pheno_title}, pheno ID = {pheno_id}')
+        return None
+
+    try:
+        desc = driver.find_element_by_xpath('//div[@id="descriptionFold"]').text
+        if desc.strip():
+            desc = 'Descriptioin\n' + desc
+    except:
+        desc =  ''
+
+    try:
+        clin = driver.find_element_by_xpath('//div[@id="clinicalFeaturesFold"]').text
+        if clin.strip():
+            clin = 'Clinical\n' + clin
+    except:
+        clin =  ''
+
+    try:
+        mol = driver.find_element_by_xpath('//div[@id="molecularGeneticsFold"]').text
+        if mol.strip():
+            mol = 'Molecular\n' + mol
+    except:
+        mol =  ''
+
+    res = '\n'.join([desc, clin, mol])
+
+    return res
+#   id  type    gid1       gn             gid2
+# 100640  gene   216.0  ALDH1A1  ENSG00000165092
+
+def dump_res(res):
+    with open(fn_pkl, 'wb') as o:
+        pickle.dump(res, o)
+
+try:
+    with open(fn_pkl, 'rb') as f:
+        res = pickle.load(f)
+
+    if os.path.getsize(fn_pkl) > 100000:
+        os.system(f'cp {fn_pkl} {fn_pkl}.bk 2>/dev/null')
+
+except:
+    res = {}
+
+with open(fn) as f:
+    for i in f:
+        if i[0] == '#':
+            continue
+        a = i.split('\t')
+        id_, type_, gn = a[0], a[1], a[3]
+        if type_ != 'gene':
+            continue
+
+        if gn not in res:
+            res[gn] = [id_, []]
+start = time.time()
+logger.info(f'total genes = {len(res)}')
+
+# get the related phenotype
+driver = get_driver(None, logger)
+
+n_total = len(res)
+n = 0
+n_query = [0, 0]  # n_query, n_gene
+time_big_pause = 30
+sleep_min = 8 # actual time = / 10
+sleep_max = 20 # actual time = / 10
+
+for gn, v in res.items():
+    n += 1
+    gene_id = v[0]
+    if v[1] == 'err':
+        v[1] = []
+
+    logger.debug(f'now running {n} / {n_total}: {gn} - {gene_id}')
+
+    if v[1] != 'err' and len(v[1]) > 0:
+        logger.debug('\talready done')
+        continue
+
+    dump = False
+    big_pause = False
+
+
+    time_sleep = random.randint(sleep_min, sleep_max)/10
+    dure = time.time() - start + time_sleep
+    time_per_query = round(dure/ (n_query[0] + 1), 3)
+
+    ratio = round((n_query[0] + 1) / (n_query[1] + 1), 2)
+
+    exp_complete_time = round((n_total - n) * ratio * time_per_query / 3600, 1)
+
+    logger.info(f'gene query: {n} / {n_total}: {gn} - {gene_id}  - sleep for {time_sleep}, sn query = {n_query[0] + 1}, n_gene = {n_query[1] + 1}, query/gene ratio = {ratio}, speed = {time_per_query}, exp_remain complete time = {exp_complete_time}')
+
+    tmp = gn_to_pheno(driver, gn, gene_id, n_query)
+    time.sleep(time_sleep)
+    n_query[1] += 1
+
+    if n_query[0] % 50 == 0:
+        big_pause = True
+
+    if tmp == 'blocked':
+        end = time.time()
+        dure = int(end - start)
+        dump_res(res)
+        cleanup_memory(logger)
+        logger.error(f'n query = {n_query[0]}, last gene sn = {n}, total duration = {dure}, time per query = {round(dure/n_query[0], 3)}')
+        sys.exit(1)
+
+    if tmp is None:
+        v[1] = 'err'
+        logger.warning(f'\t{n} / {n_total}: {gn} - {gene_id}:  fail to get pheno')
+    elif tmp == 'empty':
+        # no linked pheno
+        logger.debug(f'\t{n} / {n_total}: {gn} - {gene_id}:  no linked pheno')
+        v[1] = 'no_linked_pheno'
+    else:
+        n_pheno_tmp = 0
+        n_pheno_total = len(tmp)
+        for pheno_info in tmp:
+            n_pheno_tmp += 1
+            pheno, pheno_id, title = pheno_info
+            if not pheno_id.strip():
+                logger.debug(f'\tempty pheno ID: gn = {gn}, - {gene_id} pheno = {title}')
+                ires = [pheno, pheno_id, title, '']
+                v[1].append(ires)
+                continue
+
+            desc = get_pheno_detail(driver, pheno_id, title, n_query)
+            if n_query[0] % 50 == 0:
+                big_pause = True
+
+            time_sleep = random.randint(sleep_min, sleep_max)/10
+            logger.info(f'\t    pheno query: ({n_pheno_tmp} / {n_pheno_total}) sleep for {time_sleep}, sn query = {n_query[0]}')
+            time.sleep(time_sleep)
+
+            if desc is not None:
+                ires = [pheno, pheno_id, title, desc]
+                try:
+                    v[1].append(ires)
+                except:
+                    logger.error(f'error, gn = {gn}, v = {v}')
+                    raise
+            else:
+                v[1] = 'err'
+                logger.info(f'\t{n} / {n_total}: {gn} - {gene_id}fail get pheno detail')
+                break
+        else:
+            logger.debug(f'{n} / {n_total}: {gn} - {gene_id}: ok, n pheno = {len(v[1])}')
+
+    if big_pause:
+        logger.info(f'*****    big pause: n gene = {n}: sleep for {time_big_pause}s')
+        dump_res(res)
+        time.sleep(time_big_pause)
+
+# n query before IP blocked
+#  n_query =  , last sn = , total dure = s, time per query = s
+
+# n_gene % 10 , sleep randint(3, 10) : n_query = 548 , last sn = 1690, dure = 540s,  time per query = 0.985s, IP = 139.99.130.220
+# n_query % 5, sleep randint(1, 3) :  n_query =288  , last sn = 1962, time per query = 0.64
+# each query, sleep 0.5-3s:  n query = 308, last gene sn = 2122, total duration = 806, time per query = 2.617
+# each query, sleep 1-2.6s, then n_query = 50 sleep 50:  query can keep running without being blocked. last gene sn = 5654, time per query = 3.4
+# each query, sleep 0.8-2s, then n_query = 50 sleep 30:  query can keep running without being blocked. last gene sn = 5654, time per query = 2.6s
+
+res = {k: v for k, v in res.items() if v[1] != 'err'}
+dump_res(res)
+
+logger.info('all done')
