@@ -1,5 +1,5 @@
 # Copyright (c) 1966-2022 Johns Hopkins University. Use of this file adheres to the terms specified at https://omim.org/help/agreement
-# Generated: 2022-05-05
+# Generated: 2022-05-09
 # This file provides links between the genes in OMIM and other gene identifiers.
 # THIS IS NOT A TABLE OF GENE-PHENOTYPE RELATIONSHIPS.
 # MIM Number	MIM Entry Type (see FAQ 1.3 at https://omim.org/help/faq)	Entrez Gene ID (NCBI)	Approved Gene Symbol (HGNC)	Ensembl Gene ID (Ensembl)
@@ -27747,8 +27747,13 @@
 619859	phenotype			
 619860	gene	149095	DCST1	ENSG00000163357
 619861	gene	127579	DCST2	ENSG00000163354
+619862	phenotype			
 619863	gene	84502	JPH4	ENSG00000092051
 619865	gene	81853	TMEM14B	ENSG00000137210
 619866	gene	284067	CFAP97D1	ENSG00000231256
 619867	phenotype			
+619868	phenotype			
 619869	phenotype			
+619870	gene	79780	CCDC82	ENSG00000149231
+619871	phenotype			
+619873	phenotype			
