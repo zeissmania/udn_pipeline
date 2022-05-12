@@ -486,13 +486,17 @@ class UDN_case():
                     # logger.info(f'No pheno description found on OMIM: gn={gn}')
                     continue
 
-            for iomim_pheno in omim_pheno_list:
+            total_omim = len(omim_pheno_list)
+            for sn_omim, iomim_pheno in enumerate(omim_pheno_list):
                 try:
                     omim_title, omim_desc = iomim_pheno[2:]
                 except:
                     logger.warning(f'invalid omim pickle item, gene = {gn}, v = {iomim_pheno}')
                     continue
-                comment.append('\n' + '@' * 50 + '\n\n\n### **' + omim_title + '**')
+                comment.append('\n' + '@' * 50 + f'\n\n\n### ({sn_omim + 1} / {total_omim}) **' + omim_title + '**')
+
+                omim_desc = omim_desc.replace('Descriptioin\n', '#### Descriptioin \n').replace('Clinical\n', '#### Clinical \n').replace('Molecular\n', '#### Molecular \n')
+
                 comment.append(f'\n{omim_desc}')
 
             comment_compact = '\n'.join(comment).lower().replace('\n', '')
@@ -613,10 +617,11 @@ class UDN_case():
                 logger.debug(f'gene with no OMIM description: {gn}')
                 continue
             n3 += 1
-            print(f'## {n3}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\n{match}\n{partial_match}\n{copy_number}\n\n### main\n\n', file=out_all_genes)  # all genes
+            print(f'## {n3}:\t{gn} : {amelie_score} \tcover_exon={cover_exon_flag}\n{match}\n{partial_match}\n{copy_number}\n\n### main\n\n', file=out_all_genes)  # all genes
             print(comment, file=out_all_genes)
             print('#' * 50 + '\n\n\n', file=out_all_genes)
 
+        total_full_match = len([v[0] for v in res1 if len(v[1][0]) > 0])
         for v in res1:
             gn = v[0]
             match, partial_match, comment, cover_exon_flag, amelie_score, copy_number = v[1]
@@ -625,11 +630,11 @@ class UDN_case():
             if len(match) > 0:
                 gene_match.add(gn)
                 n1 += 1
-                print(f'## {n1}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\n{match}\n{partial_match}\n{copy_number}\n\n### main\n\n', file=out_full_match)
+                print(f'## {n1}/{total_full_match}:\t{gn} : {amelie_score}\tcover_exon={cover_exon_flag}\n{match}\n{partial_match}\n{copy_number}\n\n### main\n\n', file=out_full_match)
                 print(comment, file=out_full_match)
                 print('#' * 50 + '\n\n\n', file=out_full_match)
 
-
+        total_partial_match = len([v[0] for v in res1 if len(v[1][0]) == 0 and len(v[1][1]) > 0])
         for v in res2:
             gn = v[0]
             if gn in gene_match:
@@ -638,7 +643,7 @@ class UDN_case():
             partial_match = '\n'.join(partial_match)
             if len(partial_match) > 0:
                 n2 += 1
-                print(f'## {n2}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\n{partial_match}{copy_number}\n\n### main\n\n', file=out_partial_match)
+                print(f'## {n2}/{total_partial_match}:\t{gn} : {amelie_score}\tcover_exon={cover_exon_flag}\n{partial_match}{copy_number}\n\n### main\n\n', file=out_partial_match)
                 print(comment, file=out_partial_match)
                 print('#' * 50 + '\n\n\n', file=out_partial_match)
         out_full_match.close()
