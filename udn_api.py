@@ -1550,7 +1550,7 @@ def upload_files(nodename, pw_accre_data, pw_accre_scratch, udn_raw, rename=Fals
             fls.append(f'put {ifl} {pw_accre_scratch}/{udn_raw}/')
         fls = '\\n'.join(fls)
         cmd = f"""sftp {nodename} <<< $'{fls}' >/dev/null 2>/dev/null"""
-        logger.info(f'update {upload_file_list} to  {nodename}: {udn_raw}')
+        logger.info(f'update {upload_file_list} to  {nodename}: {udn_raw},  {pw_accre_data}/{udn_raw}/, {pw_accre_scratch}/{udn_raw}/')
         # logger.info(f'command = {cmd}')
         os.system(cmd)
 
@@ -1798,7 +1798,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
 
-    udn_list = [_.strip().upper() for _ in udn_list if _.strip()]
+    udn_list = [_.strip() for _ in udn_list if _.strip()]
 
     # validate udn
     p = re.compile(r'(?:.*)?(UDN\d+)')
@@ -1832,6 +1832,7 @@ if __name__ == "__main__":
     if len(validated) == 0:
         logger.error('No UDN case passed in, please check')
         sys.exit(1)
+
 
     # sys.exit(1)
     logger.info('\n\n\n'+'#' *30)
@@ -1924,6 +1925,7 @@ if __name__ == "__main__":
             initail_upload_toggle = False
         else:
             initail_upload_toggle = True
+
 
         if upload:
             upload_files(nodename, pw_accre_data, pw_accre_scratch, udn_raw, rename=rename_remote, udn_raw_old=udn_raw_old, initial=initail_upload_toggle, upload_only=upload_only)

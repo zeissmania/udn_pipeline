@@ -5,7 +5,7 @@ return = dict, k1 = gene, pheno.
 value for gene = k: gn, v = linked OMIM pheno ID
 value for pheno, k = OMIM pheno ID, v = description
 """
-import os, sys, re, pickle
+import os, sys, re, pickle, json
 from selenium.webdriver.support.ui import WebDriverWait as wait
 import time
 import random
@@ -87,8 +87,11 @@ def gn_to_pheno(driver, gn, gene_id, n_query):
     """
 
     url = f'https://www.omim.org/entry/{gene_id}'
-
-    driver.get(url)
+    try:
+        driver.get(url)
+    except:
+        driver = get_driver(None, logger)
+        driver.get(url)
     n_query[0] = n_query[0] + 1
     try:
         # test if the page is ready
@@ -97,26 +100,26 @@ def gn_to_pheno(driver, gn, gene_id, n_query):
         try:
             if driver.find_element_by_xpath('//p[contains(text(), "has been blocked because it was identified as a crawler")]'):
                 logger.error('fail to scrapy because blocked by OMIM website')
-                return 'blocked'
+                return driver, 'blocked'
         except:
             pass
 
         logger.warning(f'page not loaded for {gn}, omim gene id = {gene_id}')
-        return None
+        return driver, None
 
     try:
         ele = driver.find_element_by_xpath('//div[./span/strong[text()="Gene-Phenotype Relationships"]]')
     except:
-        return 'empty'
+        return driver, 'empty'
 
     try:
         tb = ele.find_element_by_xpath('./following-sibling::div/table/tbody')
         rows = tb.find_elements_by_tag_name('tr')
-        rows = [[cell.text for cell in _.find_elements_by_tag_name('td')] for _ in rows]
+        rows = [[cell.get_attribute('innerText') for cell in _.find_elements_by_tag_name('td')] for _ in rows]
     except:
-        logger.warning(f'gene-pheno section found, but fail to get table: {gn} - {gene_id}')
+        logger.error(f'gene-pheno section found, but fail to get table: {gn} - {gene_id}')
         raise
-        return None
+        # return driver,  None
 
     res = []
     dedup = set()
@@ -130,13 +133,18 @@ def gn_to_pheno(driver, gn, gene_id, n_query):
             logger.warning(f'wrong gene-pheno map row gene={gn}, gene_id = {gene_id}, row =  {i}')
             continue
         # like Intellectual developmental disorder and retinitis pigmentosa, 618195 (3), AR
+        if not pheno.strip():
+            continue
         title = f'{pheno}, {pheno_id} ({k}), {inher}'
         if pheno_id not in dedup:
             res.append([pheno, pheno_id, title])
             dedup.add(pheno_id)
+    if len(res) == 0:
+        return driver, 'empty'
+
 
     logger.info(f'\t    pheno count: nrow = {len(rows)}, dedup = {len(res)}')
-    return res
+    return driver, res
 
 def get_pheno_detail(driver, pheno_id, pheno_title, n_query):
     """
@@ -145,31 +153,35 @@ def get_pheno_detail(driver, pheno_id, pheno_title, n_query):
     str,  the whole description
     """
     url = f'https://www.omim.org/entry/{pheno_id}'
-    driver.get(url)
+    try:
+        driver.get(url)
+    except:
+        driver = get_driver(None, logger)
+        driver.get(url)
     n_query[0] = n_query[0] + 1
     try:
         # test if the page is ready
         wait(driver, 5).until(lambda _: _.find_element_by_xpath('//a[@id="preferredTitle"]'))
     except:
         logger.warning(f'page not loaded for {pheno_title}, pheno ID = {pheno_id}')
-        return None
+        return driver, None
 
     try:
-        desc = driver.find_element_by_xpath('//div[@id="descriptionFold"]').text
+        desc = driver.find_element_by_xpath('//div[@id="descriptionFold"]').get_attribute('innerText')
         if desc.strip():
             desc = 'Descriptioin\n' + desc
     except:
         desc =  ''
 
     try:
-        clin = driver.find_element_by_xpath('//div[@id="clinicalFeaturesFold"]').text
+        clin = driver.find_element_by_xpath('//div[@id="clinicalFeaturesFold"]').get_attribute('innerText')
         if clin.strip():
             clin = 'Clinical\n' + clin
     except:
         clin =  ''
 
     try:
-        mol = driver.find_element_by_xpath('//div[@id="molecularGeneticsFold"]').text
+        mol = driver.find_element_by_xpath('//div[@id="molecularGeneticsFold"]').get_attribute('innerText')
         if mol.strip():
             mol = 'Molecular\n' + mol
     except:
@@ -177,7 +189,7 @@ def get_pheno_detail(driver, pheno_id, pheno_title, n_query):
 
     res = '\n'.join([desc, clin, mol])
 
-    return res
+    return driver, res
 #   id  type    gid1       gn             gid2
 # 100640  gene   216.0  ALDH1A1  ENSG00000165092
 
@@ -210,7 +222,6 @@ start = time.time()
 logger.info(f'total genes = {len(res)}')
 
 # get the related phenotype
-driver = get_driver(None, logger)
 
 n_total = len(res)
 n = 0
@@ -219,6 +230,7 @@ time_big_pause = 30
 sleep_min = 8 # actual time = / 10
 sleep_max = 20 # actual time = / 10
 
+driver = None
 for gn, v in res.items():
     n += 1
     gene_id = v[0]
@@ -245,7 +257,9 @@ for gn, v in res.items():
 
     logger.info(f'gene query: {n} / {n_total}: {gn} - {gene_id}  - sleep for {time_sleep}, sn query = {n_query[0] + 1}, n_gene = {n_query[1] + 1}, query/gene ratio = {ratio}, speed = {time_per_query}, exp_remain complete time = {exp_complete_time}')
 
-    tmp = gn_to_pheno(driver, gn, gene_id, n_query)
+    driver, tmp = gn_to_pheno(driver, gn, gene_id, n_query)
+
+
     time.sleep(time_sleep)
     n_query[1] += 1
 
@@ -279,7 +293,7 @@ for gn, v in res.items():
                 v[1].append(ires)
                 continue
 
-            desc = get_pheno_detail(driver, pheno_id, title, n_query)
+            driver, desc = get_pheno_detail(driver, pheno_id, title, n_query)
             if n_query[0] % 50 == 0:
                 big_pause = True
 
@@ -319,3 +333,45 @@ res = {k: v for k, v in res.items() if v[1] != 'err'}
 dump_res(res)
 
 logger.info('all done')
+
+
+def check_result(omim):
+    ct = {}
+    gn_with_invalid_pheno = []
+    for gn, v in omim.items():
+        if len(v) != 2:
+            k = 'n != 2'
+            ntmp = ct.setdefault(k, 0)
+            ct[k] = ntmp + 1
+        elif not isinstance(v[1], list):
+            k = v[1]
+            ntmp = ct.setdefault(k, 0)
+            ct[k] = ntmp + 1
+        else:
+            n_invalid = 0
+            for i in v[1]:
+                if len(i) != 4:
+                    n_invalid += 1
+            if n_invalid == 0:
+                if len(v[1]) > 0:
+                    k = 'with pheno'
+                    ntmp = ct.setdefault(k, 0)
+                    ct[k] = ntmp + 1
+                else:
+                    k = 'empty pheno'
+                    ntmp = ct.setdefault(k, 0)
+                    ct[k] = ntmp + 1
+            else:
+                k = 'invalid pheno'
+                gn_with_invalid_pheno.append(gn)
+                ntmp = ct.setdefault(k, 0)
+                ct[k] = ntmp + 1
+    tmp = json.dumps(ct, indent=2)
+    logger.info(f'omim status: {tmp}')
+
+    if len(gn_with_invalid_pheno) > 0:
+        with open(f'omim_gene_with_invalid_phenotype.txt', 'w') as o:
+            print('\n'.join(gn_with_invalid_pheno), file=o)
+
+
+check_result(res)
