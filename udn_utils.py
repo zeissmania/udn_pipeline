@@ -287,18 +287,9 @@ class UDN_case():
             self.get_annot_col()
             cols = self.cols
 
-        fn_gene_comment = f'{pw_code}/omim.gene_comment.txt'
-        fn_gene_description_omim = f'{pw_code}/omim.gene_description_omim.txt'
-        fn_gene_description_omim_pkl = f'{pw_code}/omim.gene_description_omim.pkl'
-
-        if os.path.exists(f'{pw}/{udn}.omim_match_gene.txt'):
-            logger.info(f'OMIM match already done')
-            return 0
-
         if not force_rerun and os.path.exists(f'{pw}/omim_match_gene.{udn}.md'):
             logger.debug(f'OMIM query report already done')
             return 0
-
 
         if not os.path.exists(fn_pheno) or os.path.getsize(fn_pheno) < 10:
             fn_pheno = f'{self.pw}/origin/{self.prj}.terms.txt'
@@ -387,50 +378,38 @@ class UDN_case():
 
         # logger.warning(f'POU6F2:{d_gene["POU6F2"]}')
 
-        d_gene_comment = {}
+        # fn_gene_description_omim_pkl = f'{pw_code}/omim.gene_description_omim.pkl'
+
+        fn_omim_pkl = f'{pw_code}/omim_description.scrapy.pkl'
+        # k1 = hgnc_gn, v = [omim_gene_id_, []]
+        # ele2 = [pheno, pheno_id, full_pheno_title, description]
+        # usually, we only need the full_pheno_title and description
+        # or "no_linked_pheno"
+
+        dump_omim_pkl = 0
         d_gene_comment_scrapy = {}
-        d_gene_comment_scrapy_new = {}
 
-
-        if os.path.exists(fn_gene_description_omim_pkl):
+        if os.path.exists(fn_omim_pkl):
             logger.info('load omim info from pickle')
-            with open(fn_gene_description_omim_pkl, 'rb') as f:
+            with open(fn_omim_pkl, 'rb') as f:
                 d_gene_comment_scrapy = pickle.load(f)
         else:
-            logger.info(f'file not found: {fn_gene_description_omim_pkl}')
-            for d1, fn1 in zip([d_gene_comment, d_gene_comment_scrapy], [fn_gene_comment, fn_gene_description_omim]):
-                new = 1
-                try:
-                    with open(fn1) as fp:
-                        for i in fp:
-                            i = i.strip()
-                            if not i.strip():
-                                try:
-                                    if gn not in d1:
-                                        d1[gn] = comment
-                                except:
-                                    continue
-                                new = 1
-                            elif new == 1 and len(i) < 30:
-                                gn = i
-                                new = 0
-                                comment = ''
-                            elif new == 1:
-                                logger.warning(f'wrong gene name found in {pw_code}/gene_comment.txt: {i}')
-                                gn = 'wrong'
-                                continue
-                            else:
-                                comment += i + '\n'
-                except:
-                    logger.warning(f'{fn1} not exist')
-                    with open(fn1, 'w') as out:
-                        pass
+            logger.info(f'file not found: {fn_omim_pkl}')
 
-        logger.info(f'local total gene number with OMIM description={len(d_gene_comment_scrapy)}')
+        omim_gn_total = set()
+        non_omim_gn_total = set()
+        for gn, v in d_gene_comment_scrapy.items():
+            if isinstance(v[1], list) and len(v[1]) > 0:
+                omim_gn_total.add(gn)
+            elif v[1] == 'no_linked_pheno':
+                non_omim_gn_total.add(gn)
 
-        gene_with_omim = set(d_gene) & set(list(d_gene_comment_scrapy) + list(d_gene_comment))
+        logger.info(f'local total gene number with OMIM description={len(omim_gn_total)};  gene without linked omim = {len(non_omim_gn_total)}')
+
+        gene_with_omim = set(d_gene) & omim_gn_total
+        genes_need_scrapy = set(d_gene) - set(d_gene_comment_scrapy)
         logger.info(f'gene count in merged.sorted.tsv: {len(d_gene)}')
-        logger.info(f'gene count in with OMIM description: {len(gene_with_omim)}')
+        logger.info(f'gene count in with OMIM description: {len(gene_with_omim)}, genes need scrapy OMIM = {len(genes_need_scrapy)}')
 
         # build the phenotype keyword list
         # if 2 words link together, use +, if match the exact word, add a prefix @
@@ -489,35 +468,38 @@ class UDN_case():
             if gn in res:
                 continue  # avoid the duplicate running
             res[gn] = [[], [], '', cover_exon_flag, amelie_score, copy_number]  # match pheno, partial match pheno, comment, cover_exon_flag, amelie rank
-            if gn in d_gene_comment:
-                comment = d_gene_comment[gn] + '\n'
-            else:
-                comment = ''
+            comment = []
 
-            if gn in d_gene_comment_scrapy:
-                comment_raw = d_gene_comment_scrapy[gn]
-                comment += comment_raw
+            if gn in omim_gn_total:
+                omim_pheno_list = d_gene_comment_scrapy[gn][1]
             else:
                 # run the scrapy
                 # comment is a dict, key=pheno_id, v=pheno description
                 logger.warning(f'run scrapy: {gn}')
-                comment_raw, driver = run_omim_scrapy(gn, omim_id, logger, driver=driver)
-                if comment_raw:
-                    comment += '\n'.join(comment_raw.values())
-                    d_gene_comment_scrapy_new[gn] = comment.strip()
-                    d_gene_comment_scrapy[gn] = comment.strip()
+                driver, ires = run_omim_scrapy(gn, omim_id, logger, driver=driver)
+                if ires:
+                    omim_pheno_list = ires[1]
+                    d_gene_comment_scrapy[gn] = ires
+                    dump_omim_pkl = 1
                 else:
                     n_no_omim += 1
                     # logger.info(f'No pheno description found on OMIM: gn={gn}')
                     continue
 
-            comment = comment.strip()
-            comment = re.sub(r'\n\*\*', "\n" + '_'*50+'\n\n\n**', comment)
-            comment_compact = comment.lower().replace('\n', '')
-            comment_list = comment.split('\n')
-            comment_list = [_.strip() for _ in comment_list]
+            total_omim = len(omim_pheno_list)
+            for sn_omim, iomim_pheno in enumerate(omim_pheno_list):
+                try:
+                    omim_title, omim_desc = iomim_pheno[2:]
+                except:
+                    logger.warning(f'invalid omim pickle item, gene = {gn}, v = {iomim_pheno}')
+                    continue
+                comment.append('\n' + '@' * 50 + f'\n\n\n### ({sn_omim + 1} / {total_omim}) **' + omim_title + '**')
 
-            comment_list = ['### ' + icomment if icomment[:2] == '**' and icomment[-2:] == '**' else icomment for icomment in comment_list]
+                omim_desc = omim_desc.replace('Descriptioin\n', '#### Descriptioin \n').replace('Clinical\n', '#### Clinical \n').replace('Molecular\n', '#### Molecular \n')
+
+                comment.append(f'\n{omim_desc}')
+
+            comment_compact = '\n'.join(comment).lower().replace('\n', '')
 
             # query the phenotype
             highlighted_words = set() | redundant_words
@@ -534,7 +516,7 @@ class UDN_case():
 
                     if _[0] == '-':  # negative match, exclude
                         word = _[1:]
-                        if comment.lower().find(word) < 0:
+                        if comment_compact.lower().find(word) < 0:
                             n_matched_word += 1
                             matched_word.append(_)
                     else:
@@ -584,7 +566,7 @@ class UDN_case():
                                 # logger.info(f'{symbol}, {word} {gn}')
                                 highlighted_words.add(word)
                                 symbol_to_word[symbol] = word
-                                comment_list = [re.sub(word, symbol, icomment, flags=re.I) if icomment[:2] != '**' and icomment[-2:] != '**' else icomment for icomment in comment_list]
+                                comment = [re.sub(word, symbol, icomment, flags=re.I) if icomment[:3] != '###' and icomment[-2:] != '**' else icomment for icomment in comment]
 
                 if n_matched_word == n_total_word:
                     res[gn][0].append(f'full_match: {ipheno_raw}')
@@ -595,9 +577,8 @@ class UDN_case():
             if n_word_match_meaning > 0:
                 logger.debug(f'{gn}\t{highlighted_words - redundant_words}')
 
-            comment_list = [refine_comment(_, symbol_to_word) for _ in comment_list]
-
-            res[gn][2] = '\n'.join(comment_list)
+            comment = [refine_comment(_, symbol_to_word) for _ in comment]
+            res[gn][2] = '\n'.join(comment)
 
         # logger.info(f'genes not found in OMIM: {n_no_omim} / {len(d_gene)}')
 
@@ -605,19 +586,10 @@ class UDN_case():
         #     # [[], [], '', cover_exon_flag, amelie_score]  # match pheno, partial match pheno, comment, cover_exon_flag, amelie rank
         #     print(gn, [v1[_] for _ in [0, 1]])
 
-        if len(d_gene_comment_scrapy_new) > 0:
-            with open(fn_gene_description_omim, 'a') as out:
-                out.write('\n\n')
-                for gn, desc in d_gene_comment_scrapy_new.items():
-                    print(gn, file=out)
-                    print(desc, file=out)
-                    print('\n\n', file=out)
-
-        if not os.path.exists(fn_gene_description_omim_pkl) or len(d_gene_comment_scrapy_new) > 0:
+        if dump_omim_pkl and len(d_gene_comment_scrapy) > 5000:
             logger.info('dumping OMIM records')
-            with open(fn_gene_description_omim_pkl, 'wb') as o:
+            with open(fn_omim_pkl, 'wb') as o:
                 pickle.dump(d_gene_comment_scrapy, o)
-
 
         # logger.info(f'OMIM query count={len(res)}')
 
@@ -645,10 +617,11 @@ class UDN_case():
                 logger.debug(f'gene with no OMIM description: {gn}')
                 continue
             n3 += 1
-            print(f'## {n3}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\n{match}\n{partial_match}\n{copy_number}\n\n### main\n\n', file=out_all_genes)  # all genes
+            print(f'## {n3}:\t{gn} : {amelie_score} \tcover_exon={cover_exon_flag}\n{match}\n{partial_match}\n{copy_number}\n\n### main\n\n', file=out_all_genes)  # all genes
             print(comment, file=out_all_genes)
             print('#' * 50 + '\n\n\n', file=out_all_genes)
 
+        total_full_match = len([v[0] for v in res1 if len(v[1][0]) > 0])
         for v in res1:
             gn = v[0]
             match, partial_match, comment, cover_exon_flag, amelie_score, copy_number = v[1]
@@ -657,11 +630,11 @@ class UDN_case():
             if len(match) > 0:
                 gene_match.add(gn)
                 n1 += 1
-                print(f'## {n1}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\n{match}\n{partial_match}\n{copy_number}\n\n### main\n\n', file=out_full_match)
+                print(f'## {n1}/{total_full_match}:\t{gn} : {amelie_score}\tcover_exon={cover_exon_flag}\n{match}\n{partial_match}\n{copy_number}\n\n### main\n\n', file=out_full_match)
                 print(comment, file=out_full_match)
                 print('#' * 50 + '\n\n\n', file=out_full_match)
 
-
+        total_partial_match = len([v[0] for v in res1 if len(v[1][0]) == 0 and len(v[1][1]) > 0])
         for v in res2:
             gn = v[0]
             if gn in gene_match:
@@ -670,7 +643,7 @@ class UDN_case():
             partial_match = '\n'.join(partial_match)
             if len(partial_match) > 0:
                 n2 += 1
-                print(f'## {n2}:\t{gn}\tcover_exon={cover_exon_flag}\tamelie={amelie_score}\n{partial_match}{copy_number}\n\n### main\n\n', file=out_partial_match)
+                print(f'## {n2}/{total_partial_match}:\t{gn} : {amelie_score}\tcover_exon={cover_exon_flag}\n{partial_match}{copy_number}\n\n### main\n\n', file=out_partial_match)
                 print(comment, file=out_partial_match)
                 print('#' * 50 + '\n\n\n', file=out_partial_match)
         out_full_match.close()
@@ -1692,7 +1665,6 @@ class UDN_case():
                 os.system(f'rm {fn} 2>/dev/null')
                 force=True
             else:
-                logger.info('amelie query already done')
                 # self.check_amelie_missing()
                 return 0
         logger.info('getting information from AMELIE')
@@ -2154,7 +2126,188 @@ def run_selenium(driver, url_omim, gn, gn_omim_id, logger):
 
     return driver, html
 
-def run_omim_scrapy(gn, gn_omim_id, logger, res_prev=None, driver=None):
+
+
+def gn_to_pheno(driver, gn, gene_id, logger):
+    """
+    return
+    None - error, page not loaded
+    'empty',  no linked phenotype for this gene
+    list, element = [pheno_id, pheno_name, merged_title]
+    """
+
+    url = f'https://www.omim.org/entry/{gene_id}'
+    try:
+        driver.get(url)
+    except:
+        driver = get_driver(None, logger)
+        driver.get(url)
+    try:
+        # test if the page is ready
+        wait(driver, 5).until(lambda _: _.find_element_by_xpath('//a[@id="preferredTitle"]'))
+    except:
+        try:
+            if driver.find_element_by_xpath('//p[contains(text(), "has been blocked because it was identified as a crawler")]'):
+                logger.error('fail to scrapy because blocked by OMIM website')
+                return driver, 'blocked'
+        except:
+            pass
+
+        logger.warning(f'page not loaded for {gn}, omim gene id = {gene_id}')
+        return driver, None
+
+    try:
+        ele = driver.find_element_by_xpath('//div[./span/strong[text()="Gene-Phenotype Relationships"]]')
+    except:
+        return driver, 'empty'
+
+    try:
+        tb = ele.find_element_by_xpath('./following-sibling::div/table/tbody')
+        rows = tb.find_elements_by_tag_name('tr')
+        rows = [[cell.get_attribute('innerText') for cell in _.find_elements_by_tag_name('td')] for _ in rows]
+    except:
+        logger.error(f'gene-pheno section found, but fail to get table: {gn} - {gene_id}')
+        raise
+        # return driver,  None
+
+    res = []
+    dedup = set()
+    for i in rows:
+        # ['6q25.3', '?ACAT2 deficiency', '614055', 'IC', '1']
+        # location, pheno, pheno_id, inher, pheno_mapping_key
+        # the row can be 5 columns or 4 columns
+        try:
+            pheno, pheno_id, inher, k = i[-4:]
+        except:
+            logger.warning(f'wrong gene-pheno map row gene={gn}, gene_id = {gene_id}, row =  {i}')
+            continue
+        # like Intellectual developmental disorder and retinitis pigmentosa, 618195 (3), AR
+        if not pheno.strip():
+            continue
+        title = f'{pheno}, {pheno_id} ({k}), {inher}'
+        if pheno_id not in dedup:
+            res.append([pheno, pheno_id, title])
+            dedup.add(pheno_id)
+    if len(res) == 0:
+        return driver, 'empty'
+
+    logger.info(f'\t    pheno count: nrow = {len(rows)}, dedup = {len(res)}')
+    return driver, res
+
+
+def get_pheno_detail(driver, pheno_id, pheno_title, logger):
+    """
+    return
+    None, there is error to get the description
+    str,  the whole description
+    """
+    url = f'https://www.omim.org/entry/{pheno_id}'
+    try:
+        driver.get(url)
+    except:
+        driver = get_driver(None, logger)
+        driver.get(url)
+    try:
+        # test if the page is ready
+        wait(driver, 5).until(lambda _: _.find_element_by_xpath('//a[@id="preferredTitle"]'))
+    except:
+        logger.warning(f'page not loaded for {pheno_title}, pheno ID = {pheno_id}')
+        return driver, None
+
+    try:
+        desc = driver.find_element_by_xpath('//div[@id="descriptionFold"]').get_attribute('innerText')
+        if desc.strip():
+            desc = 'Descriptioin\n' + desc
+    except:
+        desc =  ''
+
+    try:
+        clin = driver.find_element_by_xpath('//div[@id="clinicalFeaturesFold"]').get_attribute('innerText')
+        if clin.strip():
+            clin = 'Clinical\n' + clin
+    except:
+        clin =  ''
+
+    try:
+        mol = driver.find_element_by_xpath('//div[@id="molecularGeneticsFold"]').get_attribute('innerText')
+        if mol.strip():
+            mol = 'Molecular\n' + mol
+    except:
+        mol =  ''
+
+    res = '\n'.join([desc, clin, mol])
+
+    return driver, res
+
+def cleanup_memory(logger, driver):
+    try:
+        logger.debug('now killing the chrome process')
+    except:
+        print('\tnow killing the chrome process')
+    try:
+        driver.close()
+        driver.quit()
+    except:
+        pass
+    os.system("""ps -ef|grep -i "chrome"|awk '{print $2}'|sort|uniq|parallel 'kill -9 {} 2>/dev/null' """)
+    os.system("""ps -ef|grep -i "firefox"|awk '{print $2}'|sort|uniq|parallel 'kill -9 {} 2>/dev/null' """)
+
+
+
+def run_omim_scrapy(gn, gene_id, logger, driver=None):
+    start = time.time()
+    v = [gene_id, []]
+    driver, tmp = gn_to_pheno(driver, gn, gene_id, logger)
+    time_sleep = 5
+    time.sleep(time_sleep)
+
+    if tmp == 'blocked':
+        end = time.time()
+        dure = int(end - start)
+        cleanup_memory(logger, driver)
+        logger.error(f'IP blocked by OMIM: gn = {gn} total duration = {dure}')
+        sys.exit(1)
+
+    if tmp is None:
+        v[1] = 'err'
+        logger.warning(f'{gn} - {gene_id}:  fail to get pheno')
+        return driver, None
+    elif tmp == 'empty':
+        # no linked pheno
+        logger.debug(f'{gn} - {gene_id}:  no linked pheno')
+        v[1] = 'no_linked_pheno'
+    else:
+        n_pheno_tmp = 0
+        for pheno_info in tmp:
+            n_pheno_tmp += 1
+            pheno, pheno_id, title = pheno_info
+            if not pheno_id.strip():
+                logger.debug(f'\tempty pheno ID: gn = {gn}, - {gene_id} pheno = {title}')
+                ires = [pheno, pheno_id, title, '']
+                v[1].append(ires)
+                continue
+
+            driver, desc = get_pheno_detail(driver, pheno_id, title, logger)
+            time.sleep(5)
+
+            if desc is not None:
+                ires = [pheno, pheno_id, title, desc]
+                try:
+                    v[1].append(ires)
+                except:
+                    logger.error(f'error, gn = {gn}, v = {v} fail to append')
+                    raise
+            else:
+                v[1] = 'err'
+                logger.info(f'\t{gn} - {gene_id}fail get pheno detail')
+                break
+        else:
+            logger.debug(f'{gn} - {gene_id}: ok, n pheno = {len(v[1])}')
+
+    return driver, v
+
+
+def run_omim_scrapy_old(gn, gn_omim_id, logger, res_prev=None, driver=None):
     """
     get the omim disease discription
     return key=pheno_id, value=the description and clinicalfeatures text
@@ -2170,7 +2323,7 @@ def run_omim_scrapy(gn, gn_omim_id, logger, res_prev=None, driver=None):
         logger.warning(f'multiple OMIM id find, gn={gn}, omim_id={gn_omim_id}')
         res = {}
         for omim_id_tmp  in omim_id_list:
-            res_tmp, driver = run_omim_scrapy(gn, omim_id_tmp.strip().split('.', 1)[0], logger, res_prev=res, driver=driver)
+            res_tmp, driver = run_omim_scrapy_old(gn, omim_id_tmp.strip().split('.', 1)[0], logger, res_prev=res, driver=driver)
             if res_tmp:
                 res.update(res_tmp)
         return res, driver
