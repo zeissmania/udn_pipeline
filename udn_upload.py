@@ -1059,8 +1059,6 @@ def clearlog():
     logger.info(f'upload files = {len(upload_fls)}, download files = {len(download_fls)}')
 
 
-
-
     cmd = ""
     if len(download_fls) > 0:
         download_fls = '\n'.join(download_fls)

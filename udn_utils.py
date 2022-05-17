@@ -653,7 +653,6 @@ class UDN_case():
         logger.info(f'gene with OMIM partial match= {n2}')
 
 
-
     def verify_config(self):
         cfg = self._cfg
         logger = self.logger
