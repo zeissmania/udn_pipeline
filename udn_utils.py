@@ -300,6 +300,7 @@ class UDN_case():
 
         # get the gene list with OMIM desease
         d_gene = {}
+        n_gene_total = 0
         with open(fn) as fp:
             header = fp.readline()
             header = header.strip().split('\t')
@@ -344,6 +345,7 @@ class UDN_case():
                 sv_type = a[idx['sv_type']]
                 sv_len = a[idx['sv_len']]
                 qual_proband = a[idx['qual']]
+                n_gene_total += 1
 
                 other_info = ['',]
                 for _ in header_other_info:
@@ -353,7 +355,7 @@ class UDN_case():
                     amelie_score = float(a[idx['AMELIE']])
                 except:
                     logger.warning(f'wrong amelie score: {a}')
-                    continue
+                    amelie_score = -1
 
                 cover_exon_flag = 1 if a[idx['exon_span_tag']].strip() else 0
                 copy_number = ''
@@ -408,7 +410,7 @@ class UDN_case():
 
         gene_with_omim = set(d_gene) & omim_gn_total
         genes_need_scrapy = set(d_gene) - set(d_gene_comment_scrapy)
-        logger.info(f'gene count in merged.sorted.tsv: {len(d_gene)}')
+        logger.info(f'gene count in merged.sorted.tsv: total = {n_gene_total}, with OMIM ID={len(d_gene)}')
         logger.info(f'gene count in with OMIM description: {len(gene_with_omim)}, genes need scrapy OMIM = {len(genes_need_scrapy)}')
 
         # build the phenotype keyword list

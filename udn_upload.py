@@ -574,7 +574,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                     with open(fn_md5_local) as f:
                         md5_local = f.readline().strip().split(' ')[0]
 
-                md5_exp = os.popen(f'grep -h -w {fn} {pw}/download.*.md5').read().strip().split(' ')[0]
+                md5_exp = os.popen(f'grep -h -w {fn} {pw}/download.*.md5 2>/dev/null').read().strip().split(' ')[0]
 
                 if not md5_exp:
                     msg += '\t exp md5 not found'
@@ -582,6 +582,9 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
 
                 if md5_exp == md5_local and md5_local != 'NA':
                     logger.info(colored(f'\tmd5 match: {fn}', 'green'))
+                elif md5_exp == 'NA':
+                    # logger.info(f'\tmd5 exp not available')
+                    pass
                 else:
                     logger.error(colored(f'\tmd5 not match: {fn}', 'red'))
 
@@ -762,7 +765,7 @@ checklocal(){{
         md5sum  {fn_download} >{pw}/download/{fn}.md5 2>{pw}/download/{fn}.md5.log
     fi
 
-    md5_exp=$(grep -h "{fn}" {pw}/download.UDN*.md5 |head -1|cut -d " " -f1)
+    md5_exp=$(grep -h "{fn}" {pw}/download.UDN*.md5 2>/dev/null|head -1|cut -d " " -f1)
     md5_local=$(head -1 {pw}/download/{fn}.md5|cut -d " " -f1)
 
     if [[ -z $md5_exp ]];then
@@ -776,7 +779,6 @@ checklocal(){{
         echo ERROR, md5 not match! {fn_download}; exp=$md5_exp , local=$md5_local  >> {fn_status}
 
         echo $(date): ERROR, md5 not match! {fn_download}; exp=$md5_exp , local=$md5_local  >> /fs0/members/chenh19/tmp/upload/error.md5_not_match.files.txt
-
     fi
 
 }}
@@ -1080,6 +1082,12 @@ done << EOF_
 {upload_fls}
 EOF_
 """
+
+
+    # remove the log files in shell
+    cmd += """find . -iname "*.sh.log" -size -100c|grep -w "/shell/|xargs -I {} rm {}\n"""
+    cmd += """find . -iname "*.md5.log" -size -100c|grep -w "/download/|xargs -I {} rm {}\n"""
+
     if cmd:
         os.system(cmd)
     else:
