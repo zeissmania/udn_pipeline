@@ -59,6 +59,7 @@ ps.add_argument('-skip_download', '-skip', '-nodown', help="""skip download the 
 ps.add_argument('-allversion', '-all', help="""include all versions even the updated version exist""", action='store_true')
 ps.add_argument('-remote_flat', '-no_remote_sub_folder', '-flat', help="""don't create remote subfolders""", action='store_true')
 ps.add_argument('-force_upload', '-forceup', '-fu', help="""force upload the file to server, even the file size match with remote""", action='store_true')
+ps.add_argument('-forcedown', '-fd',  help="""force download the file even if the file already uploaded. but if the local file already exist, will skip""", action='store_true')
 ps.add_argument('-clear', '-rmlog', help="""clear the log files for upload and download""", action='store_true')
 
 args = ps.parse_args()
@@ -475,7 +476,10 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
             remote_pw_final = f'{remote_pw}' if remote_flat else f'{remote_pw}/{name}'
             remote_pw_final = re.sub(r'/$', '', remote_pw_final)
 
-            v = {'size': size_exp, 'download_type': download_type, 'upload_type': upload_type, 'url': url, 'remote': remote_pw_final, 'downloaded': downloaded or uploaded, 'uploaded': uploaded, 'size_remote': f'{size_remote:,}', 'rename': rename, 'sample_list': sample_list}
+            if not force_download:
+                downloaded = downloaded or uploaded
+
+            v = {'size': size_exp, 'download_type': download_type, 'upload_type': upload_type, 'url': url, 'remote': remote_pw_final, 'downloaded': downloaded, 'uploaded': uploaded, 'size_remote': f'{size_remote:,}', 'rename': rename, 'sample_list': sample_list}
             try:
                 d[remote_pw][fn] = v
             except:
@@ -562,9 +566,8 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
             if v['uploaded']:
                 logger.info(colored(f'file already uploaded: {fn}', 'green'))
                 n_uploaded += 1
-                n_downloaded += 1
-                fn_md5_local = f'{pw}/download/{fn}.md5'
 
+                fn_md5_local = f'{pw}/download/{fn}.md5'
 
                 msg = ''
                 if not os.path.exists(fn_md5_local):
@@ -588,16 +591,13 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                 else:
                     logger.error(colored(f'\tmd5 not match: {fn}', 'red'))
 
-
-
-
-
-                continue
+                if not force_download:
+                    n_downloaded += 1
+                    continue
 
             if not v['downloaded']:
                 need_upload.append(fn)
                 script_list['needdown'].append(fn_script)
-                # n_need_upload += 1
             else:
                 n_downloaded += 1
                 need_upload.append(fn)
@@ -724,7 +724,9 @@ def build_script(pw, d, info_file, no_upload=False):
             fn_script = f'{pw}/shell/{fn}.download_upload.{dest}.sh'
             fn_status = f'{pw}/log/status.{fn}.txt'
 
-            if v['uploaded'] and not  args.force:
+            need_upload = not v['uploaded']
+
+            if v['uploaded'] and not  args.force and not force_download:
                 os.system(f'mv  {fn_script} {pw}/shell_done/{fn}.download_upload.{dest}.sh 2>/dev/null')
                 continue
 
@@ -888,7 +890,7 @@ postupload(){{
 download_status=$(checklocal)
 
 """
-                if not no_upload:
+                if not no_upload and not force_download:
                     cmd += f"""
 upload_status=$(checkremote)
 
@@ -925,12 +927,12 @@ ln -sf {fn_download} {pw}/download/{rename}.link
 
                     """
 
-                if upload_type == 'dropbox':
+                if upload_type == 'dropbox' and need_upload:
                     upload_cmd = f'{dock} dbxcli put {pw}/download/{fn} "/{remote_pw}/{fn}" > {pw}/log/upload.{dest}.{fn}.log 2>&1'
-                elif upload_type == 'emedgene':
+                elif upload_type == 'emedgene' and need_upload:
                     upload_cmd = f'{dock} aws s3 cp "{pw}/download/{fn}" "s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn}" > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log'
 
-                if not no_upload:
+                if not no_upload and need_upload:
                     cmd += f"""
 
 upload_status=$(checkremote)
@@ -1121,6 +1123,7 @@ if __name__ == "__main__":
         demo=True
     skip_download = args.skip_download
     force_upload = args.force_upload
+    force_download = args.forcedown
     no_upload = args.noupload
     profile = args.profile
     profile = convert2[profile]

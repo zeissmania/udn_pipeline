@@ -369,6 +369,7 @@ class UDN_case():
                     copy_number = f'SV={sv_type}, svlen={sv_len} @@\n\t\t' + copy_number
 
                 if omim_id:
+                    omim_id = str(int(float(omim_id)))
                     if gn not in d_gene:
                         d_gene[gn] = [omim_id, cover_exon_flag, amelie_score, '\n\t' + copy_number]
                     else:
@@ -390,6 +391,9 @@ class UDN_case():
 
         dump_omim_pkl = 0
         d_gene_comment_scrapy = {}
+
+        # logger.warning(d_gene['NALCN'])
+        # sys.exit(1)
 
         if os.path.exists(fn_omim_pkl):
             logger.info('load omim info from pickle')
@@ -2137,6 +2141,7 @@ def gn_to_pheno(driver, gn, gene_id, logger):
     list, element = [pheno_id, pheno_name, merged_title]
     """
 
+    gene_id = str(int(float(gene_id)))
     url = f'https://www.omim.org/entry/{gene_id}'
     try:
         driver.get(url)
@@ -2258,6 +2263,7 @@ def cleanup_memory(logger, driver):
 def run_omim_scrapy(gn, gene_id, logger, driver=None):
     start = time.time()
     v = [gene_id, []]
+    gene_id = str(int(float(gene_id)))
     driver, tmp = gn_to_pheno(driver, gn, gene_id, logger)
     time_sleep = 5
     time.sleep(time_sleep)
