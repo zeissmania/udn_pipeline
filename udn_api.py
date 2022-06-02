@@ -1442,7 +1442,7 @@ default:
             elif re.match(r'.+\.bam$', fn) and 'bam' in update_aws_ft:
                 out_bam.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
                 print(f'<span><b>{rel_to_proband}:    </b></span><a href="{url}">{fn}</a></br></br>', file=html_bam)
-            elif re.match(r'.+\.cnv\.vcf(\.gz)?$', fn) and 'cnv' in update_aws_ft:
+            elif re.match(r'.+\.cnv\.vcf(\.gz)?$', fn) and 'cnv' in update_aws_ft and fn.find('joint') < 0:
                 if not os.path.exists(f'origin{fn}'):
                     if url == 'na':
                         logger.error(f'invalid CNV file url')
