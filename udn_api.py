@@ -1189,7 +1189,7 @@ def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft
     # logger.info(f'Proband files = {proband["files"]}')
 
 
-    with open(f'{udn}.basic_info.md', 'w') as out:
+    with open(f'basic_info.{udn}.md', 'w') as out:
         out.write(f'# {udn}\n## 1. Basic Info\n- UDN\t{udn}\n')
         for k, v in zip('firstname,lastname,gender,race,dob,alive,affect_final,uuid_case,phenotip'.split(','), 'FirstName,LastName,Gender,Race,DateBirth,Alive,Affect_state,UUID_case,Phenotip_ID'.split(',')):
             out.write(f'- {v}\t{proband[k]}\n')
@@ -1226,7 +1226,7 @@ def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft
         out.write('\n\n')
 
 
-    fn_pdf = f'{udn}.basic_info.pdf'
+    fn_pdf = f'basic_info.{udn}.pdf'
     # os.system(f"pandoc  -t pdf {udn}.basic_info.md --pdf-engine pdflatex -o {fn_pdf}")
     if not os.path.exists(fn_pdf):
         logger.info('converting basic info to pdf')
