@@ -23,7 +23,7 @@ amelie_final = f'{proband}.amelie.matched_terms.txt
 
 result_raw = f'{proband}.final_result.all.sorted.xlsx
 result_selected = f'{proband}.final_result.selected.xlsx
-report = f'{proband}.report.xlsx'
+report = f'report.{proband}.xlsx'
 
 """
 import sys

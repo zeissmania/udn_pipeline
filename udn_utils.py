@@ -247,7 +247,7 @@ class UDN_case():
                     break
 
         # verify if the final report is done
-        fn_report = f'{self.pw}/{self.prj}.report.xlsx'
+        fn_report = f'{self.pw}/report.{self.prj}.xlsx'
         if os.path.exists(fn_report):
             f_size = os.path.getsize(fn_report)
             if f_size < 200:
