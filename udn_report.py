@@ -60,9 +60,8 @@ def main(prj, pw=None, fn_selected_genes=None, sv_caller='dragen'):
                         }
 
 
-    wb = xlsxwriter.Workbook(f'{pw}/{prj}.report.xlsx')
+    wb = xlsxwriter.Workbook(f'{pw}/report.{prj}.xlsx')
     ws = wb.add_worksheet('Original')
-
 
     # read the raw data
     d = pd.read_excel(fn_selected_genes, keep_default_na=False)

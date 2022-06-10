@@ -361,7 +361,12 @@ class UDN_case():
                 copy_number = ''
                 if valid_cn:
                     copy_number = a[idx['proband'] :idx['end_idx']]
-                    copy_number[0] = f'{copy_number[0]}@{qual_proband}'
+
+                    # if the copy number for proband is 2, then unable to interpret
+                    if copy_number[0][:3] == 'oo@':
+                        continue
+
+                    # copy_number[0] = f'{copy_number[0]}@{qual_proband}'
                     copy_number = [_.strip() for _ in copy_number if _.strip]
 
                     copy_number = [' = '.join(_) for _ in zip(cn_header, copy_number)] + other_info
@@ -369,7 +374,7 @@ class UDN_case():
                     copy_number = f'SV={sv_type}, svlen={sv_len} @@\n\t\t' + copy_number
 
                 if omim_id:
-                    omim_id = str(int(float(omim_id)))
+                    omim_id = str(int(float(omim_id.split(';')[0])))
                     if gn not in d_gene:
                         d_gene[gn] = [omim_id, cover_exon_flag, amelie_score, '\n\t' + copy_number]
                     else:
