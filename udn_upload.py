@@ -588,6 +588,8 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                 elif md5_exp == 'NA':
                     # logger.info(f'\tmd5 exp not available')
                     pass
+                elif md5_local == 'NA':
+                    logger.warning(colored(f'\t{msg}', 'yellow'))
                 else:
                     logger.error(colored(f'\tmd5 not match: {fn}', 'red'))
 
