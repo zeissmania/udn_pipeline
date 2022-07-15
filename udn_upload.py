@@ -65,7 +65,7 @@ ps.add_argument('-clear', '-rmlog', help="""clear the log files for upload and d
 args = ps.parse_args()
 
 
-ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'gvcf', 'fq': 'fastq', 'vcf': 'vcf'}
+ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'gvcf', 'fasta': 'fasta', 'fq': 'fastq', 'vcf': 'vcf'}
 ft_convert.update({_: _ for _ in ft_convert.values()})
 
 
@@ -112,7 +112,7 @@ def build_remote_subfolder(name, dest):
 
 def get_file_extension(fn):
 
-    m = re.match(r'.*?\.(bam|bai|cnv|fastq|fq|gvcf|vcf)\b(\.gz)?', fn.lower())
+    m = re.match(r'.*?\.(bam|bai|cnv|fasta|fastq|fq|gvcf|vcf)\b(\.gz)?', fn.lower())
     if m:
         try:
             return ft_convert[m.group(1)], m.group(2)
@@ -591,7 +591,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                 elif md5_local == 'NA':
                     logger.warning(colored(f'\t{msg}', 'yellow'))
                 else:
-                    logger.error(colored(f'\tmd5 not match: {fn}', 'red'))
+                    logger.error(colored(f'\tmd5 not match: {fn}:  exp = {md5_exp}, real={md5_local}', 'red'))
 
                 if not force_download:
                     n_downloaded += 1
