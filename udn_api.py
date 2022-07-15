@@ -553,7 +553,7 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
                 rel_seq += 1
                 rel_to_proband_tmp = f'{rel_to_proband_tmp}#{rel_seq}'
 
-# sequence_type_desired=None, demo=False, get_aws_ft=None, udn_raw=None, valid_family=None, lite_mode=None, udn_proband=None, gzip_only=None, driver=None, sv_caller='dragen', newname_prefix=None
+    # sequence_type_desired=None, demo=False, get_aws_ft=None, udn_raw=None, valid_family=None, lite_mode=None, udn_proband=None, gzip_only=None, driver=None, sv_caller='dragen', newname_prefix=None
             res_all, driver = get_all_info(rel_udn, cookie_token, rel_to_proband=rel_to_proband_tmp, res_all=res_all, info_passed_in={'affected': rel_aff, 'seq_status': have_seq}, sequence_type_desired=sequence_type_desired, demo=demo, get_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite_mode, udn_proband=udn_proband, gzip_only=gzip_only, driver=driver, sv_caller=sv_caller, newname_prefix=newname_prefix)
             # logger.info(res_all.keys())
 
@@ -604,8 +604,8 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
     # json_all is a list
     # each element is a dict, which is a sequencing request like
     # {'id': 1984,
-#   'patient': {'simpleid': 'UDN139529'},
-#   'sequencingfiles': [...]}
+    #   'patient': {'simpleid': 'UDN139529'},
+    #   'sequencingfiles': [...]}
     seq_type_convert = {2: 'wes', 3: 'wgs', 4: 'rna', 5: 'reanalysis', 1: 'targeted variant'}
     seq_type_convert.update({str(k): v for k, v in seq_type_convert.items()})
     files = []
@@ -1227,10 +1227,10 @@ def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft
 
 
     fn_pdf = f'basic_info.{udn}.pdf'
-    # os.system(f"pandoc  -t pdf {udn}.basic_info.md --pdf-engine pdflatex -o {fn_pdf}")
+    fn_md = f'basic_info.{udn}.md'
     if not os.path.exists(fn_pdf):
         logger.info('converting basic info to pdf')
-        os.system(f"pandoc  -t pdf {udn}.basic_info.md --pdf-engine xelatex -o {fn_pdf}")
+        os.system(f"pandoc  -t pdf {fn_md} --pdf-engine xelatex -o {fn_pdf}")
 
     # build the HPO terms file
 
@@ -1665,9 +1665,14 @@ if __name__ == "__main__":
     save_rel_table = args.reltable
     headless = not args.show
     if platform == 'darwin':
-        root = args.pw or '/Users/files/work/cooperate/udn/cases'
+        root = args.pw or '.'
         if root.lower() in ['.', 'pwd']:
             root = os.getcwd()
+
+        if root.find('/udn/cases/done/') > -1:
+            root = root.rsplit('/done/', 1)[0] + '/done'
+        elif root.find('/udn/cases/') > -1:
+            root = root.rsplit('/udn/cases/', 1)[0] + '/udn/cases'
         os.chdir(root)
     else:
         logger.info('platform= {platform}')

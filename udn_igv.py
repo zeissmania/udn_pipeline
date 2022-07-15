@@ -162,6 +162,7 @@ class IGV():
 def main(pw, udn, logger):
     # output igv batch script
     pw = os.path.realpath(pw)
+    logger.info(pw)
     pwigv = f'{pw}/igv'
     os.system(f'mkdir -p {pwigv} 2>/dev/null')
     igv_obj = IGV(pw, udn, logger)
@@ -197,7 +198,7 @@ new
             region_short = '.' + region.split(':')[-1]
             lines_extra.append(f'goto {region}\nsnapshot "{gn}.{suffix}{region_short}.png"\n\n')
 
-
+    logger.info(pw)
     with open(f'{pw}/igv.script.{udn}.txt', 'w') as out:
         print('\n'.join(lines_shared), file=out)
 
