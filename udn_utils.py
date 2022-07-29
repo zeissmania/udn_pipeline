@@ -605,6 +605,36 @@ class UDN_case():
         # logger.info(f'OMIM query count={len(res)}')
 
 
+        # amelie result
+        try:
+            with open(f'{pw}/{udn}.amelie.matched_query.pkl', 'rb') as f:
+                tmp = pickle.load(f)
+            matched_amelie = {}
+            for gn, v in tmp.items():
+                amelie_str = v[2]
+                ires = ['### amelie match']
+                for amelie_pheno, amelie_v1 in amelie_str.items():
+                    amelie_v1_dedup = []
+                    dedup = set()
+                    for i in amelie_v1:
+                        if i[0] not in dedup:
+                            dedup.add(i[0])
+                            amelie_v1_dedup.append(i)
+
+
+                    ires.append(f'#### {amelie_pheno} n articles = {len(amelie_v1_dedup)}')
+                    for amelie_v2 in amelie_v1_dedup:
+                        ires.append('- ' + '\t'.join(amelie_v2[:4]))
+
+                amelie_str = '\n'.join(ires)
+                matched_amelie[gn] = amelie_str
+
+        except:
+            matched_amelie = {}
+
+
+
+
         # tally the result
         out_full_match = open(f'{pw}/omim_match_gene.{udn}.md', 'w')
         out_partial_match = open(f'{pw}/omim_partial_match_gene.{udn}.md', 'w')
@@ -632,18 +662,29 @@ class UDN_case():
             print(comment, file=out_all_genes)
             print('#' * 50 + '\n\n\n', file=out_all_genes)
 
-        total_full_match = len([v[0] for v in res1 if len(v[1][0]) > 0])
+        gn_not_included = set(matched_amelie) - set([_[0] for _ in res1])
+        total_full_match = len([v[0] for v in res1 if len(v[1][0]) > 0]) + len(gn_not_included)
         for v in res1:
             gn = v[0]
+            amelie_str = matched_amelie.get(gn) or ''
+
             match, partial_match, comment, cover_exon_flag, amelie_score, copy_number = v[1]
             partial_match = '\n'.join(partial_match)
             match = '\n'.join(match)
             if len(match) > 0:
                 gene_match.add(gn)
                 n1 += 1
-                print(f'## {n1}/{total_full_match}:\t{gn} : {amelie_score}\tcover_exon={cover_exon_flag}\n{match}\n{partial_match}\n{copy_number}\n\n### main\n\n', file=out_full_match)
+                print(f'## {n1}/{total_full_match}:\t{gn} : {amelie_score}\tcover_exon={cover_exon_flag}\n{match}\n{partial_match}\n{copy_number}\n{amelie_str}\n\n### main\n\n', file=out_full_match)
                 print(comment, file=out_full_match)
                 print('#' * 50 + '\n\n\n', file=out_full_match)
+
+
+        for gn in gn_not_included:
+            n1 += 1
+            amelie_str = matched_amelie.get(gn) or ''
+            print(f'## {n1}/{total_full_match}:\t{gn} amelie match only\n{amelie_str}\n\n', file=out_full_match)
+            print('#' * 50 + '\n\n\n', file=out_full_match)
+
 
         total_partial_match = len([v[0] for v in res1 if len(v[1][0]) == 0 and len(v[1][1]) > 0])
         for v in res2:
@@ -1681,6 +1722,7 @@ class UDN_case():
 
         fn_genelist = f'{pw}/{intermediate_folder}/{prj}.genelist'
         fn_hop_pure_id = f'{pw}/{intermediate_folder}/{prj}.terms_pure_hpo.txt'
+        fn_pheno = f'{pw}/pheno.keywords.txt'
 
         total_genes = line_count(fn_genelist)
         # total_hpo = line_count(fn_hop_pure_id)
@@ -1689,7 +1731,8 @@ class UDN_case():
             logger.warning(f'the gene list for AMELIE is larger than 1000, ({total_genes}), would split the genelist')
 
         # main(prj, genelist, pheno_hpo_list, pw=None, pw_main=None, force=False)
-        amelie_api.main(prj, fn_genelist, fn_hop_pure_id, pw=pw, force=force)
+        # amelie_api.main(prj, fn_genelist, fn_hop_pure_id, pw=pw, force=force)
+        amelie_api.main_old(prj, fn_genelist, fn_hop_pure_id, pheno_for_match=fn_pheno,pw=pw, force=force)
         logger.info('amelie done')
         # self.check_amelie_missing()
 

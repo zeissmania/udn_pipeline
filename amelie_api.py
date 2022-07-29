@@ -271,8 +271,8 @@ def query(prj, pheno, pdict, pw, pw_main):
     #         ]
     #     }
 
-    with open(f'{pw}/{prj}.amelie.matched_query.pdict', 'w') as out:
-        print(res, file=out)
+    with open(f'{pw}/{prj}.amelie.matched_query.pkl', 'wb') as out:
+        pickle.dump(res, out)
 
 
     # export into text file
@@ -328,7 +328,7 @@ def query_genelist_api(data):
         return 0
 
 
-def main(prj, genelist, pheno_hpo_list, pw, force=False):
+def main(prj, genelist, pheno_hpo_list, pw=None, force=False):
     # force toggle, run the parse and query process even if the file already exist
     print('\tnow running amelie')
     pw = pw or os.getcwd()
@@ -416,7 +416,8 @@ def main_old(prj, genelist, pheno_hpo_list, pheno_for_match, pw=None, pw_main=No
 
     if not isinstance(pheno_for_match, list):
         pheno_for_match = open(pheno_for_match).read().strip().split('\n')
-        pheno_for_match = [_.strip() for _ in pheno_for_match if _.strip()]
+        pheno_for_match = [_.split('#', 1)[0].strip().replace('+', ' ') for _ in pheno_for_match if _.strip()]
+        pheno_for_match = [_ for _ in pheno_for_match if _]
 
     n_genes = len(genelist)
 

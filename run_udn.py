@@ -29,6 +29,7 @@ report = f'report.{proband}.xlsx'
 import sys
 import os
 import glob
+import platform
 pw_code = os.path.dirname(os.path.realpath(f'{__file__}/..'))
 sys.path.append(pw_code)
 # print(pw_code)
@@ -47,7 +48,13 @@ config_file = args.config
 force_report = args.force_report
 new = args.new
 
+node = platform.system()
+
 if args.new:
+    if node == 'Darwin':
+        print('You are on MacOS, the -new option is diabled. exit now')
+        sys.exit(1)
+
     flist_remove = ['intermediate', '*.err', '*.log', 'err_amelie*', 'UDN*amelie*', 'UDN*merged.sorted.*', 'omim_*' ]
     # flist_remove = [f'"{_}"' for _ in flist_remove]
     tmp = ' '.join(flist_remove)
