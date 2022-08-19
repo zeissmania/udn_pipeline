@@ -370,8 +370,8 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
     header_cookie = get_header_cookie(cookie_token)
 
     # prepare to write each json result to the pickle
-    fn_json_pk = f'{udn}.json.pkl'
-    fn_json_pk_bk = f'{udn}.json.pkl'
+    fn_json_pk = f'intermed/{udn}.json.pkl'
+    fn_json_pk_bk = f'intermed/{udn}.json.pkl.bk'
     d_json = {}
     if os.path.exists(fn_json_pk):
         size1 = os.path.getsize(fn_json_pk)
@@ -415,8 +415,6 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
 
     d_json['basic_info'] = json
     dump_json(d_json, fn_json_pk)
-
-    # pickle.dump(json, open(f'{udn}.patientrecord.json.pkl', 'wb'))
 
     if json:
         try:
@@ -474,7 +472,7 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
 
         r = requests.request('GET', url_pdf, headers=header_cookie)
 
-        with open(f'{udn}.phenotip.pdf', 'wb') as out:
+        with open(f'intermed/phenotip.{udn}.pdf', 'wb') as out:
             out.write(r.content)
 
         # get relatives
@@ -497,10 +495,10 @@ def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_pass
             try:
                 _tmp_ele = wait(driver, 20).until(lambda _:_.find_element_by_xpath(f'//a[text()="Sequence uploaded"]'))
                 # logger.warning(f'type={type(response_relative)}, len={len(response_relative)}')
-                driver.save_screenshot(f'{udn}.relatives_table.png')
+                driver.save_screenshot(f'relatives_table.{udn}.png')
             except:
                 logger.warning(f'{udn} : This case seems donnot have any relatives info !, check screenshot')
-                driver.save_screenshot(f'{udn}.no_relative_found.relatives_table.png')
+                driver.save_screenshot(f'relative_not.found.{udn}.png')
             response_relative = driver.page_source
 
         r = bs(response_relative, features='lxml')
@@ -1175,10 +1173,10 @@ def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft
                 logger.info(f'      {fn}: update amazon_link done ({res_source})')
                 ifl['download'] = download
 
-        pkl_fn = pkl_fn or f'{proband_id}.udn_api_query.pkl'
+        pkl_fn = pkl_fn or f'intermed/{proband_id}.udn_api_query.pkl'
         if os.path.exists(pkl_fn) and os.path.getsize(pkl_fn) > 5000:
             os.system(f'mv {pkl_fn} {pkl_fn}.bk')
-        pickle.dump(res, open(pkl_fn, 'wb'))
+        dump_json(res, pkl_fn)
 
     # report for proband
 
@@ -1231,6 +1229,12 @@ def parse_api_res(res, cookie_token=None, renew_amazon_link=False, update_aws_ft
     if not os.path.exists(fn_pdf):
         logger.info('converting basic info to pdf')
         os.system(f"pandoc  -t pdf {fn_md} --pdf-engine xelatex -o {fn_pdf}")
+        try:
+            if os.path.getsize(fn_pdf) > 1000:
+                os.unlink(fn_md)
+        except:
+            pass
+
 
     # build the HPO terms file
 
@@ -1346,31 +1350,9 @@ default:
     out_info = open(f'download.info.{udn}.txt', 'w')
     out_md5 = open(f'download.{udn}.md5', 'w')
 
-    out = open(f'download.fastq.{udn}.txt', 'w')
-
-    if 'bam' in update_aws_ft:
-        out_bam = open(f'download.bam.{udn}.sh', 'w')
-        html_bam = open(f'download.bam.{udn}.html', 'w')
-        html_bam.write(f"""<!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>{udn} - bam </title>
-    </head>
-    <body>
-
-        """)
-
     if 'cnv' in update_aws_ft:
-        out_cnv = open(f'download.cnv.{udn}.sh', 'w')
-        # out_other = open(f'download.other.{udn}.sh', 'w')
-        out_cnv.write('mkdir origin 2>/dev/null\n')
-
-    other_download = 0
-    if len(set(update_aws_ft) - set(['bam', 'fastq', 'cnv'])) > 0:
-        other_download = 1
-        out_other = open(f'download.other.{udn}.sh', 'w')
+        fn_cnv_sh = f'intermed/download.cnv.{udn}.sh'
+        out_cnv = open(fn_cnv_sh, 'w')
 
     tmp = udn_raw or udn
     remote_pw = re.sub(r'^\d+_', '', tmp, 1)
@@ -1436,41 +1418,19 @@ default:
 
             seq_type = ifl.get('seq_type')
 
-            if re.match(r'.+\.bai$', fn) and 'bam' in update_aws_ft:
-                out_bam.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
-                print(f'<span><b>{rel_to_proband}:    </b></span><a href="{url}">{fn}</a></br></br>', file=html_bam)
-            elif re.match(r'.+\.bam$', fn) and 'bam' in update_aws_ft:
-                out_bam.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
-                print(f'<span><b>{rel_to_proband}:    </b></span><a href="{url}">{fn}</a></br></br>', file=html_bam)
-            elif re.match(r'.+\.cnv\.vcf(\.gz)?$', fn) and 'cnv' in update_aws_ft and fn.find('joint') < 0:
+
+            if re.match(r'.+\.cnv\.vcf(\.gz)?$', fn) and 'cnv' in update_aws_ft and fn.find('joint') < 0:
                 if not os.path.exists(f'origin{fn}'):
                     if url == 'na':
                         logger.error(f'invalid CNV file url')
                     else:
                         out_cnv.write(f'size=$(stat -c %s origin/{fn} 2>/dev/null);if [[ "$size" -lt 1000 ]];then wget "{url}" -c -O "origin/{fn}";\nelse echo already exist: "origin/{fn}";fi\n')
-            elif re.match(r'.+\.fastq.gz', fn) and 'fastq' in update_aws_ft:
-                out.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
-            elif other_download:
-                out_other.write(f'nohup wget "{url}" -c -O "{fn}" > {fn}.download.log 2>&1 &\n')
+
 
             out_info.write(f'{rel_to_proband}\t{fn}\t{newname}\t{newname_base}\t{url}\t{udn}\t{seq_type}\t{size}\t{build}\t{md5}\t{url_s3}\n')
             out_md5.write(f'{md5}  {fn}\n')
 
-    try:
-        html_bam.write("""</body>
-    </html>""")
-        html_bam.close()
-    except:
-        pass
 
-    try:
-        out.close()
-    except:
-        pass
-    try:
-        out_bam.close()
-    except:
-        pass
     out_md5.close()
     out_info.close()
 
@@ -1882,7 +1842,14 @@ if __name__ == "__main__":
                 os.system(f'mv {root}/{udn_raw_old} {root}/{udn_raw}')
                 rename_remote = True
         else:
-            os.system(f'mkdir -p {root}/{udn_raw}/origin 2>/dev/null')
+            try:
+                os.makedirs(f'{root}/{udn_raw}/origin', exist_ok=True)
+            except:
+                pass
+            try:
+                os.makedirs(f'{root}/{udn_raw}/intermed', exist_ok=True)
+            except:
+                pass
 
 
         logger.info(f'now running {udn_raw}')
@@ -1892,7 +1859,7 @@ if __name__ == "__main__":
         logger = get_logger(f'{root}/{udn_raw}/{udn_raw}', level=args.v)
         logger.info(os.getcwd() + f', rename to {newname_prefix}' if newname_prefix else '')
 
-        fn_udn_api_pkl = f'{root}/{udn_raw}/{udn}.udn_api_query.pkl'
+        fn_udn_api_pkl = f'{root}/{udn_raw}/intermed/{udn}.udn_api_query.pkl'
 
         if os.path.exists(fn_udn_api_pkl) and not force:
             logger.info('directly load API query result from pickle file')
@@ -1922,7 +1889,11 @@ if __name__ == "__main__":
 
         if not lite and 'cnv' in update_aws_ft:
             logger.info(f'downloading CNV vcf file')
-            os.system(f'bash download.cnv.{udn}.sh >/dev/null 2>&1')
+            os.system(f'bash intermed/download.cnv.{udn}.sh >/dev/null 2>&1')
+        try:
+            os.unlink('geckodriver.log')
+        except:
+            pass
 
 
         initial_upload_flag = 'origin/initial_uploaded'
