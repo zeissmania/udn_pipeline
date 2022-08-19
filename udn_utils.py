@@ -225,7 +225,7 @@ class UDN_case():
         self.done_phase3 = 0
         # logger.info(cfg)
         # logger.info(f'pw={self.pw}, prj={self.prj}, vcfpath={self.vcf_file_path}')
-        fn_final = f'{self.pw}/{self.prj}.merged.sorted.tsv'
+        fn_final = f'{self.pw}/merged.sorted.{self.prj}.xlsx'
         if os.path.exists(fn_final):
             f_size = os.path.getsize(fn_final)
             if f_size < 10000:
@@ -273,7 +273,7 @@ class UDN_case():
         @word1 match exact word, would add \b at both side
         -word  do not include this word
         """
-        fn = f'{self.pw}/{self.prj}.merged.sorted.tsv'
+        fn = f'{self.pw}/merged.sorted.{self.prj}.tsv'
         fn_pheno = f'{self.pw}/pheno.keywords.txt'
         udn = self.prj
         pw = self.pw
@@ -331,6 +331,7 @@ class UDN_case():
                 cn_header = header[idx['proband']: idx['end_idx']]
             except:
                 valid_cn = 0
+                logger.error('invalid CN header found: {fn}')
 
             # logger.info(f'index# : {idx}\nheader={header}')
 
@@ -338,6 +339,8 @@ class UDN_case():
             for _ in header_other_info:
                 idx[_] = header.index(_)
 
+            n_gene_proband_2copy = 0
+            multiple_hit = 0
             for i in fp:
                 a = i.split('\t')
                 gn = a[idx['gn']].strip()
@@ -364,6 +367,7 @@ class UDN_case():
 
                     # if the copy number for proband is 2, then unable to interpret
                     if copy_number[0][:3] == 'oo@':
+                        n_gene_proband_2copy += 1
                         continue
 
                     # copy_number[0] = f'{copy_number[0]}@{qual_proband}'
@@ -375,12 +379,19 @@ class UDN_case():
 
                 if omim_id:
                     omim_id = str(int(float(omim_id.split(';')[0])))
-                    if gn not in d_gene:
-                        d_gene[gn] = [omim_id, cover_exon_flag, amelie_score, '\n\t' + copy_number]
-                    else:
-                        d_gene[gn][3] += '\n\t' + copy_number
+                else:
+                    omim_id = 'NA'
 
-                    d_gene[gn][1] = max(cover_exon_flag, d_gene[gn][1])
+                if gn not in d_gene:
+                    d_gene[gn] = [omim_id, cover_exon_flag, amelie_score, '\n\t' + copy_number]
+                else:
+                    d_gene[gn][3] += '\n\t' + copy_number
+                    multiple_hit += 1
+
+                d_gene[gn][1] = max(cover_exon_flag, d_gene[gn][1])
+
+
+        logger.info(f'd_gene gene count = {len(d_gene)}, n_gene_proband_2copy = {n_gene_proband_2copy}, multiple_hit={multiple_hit},  expected_total = {len(d_gene) + n_gene_proband_2copy + multiple_hit}, n_gene_total = {n_gene_total}')
 
         # build the predefined gene list
 
@@ -417,9 +428,12 @@ class UDN_case():
 
         logger.info(f'local total gene number with OMIM description={len(omim_gn_total)};  gene without linked omim = {len(non_omim_gn_total)}')
 
-        gene_with_omim = set(d_gene) & omim_gn_total
-        genes_need_scrapy = set(d_gene) - set(d_gene_comment_scrapy)
-        logger.info(f'gene count in merged.sorted.tsv: total = {n_gene_total}, with OMIM ID={len(d_gene)}')
+
+
+
+        gene_with_omim = set([_[0] for _ in d_gene.values()]) & omim_gn_total
+        genes_need_scrapy = set([_[0] for _ in d_gene.values()]) - set(d_gene_comment_scrapy)
+        logger.info(f'gene count in merged.sorted.tsv: total = {n_gene_total}, with OMIM ID={len(gene_with_omim)}')
         logger.info(f'gene count in with OMIM description: {len(gene_with_omim)}, genes need scrapy OMIM = {len(genes_need_scrapy)}')
 
         # build the phenotype keyword list
@@ -476,6 +490,8 @@ class UDN_case():
         n_no_omim = 0
         for gn, v in d_gene.items():
             omim_id, cover_exon_flag, amelie_score, copy_number = v
+            if omim_id == 'NA':
+                continue
             if gn in res:
                 continue  # avoid the duplicate running
             res[gn] = [[], [], '', cover_exon_flag, amelie_score, copy_number]  # match pheno, partial match pheno, comment, cover_exon_flag, amelie rank
@@ -629,9 +645,9 @@ class UDN_case():
                 amelie_str = '\n'.join(ires)
                 matched_amelie[gn] = amelie_str
 
+            logger.info(f'amelie matched genes = {len(matched_amelie)}')
         except:
             matched_amelie = {}
-
 
 
 
@@ -662,8 +678,10 @@ class UDN_case():
             print(comment, file=out_all_genes)
             print('#' * 50 + '\n\n\n', file=out_all_genes)
 
-        gn_not_included = set(matched_amelie) - set([_[0] for _ in res1])
-        total_full_match = len([v[0] for v in res1 if len(v[1][0]) > 0]) + len(gn_not_included)
+        s_amelie = set(matched_amelie)
+        s_omim = set([_[0] for _ in res1 if len(_[1][0]) > 0])
+        gn_not_included = s_amelie - s_omim
+        total_full_match = len(s_amelie | s_omim)
         for v in res1:
             gn = v[0]
             amelie_str = matched_amelie.get(gn) or ''
@@ -679,11 +697,21 @@ class UDN_case():
                 print('#' * 50 + '\n\n\n', file=out_full_match)
 
 
+        not_in_d_gene = []
         for gn in gn_not_included:
+            try:
+                omim_id, cover_exon_flag, amelie_score, copy_number = d_gene[gn]
+            except:
+                not_in_d_gene.append(gn)
+                continue
+
             n1 += 1
             amelie_str = matched_amelie.get(gn) or ''
-            print(f'## {n1}/{total_full_match}:\t{gn} amelie match only\n{amelie_str}\n\n', file=out_full_match)
+            print(f'## {n1}/{total_full_match}:\t{gn} amelie match only\nAmelie score = {amelie_score}\n{copy_number}\n\n{amelie_str}\n\n', file=out_full_match)
             print('#' * 50 + '\n\n\n', file=out_full_match)
+
+        if len(not_in_d_gene) > 0:
+            logger.warning(f'the following genes are not found in d_gene: \n\t' + '\n\t'.join(not_in_d_gene))
 
 
         total_partial_match = len([v[0] for v in res1 if len(v[1][0]) == 0 and len(v[1][1]) > 0])
@@ -695,7 +723,7 @@ class UDN_case():
             partial_match = '\n'.join(partial_match)
             if len(partial_match) > 0:
                 n2 += 1
-                print(f'## {n2}/{total_partial_match}:\t{gn} : {amelie_score}\tcover_exon={cover_exon_flag}\n{partial_match}{copy_number}\n\n### main\n\n', file=out_partial_match)
+                print(f'## {n2}/{total_partial_match}:\t{gn} : {amelie_score}, exon = {cover_exon_flag}\n{copy_number}\tcover_exon={cover_exon_flag}\n{partial_match}{copy_number}\n\n### main\n\n', file=out_partial_match)
                 print(comment, file=out_partial_match)
                 print('#' * 50 + '\n\n\n', file=out_partial_match)
         out_full_match.close()
@@ -1789,7 +1817,7 @@ class UDN_case():
         return res
 
 
-    def run_proband_sv_match_pacbio(self) -> "{pw}/{prj}.merged.sorted.tsv":
+    def run_proband_sv_match_pacbio(self) -> "{pw}/merged.sorted.{prj}.tsv":
         pw = self.pw
         proband_id = self.proband_id
         family = self.family
@@ -1847,8 +1875,8 @@ class UDN_case():
         final.close()
 
         # sort the result by amelie score
-        sorted_file = f'{pw}/{prj}.merged.sorted.tsv'
-        sorted_excel = f'{pw}/{prj}.merged.sorted.xlsx'
+        sorted_file = f'{pw}/merged.sorted.{prj}.tsv'
+        sorted_excel = f'{pw}/merged.sorted.{prj}..xlsx'
 
         import pandas as pd
         df = pd.read_csv(merged_table, sep='\t')
@@ -1859,7 +1887,7 @@ class UDN_case():
         df.to_excel(sorted_excel, index=False, na_rep='')
 
 
-    def run_proband_sv_match(self) -> "{pw}/{prj}.merged.sorted.tsv":
+    def run_proband_sv_match(self) -> "{pw}/merged.sorted.{prj}.tsv":
         """
         based on the proband extracted.txt,
         add the copy number/genename, sv_type, overlap_len from other family member
@@ -2074,8 +2102,8 @@ class UDN_case():
         final.close()
 
         # sort the result by amelie score
-        sorted_file = f'{pw}/{prj}.merged.sorted.tsv'
-        sorted_excel = f'{pw}/{prj}.merged.sorted.xlsx'
+        sorted_file = f'{pw}/merged.sorted.{prj}.tsv'
+        sorted_excel = f'{pw}/merged.sorted.{prj}.xlsx'
 
         import pandas as pd
         df = pd.read_csv(merged_table, sep='\t')
