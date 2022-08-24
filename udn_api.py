@@ -29,6 +29,7 @@ import requests
 from selenium import webdriver
 import selenium.common.exceptions as sel_exp
 from selenium.webdriver.support.ui import WebDriverWait as wait
+from selenium.webdriver.common.keys import Keys
 import udn_igv
 from termcolor import colored
 
@@ -231,15 +232,23 @@ def login(driver, headless=False, source=None):
         password.click()
         password.send_keys(cred['password'])
 
+        password.send_keys(Keys.RETURN)
+        time.sleep(2)
+        try:
+            button.click()
+        except:
+            # logger.warning(f'fail to click SignOn button')
+            pass
+
         # driver.save_screenshot('udn_login_sso.png')
-        button.click()
+
     for _ in range(10):
         if driver.current_url.find('gateway.undiagnosed.hms.harvard.edu') > -1:
             break
         time.sleep(1)
     else:
         logger.error(f'fail to login to UDN gateway, url=\n{driver.current_url}')
-        return 0
+        sys.exit(1)
     # url = "https://gateway.undiagnosed.hms.harvard.edu/patient/sequence/6145/files/"
     # driver.get(url)
     # driver.save_screenshot('udn_gateway.png')
@@ -1717,6 +1726,7 @@ if __name__ == "__main__":
             cred['password'] = getpass(prompt='Your password to login to UDN gateway: ')
         else:
             cred[cred_key] = input(f'new value for {cred_key}:   ')
+        update_cred = True
 
     try:
         token = cred['token']
@@ -1754,6 +1764,8 @@ if __name__ == "__main__":
     if update_cred:
         logger.warning('now dumping the new cred')
         key.dump(cred)
+        logger.info('now exiting')
+        sys.exit(1)
 
     api_token_gateway = cred['token']
     api_token_fileservice = cred['fs_token']
