@@ -297,10 +297,16 @@ def format_comment(comment):
     tmp = [f'#### {_}' if len(_) < 50 and _[-1] == ':' else _ for _ in tmp]
     return '\n\n'.join(tmp)
 
-def get_all_info_old(udn, cookie_token, rel_to_proband=None, res_all=None, info_passed_in=None, demo=False, get_aws_ft=None, udn_raw=None, valid_family=None, lite_mode=None, udn_proband=None, gzip_only=None, driver=None, sv_caller='dragen', newname_prefix=None):
+
+def ts(timestamp):
+    from datetime.datetime import fromtimestamp
+    try:
+        return fromtimestamp(timestamp/1000).strftime('%Y-%m-%d')
+    except:
+        return 'NA'
+
+def get_all_info(udn, cookie_token, res_all=None, demo=False, get_aws_ft=None, udn_raw=None, valid_family=None, lite_mode=None, udn_proband=None, gzip_only=None, driver=None, sv_caller='dragen', newname_prefix=None):
     """
-    rel_to_proband, if run as proband, this is None, otherwize, this func is called during geting the relatives of proband, and specified
-    info_passed_in,  {'affected': rel_aff, 'seq_status': have_seq}   include the affect state, sequenced_state, only valid when called during geting the relatives of proband, and specified
     res_all,  when running specific relative, use this dict to accumulate among the family member
     demo: do not resolve the amazon s3 link
     gzip only, a set, if the ext is found in this set, then, the file must be gziped to get involved. e.g. if vcf in gzip_only, then,  the file named .vcf$ would not be included
@@ -309,17 +315,104 @@ def get_all_info_old(udn, cookie_token, rel_to_proband=None, res_all=None, info_
     if not isinstance(gzip_only, set):
         gzip_only = set()
     udn_raw = udn_raw or udn
-    set_seq_type = set('wgs,wes,rna,all,chip'.split(','))
 
-    aff_convert = {'Unaffected': 'Unaffected', 'Affected': 'Affected', '3': 'Unaffected', '2': 'Affected', 'Unknown': 'Unknown', 3: 'Unaffected', 2: 'Affected'}
     res_all = res_all or {}
-    rel_to_proband = rel_to_proband or 'Proband'
-    info_passed_in = info_passed_in or {}
+
+    # res_all
+    # k1 = rel_to_proband, (Proband, Father, Mother)
+    # k2 =
+    #   rel_to_proband , firstname, lastname, race, dob, gender
+    #   comment,  summary, evaluation, similar_symp
+    #   affect_final
+    #   phenotip
+    #   symp
+    #   sampleid (UDNxxx)
+    #   seq_id  , list [int, int]
+    #   baylor_report, list
 
     res = {}
-    res['rel_to_proband'] = rel_to_proband
-    res['affect_from_proband_list'] = info_passed_in.get('affected') or 'Unknown'
-    res['seq_status'] = info_passed_in.get('seq_status') or 'Unkown'
+
+    # get the basic info
+    json = get_json(f'participants/{udn}')
+    is_proband = False
+
+    res['simpleid'] = udn
+
+
+    for i in [
+        ('firstname',['nameFirst']),
+        ('lastname',['nameLast']),
+        ('rel_to_proband',['relation'], lambda _: _ or 'Proband'),
+        ('dob',['dateOfBirth'], ts),
+        ('race',['races', 'name']),
+        ('gender',['birthAssignedSex', 'name']),
+        ('alive',['deceased'], lambda _: int(not _)),
+        ('affected',['affected', 'name']),
+        ('',['']),
+        ('',['']),
+        ('',['']),
+
+        ]:
+        k, json_keys = i[:2]
+        try:
+            func = i[2]
+        except:
+            func = None
+        v = json
+        try:
+            for ktmp in json_keys:
+                v = v[ktmp]
+            if func:
+                v = func(v)
+        except:
+            v = 'NA'
+        res[k] = v
+
+
+
+    k = 'firstname'
+    try:
+        res[k] = json['nameFirst']
+    except:
+        res[k] = 'NA'
+
+    k = 'firstname'
+    try:
+        res[k] = json['nameFirst']
+    except:
+        res[k] = 'NA'
+
+    k = 'firstname'
+    try:
+        res[k] = json['nameFirst']
+    except:
+        res[k] = 'NA'
+
+    k = 'firstname'
+    try:
+        res[k] = json['nameFirst']
+    except:
+        res[k] = 'NA'
+
+    k = 'firstname'
+    try:
+        res[k] = json['nameFirst']
+    except:
+        res[k] = 'NA'
+
+    k = 'firstname'
+    try:
+        res[k] = json['nameFirst']
+    except:
+        res[k] = 'NA'
+
+    k = 'firstname'
+    try:
+        res[k] = json['nameFirst']
+    except:
+        res[k] = 'NA'
+
+
 
     if not cookie_token:
         driver, cookie_token = get_cookie(driver)
@@ -327,25 +420,7 @@ def get_all_info_old(udn, cookie_token, rel_to_proband=None, res_all=None, info_
     if not cookie_token:
         logger.error('fail to get cookie, can\'t get the amazon s3 presigned URL, exit')
         return 0
-
-
     header_cookie = get_header_cookie(cookie_token)
-
-    # prepare to write each json result to the pickle
-    fn_json_pk = f'intermed/{udn}.json.pkl'
-    fn_json_pk_bk = f'intermed/{udn}.json.pkl.bk'
-    d_json = {}
-    if os.path.exists(fn_json_pk):
-        size1 = os.path.getsize(fn_json_pk)
-        try:
-            size_bk = os.path.getsize(fn_json_pk_bk)
-        except:
-            size_bk = 0
-
-        if size1 > size_bk:
-            os.system(f'mv {fn_json_pk} {fn_json_pk_bk}')
-        elif size1 < size_bk:
-            logger.warning(f'json.pickle file not substituted due to size of new file is smaller than previous backup: {udn}')
 
     # get followup files
     action = 'followup/attachment'
@@ -513,7 +588,7 @@ def get_all_info_old(udn, cookie_token, rel_to_proband=None, res_all=None, info_
                 rel_seq += 1
                 rel_to_proband_tmp = f'{rel_to_proband_tmp}#{rel_seq}'
 
-            res_all, driver = get_all_info(rel_udn, cookie_token, rel_to_proband=rel_to_proband_tmp, res_all=res_all, info_passed_in={'affected': rel_aff, 'seq_status': have_seq},  demo=demo, get_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite_mode, udn_proband=udn_proband, gzip_only=gzip_only, driver=driver, sv_caller=sv_caller, newname_prefix=newname_prefix)
+            res_all, driver = get_all_info(rel_udn, cookie_token, rel_to_proband=rel_to_proband_tmp, res_all=res_all,  demo=demo, get_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite_mode, udn_proband=udn_proband, gzip_only=gzip_only, driver=driver, sv_caller=sv_caller, newname_prefix=newname_prefix)
             # logger.info(res_all.keys())
 
         # patient dignosis
