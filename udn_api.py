@@ -19,11 +19,6 @@ import re
 import glob
 import json
 import pickle
-import hashlib
-from getpass import getpass
-import base64
-from cryptography.fernet import Fernet
-import cryptography.fernet as fernet
 import logging
 import requests
 from selenium import webdriver
@@ -33,9 +28,15 @@ from selenium.webdriver.common.keys import Keys
 import udn_igv
 from termcolor import colored
 
+import hashlib
+from getpass import getpass
+import base64
+from cryptography.fernet import Fernet
+import cryptography.fernet as fernet
+
 from bs4 import BeautifulSoup as bs
 # basic settings
-base_url = 'https://gateway.undiagnosed.hms.harvard.edu/api'
+base_url = 'https://gateway.undiagnosed.hms.harvard.edu/api/2.0'
 platform = sys.platform.lower()
 
 ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'gvcf', 'fq': 'fastq', 'vcf': 'vcf'}
@@ -82,32 +83,9 @@ class Credential():
         try:
             res = pickle.loads(self.key.decrypt(data_en))
         except fernet.InvalidToken:
-            logger.error(f'Passcode for the credential is not correct !: {self.fnout}')
+            print(f'Passcode for the credential is not correct !: {self.fnout}')
             sys.exit(1)
         return res
-
-# def get_driver(driver, headless=True):
-#     try:
-#         driver.current_url
-#     except:
-#         pass
-#     else:
-#         return driver
-#     if platform == 'darwin':
-#         path_chromedriver = '/Users/files/work/package/chrome_v90/chromedriver'
-#     else:
-#         path_chromedriver = '/home/chenh19/tools/chromedriver2.35'
-#     option = webdriver.ChromeOptions()
-#     if headless:
-#         option.add_argument('--headless')
-#     option.add_argument('--no-sandbox')
-#     option.add_argument(f"--window-size=1080,720")
-#     if platform == 'linux':
-#         option.add_argument('--disable-dev-shm-usage')
-#         option.binary_location = '/home/chenh19/tools/chrome/chrome'
-#     driver = webdriver.Chrome(executable_path=path_chromedriver, options=option)
-#     return driver
-
 
 def get_driver(driver, browser='firefox', headless=True):
     try:
@@ -278,43 +256,25 @@ def cleanup_memory(driver):
     os.system("""ps -ef|grep -i "chrome"|awk '{print $2}'|sort|uniq|parallel 'kill -9 {} 2>/dev/null' """)
 
 
-def get_json(udn=None, action=None, payload=None, files=None, url=None, header=None):
-    udn = udn or 'na'
+def get_json(action=None, payload=None, url=None, header=None):
 
     headers = header or header1
     if not action and not url:
-        logger.error(f'Neither action nor URL was specified: {udn}')
+        print(f'Neither action nor URL was specified: {action}')
         return 0
-    url = url or f'{base_url}/{action}/{udn}/'   # the trailing / is as must
+    url = url or f'{base_url}/{action}'
 
     payload = payload or {}
-    files = files or {}
-    r = requests.request("GET", url, headers=headers, data=payload, files=files)
+    r = requests.get(url, headers=headers, data=payload)
     if r.status_code != 200:
-        logger.error(f'{udn} : action={action} - status_code = {r.status_code}')
+        print(f'action={action} - status_code = {r.status_code}')
         return 0
     try:
         return r.json()
     except:
-        logger.error(f'{udn} : action={action} - fail to get json')
+        print(f'action={action} - fail to get json')
         return 0
 
-
-def get_response(udn=None, action=None, payload=None, files=None, url=None, header=None):
-    udn = udn or 'na'
-    headers = header or header1
-    if not action and not url:
-        logger.error(f'Neither action nor URL was specified: {udn}')
-        return 0
-    url = url or f'{base_url}/{action}/{udn}/'   # the trailing / is as must
-
-    payload = payload or {}
-    files = files or {}
-    r = requests.request("GET", url, headers=headers, data=payload, files=files)
-    if r.status_code != 200:
-        logger.error(f'{udn} : action={action} - status_code = {r.status_code}')
-        return 0
-    return r
 
 def dump_json(obj, fn):
     with open(fn, 'wb') as out:
@@ -337,8 +297,493 @@ def format_comment(comment):
     tmp = [f'#### {_}' if len(_) < 50 and _[-1] == ':' else _ for _ in tmp]
     return '\n\n'.join(tmp)
 
+def get_all_info_old(udn, cookie_token, rel_to_proband=None, res_all=None, info_passed_in=None, demo=False, get_aws_ft=None, udn_raw=None, valid_family=None, lite_mode=None, udn_proband=None, gzip_only=None, driver=None, sv_caller='dragen', newname_prefix=None):
+    """
+    rel_to_proband, if run as proband, this is None, otherwize, this func is called during geting the relatives of proband, and specified
+    info_passed_in,  {'affected': rel_aff, 'seq_status': have_seq}   include the affect state, sequenced_state, only valid when called during geting the relatives of proband, and specified
+    res_all,  when running specific relative, use this dict to accumulate among the family member
+    demo: do not resolve the amazon s3 link
+    gzip only, a set, if the ext is found in this set, then, the file must be gziped to get involved. e.g. if vcf in gzip_only, then,  the file named .vcf$ would not be included
+    """
 
-def get_all_info(udn, cookie_token, rel_to_proband=None, res_all=None, info_passed_in=None, sequence_type_desired=None, demo=False, get_aws_ft=None, udn_raw=None, valid_family=None, lite_mode=None, udn_proband=None, gzip_only=None, driver=None, sv_caller='dragen', newname_prefix=None):
+    if not isinstance(gzip_only, set):
+        gzip_only = set()
+    udn_raw = udn_raw or udn
+    set_seq_type = set('wgs,wes,rna,all,chip'.split(','))
+
+    aff_convert = {'Unaffected': 'Unaffected', 'Affected': 'Affected', '3': 'Unaffected', '2': 'Affected', 'Unknown': 'Unknown', 3: 'Unaffected', 2: 'Affected'}
+    res_all = res_all or {}
+    rel_to_proband = rel_to_proband or 'Proband'
+    info_passed_in = info_passed_in or {}
+
+    res = {}
+    res['rel_to_proband'] = rel_to_proband
+    res['affect_from_proband_list'] = info_passed_in.get('affected') or 'Unknown'
+    res['seq_status'] = info_passed_in.get('seq_status') or 'Unkown'
+
+    if not cookie_token:
+        driver, cookie_token = get_cookie(driver)
+
+    if not cookie_token:
+        logger.error('fail to get cookie, can\'t get the amazon s3 presigned URL, exit')
+        return 0
+
+
+    header_cookie = get_header_cookie(cookie_token)
+
+    # prepare to write each json result to the pickle
+    fn_json_pk = f'intermed/{udn}.json.pkl'
+    fn_json_pk_bk = f'intermed/{udn}.json.pkl.bk'
+    d_json = {}
+    if os.path.exists(fn_json_pk):
+        size1 = os.path.getsize(fn_json_pk)
+        try:
+            size_bk = os.path.getsize(fn_json_pk_bk)
+        except:
+            size_bk = 0
+
+        if size1 > size_bk:
+            os.system(f'mv {fn_json_pk} {fn_json_pk_bk}')
+        elif size1 < size_bk:
+            logger.warning(f'json.pickle file not substituted due to size of new file is smaller than previous backup: {udn}')
+
+    # get followup files
+    action = 'followup/attachment'
+    json = get_json(udn, action)
+    # some case don't have followup files
+    if json:
+        res['followup'] = []
+        if isinstance(json, list):
+            for ijson in json:
+                try:
+                    res['followup'].append(ijson['file'])
+                except KeyError:
+                    logger.warning(f'fail to get followup file: {udn} - json={ijson}')
+        else:
+            try:
+                res['followup'].append(json['file'])
+            except KeyError:
+                logger.warning(f'fail to get followup file: {udn} - json={json}')
+        if not lite_mode:
+            for n, ifl in enumerate(res['followup']):
+                logger.info(f'downloading followup file: {udn}-{n+1}')
+                r = requests.request('GET', ifl, headers=header_cookie)
+                with open(f'origin/{udn}.followup-{n}.pdf', 'wb') as out:
+                    out.write(r.content)
+
+    # basic patient info
+    action = 'patientrecord'
+    json = get_json(udn, action)
+
+    d_json['basic_info'] = json
+    dump_json(d_json, fn_json_pk)
+
+    if json:
+        try:
+            res['gender'] = json['patient']['gender']['name']
+        except:
+            res['gender'] = json['patient']['sex']['name']
+
+        res['firstname'] = json['patient']['patientfirst']
+        res['lastname'] = json['patient']['patientlast']
+
+        try:
+            res['race'] = json['patient']['race'][0]['name']  # 1=male
+        except:
+            res['race'] = json['patient']['race']
+        res['uuid'] = json['patient']['uuid']  #
+        res['uuid_case'] = json['uuid']  #
+        res['dob'] = json['patient']['dob']  # birthday
+
+        try:
+            affect_state_raw = json['patient']['affected'] # 2 = affected, 3=unaffected
+            affect_state_raw = aff_convert[affect_state_raw]
+        except:
+            affect_state_raw = 'Unknown'
+
+        if res['affect_from_proband_list'] == affect_state_raw:
+            res['affect_final'] = affect_state_raw
+        elif rel_to_proband == 'Proband':
+            res['affect_final'] = affect_state_raw
+        else:
+            res['affect_final'] = f'{affect_state_raw} / {res["affect_from_proband_list"]}'
+
+        res['phenotip'] = json['patient']['phenotipsid']
+        res['alive'] = not json['deceased']
+
+        res['simpleid'] = json['patient']['simpleid']
+        try:
+            res['similar_symp'] = format_comment(json['patient'].get('similarsymptomsexplain'))
+        except:
+            res['similar_symp'] = None
+
+        try:
+            res['comment'] = format_comment(json['comment'])
+        except:
+            res['comment'] = None
+
+
+    # patien info
+    # url = "https://gateway.undiagnosed.hms.harvard.edu/api/patient/{uuid}/"
+    # the result is just like above patientrecord
+
+    # proband only code
+    if rel_to_proband.lower() == 'proband':
+        # download the phenotip PDF file
+        url_pdf = f'https://gateway.undiagnosed.hms.harvard.edu/phenotips/export/data/{res["phenotip"]}?format=pdf&pdfcover=0&pdftoc=0&pdftemplate=PhenoTips.PatientSheetCode'
+
+        r = requests.request('GET', url_pdf, headers=header_cookie)
+
+        with open(f'intermed/phenotip.{udn}.pdf', 'wb') as out:
+            out.write(r.content)
+
+        # get relatives
+        uuid_case = res['uuid_case']
+        url_relative = f'https://gateway.undiagnosed.hms.harvard.edu/patient/relatives/{uuid_case}/'
+        if not uuid_case:
+            logger.error(f'case UUID not found: patient record={res}')
+            return 0
+
+        try:
+            driver.get(url_relative)
+        except:
+            logger.error(f'fail to get relatives page using selenium')
+            try:
+                response_relative = requests.request('GET', url_relative, headers=header_cookie).text
+            except:
+                logger.error(f'fail to get relatives info: {udn}')
+                return 0
+        else:
+            try:
+                _tmp_ele = wait(driver, 20).until(lambda _:_.find_element_by_xpath(f'//a[text()="Sequence uploaded"]'))
+                # logger.warning(f'type={type(response_relative)}, len={len(response_relative)}')
+                driver.save_screenshot(f'relatives_table.{udn}.png')
+            except:
+                logger.warning(f'{udn} : This case seems donnot have any relatives info !, check screenshot')
+                driver.save_screenshot(f'relative_not.found.{udn}.png')
+            response_relative = driver.page_source
+
+        r = bs(response_relative, features='lxml')
+        try:
+            tb = r.find('tbody').find_all('tr')
+        except:
+            tb = []
+        if len(tb) == 0:
+            logger.error('Relative list is empty')
+
+        # for this part, even the sequence state is noted as "-"  not uploaded, when clicking the actual case, sometimes, the sequence file still exist
+        for i in tb:
+            try:
+                seq_status = i.find(attrs={'class': 'sequploaded'})
+                have_seq = seq_status.text
+            except:
+                logger.warning(f'fail to get the sequence uploaded info from relative: {i}')
+                continue
+
+            rel_udn = i.find(attrs={'class': 'patientsimpleid'}).text
+            rel_aff = i.find(attrs={'class': 'affected'}).text.strip()
+            rel_aff = aff_convert[rel_aff]
+            rel_to_proband_tmp = i.find(attrs={'class': 'relative'}).text
+
+            if valid_family is not None:
+                if rel_udn not in valid_family:
+                    logger.warning(f'family member skipped due to not in valid family list: {rel_to_proband_tmp} - @{rel_udn}@ {valid_family}')
+                    logger.info('\n\n****************')
+
+                    continue
+
+            # avoid the overwritten of res_all keys, such as multipel sisters /brothers
+            try:
+                rel_in_prev_run = [_.split('#')[-1] for _ in res_all if re.match(rel_to_proband_tmp, _)]
+            except:
+                logger.error(res_all)
+                sys.exit(1)
+
+            # incase multiple sister, multiple brother ...
+            rel_seq = 0
+            for _ in rel_in_prev_run:
+                try:
+                    n = int(_)
+                except:
+                    n = 1
+                rel_seq = n if n > rel_seq else rel_seq
+
+            if rel_seq > 0:
+                # if no previous key was found, rel_seq shoul be zero
+                rel_seq += 1
+                rel_to_proband_tmp = f'{rel_to_proband_tmp}#{rel_seq}'
+
+            res_all, driver = get_all_info(rel_udn, cookie_token, rel_to_proband=rel_to_proband_tmp, res_all=res_all, info_passed_in={'affected': rel_aff, 'seq_status': have_seq},  demo=demo, get_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite_mode, udn_proband=udn_proband, gzip_only=gzip_only, driver=driver, sv_caller=sv_caller, newname_prefix=newname_prefix)
+            # logger.info(res_all.keys())
+
+        # patient dignosis
+        action = 'application'
+        json = get_json(udn, action)
+
+        d_json['doctor_review'] = json
+        dump_json(d_json, fn_json_pk)
+
+        if json:
+            review = json[0]['application_review_set']
+            if len(review) > 0:
+                res['summary'] = format_comment(review[0]['summary'])
+                res['evaluation'] = format_comment(review[0]['evaluations'])
+            else:
+                res['summary'] = res['evaluation'] = None
+
+
+        # pehnotip
+        try:
+            uuid = res['uuid']
+        except:
+            logger.warning(f'{udn}: fail to get phenotip, UUID not available')
+        else:
+            url = f'{base_url}/phenotips/{uuid}/'
+            json = get_json(udn, url=url)
+            if json:
+                symp_raw = json['phenotips']['features']
+                symp = [[_['id'], _['label']] for _ in symp_raw if _['observed'] == 'yes']
+                res['symp'] = symp
+
+    # sequencing
+    # https://gateway.undiagnosed.hms.harvard.edu/patient/sequence/5366/
+    action = 'sequences'
+    json = get_json(udn, action)
+
+    d_json['files'] = json
+    dump_json(d_json, fn_json_pk)
+
+    print('\n\n****************')
+    logger.info(f'\tnow getting information of {rel_to_proband} : {udn}')
+    # if rel_to_proband.find('#') > -1:
+    #     logger.warning(f'Family member with same relative to proband: {rel_to_proband}')
+
+    json_all = json
+
+    # json_all is a list
+    # each element is a dict, which is a sequencing request like
+    # {'id': 1984,
+    #   'patient': {'simpleid': 'UDN139529'},
+    #   'sequencingfiles': [...]}
+    seq_type_convert = {2: 'wes', 3: 'wgs', 4: 'rna', 5: 'reanalysis', 1: 'targeted variant'}
+    seq_type_convert.update({str(k): v for k, v in seq_type_convert.items()})
+    files = []
+    res['bayler_report'] = []
+
+
+    seq_type_available = [seq_type_convert.get(json['sequencing_type']) or json['sequencing_type'] for json in json_all]
+
+    if len(json_all) > 1:
+        logger.warning(f'multi seq type found ({len(seq_type_available)}): {seq_type_available}')
+    elif not json or len(json_all) == 0:
+        logger.error(f'\t{rel_to_proband}: fail to get sequencing json')
+
+    use_all_seq_res = 0
+    if len(set(sequence_type_desired) & set(seq_type_available)) == 0:
+        use_all_seq_res = 1
+
+    res['seq_json_all'] = json_all
+
+    for json in json_all:
+        seq_id = json["id"]
+        res.setdefault('seq_id', []).append(seq_id)
+
+        sequence_type_raw = json['sequencing_type']
+        try:
+            sequence_type = seq_type_convert[sequence_type_raw]
+        except:
+            logger.warning(f'{rel_to_proband} seq_id = {seq_id}: unkown sequence type: type code={sequence_type_raw}')
+            continue
+
+        if sequence_type in sequence_type_desired  or'all' in  sequence_type_desired or sequence_type == 'reanalysis':
+            logger.info(f'\tdesired seq type found: {sequence_type}')
+        elif use_all_seq_res:
+            logger.warning(f'\tusing data from {sequence_type}')
+        else:
+            logger.warning(f'\tskipped due to unmatch sequence type, seq_id = {seq_id}, desired={sequence_type_desired} found={sequence_type}')
+            continue
+
+        res['bayler_report'] += [
+            f'https://gateway.undiagnosed.hms.harvard.edu/patient/sequencing-report/{_}/'
+            for _ in json['sequencereports']]
+
+        files_raw = json['sequencingfiles']
+        logger.info(f'\t{rel_to_proband}: {sequence_type} seq_id={seq_id}  total files={len(files_raw)} , ft_to_download={get_aws_ft}')
+
+        for n_fl, ifl in enumerate(files_raw):
+            # each file is like
+            # demo_format = {'udn_id': ['UDN525121'],
+            # 'sequence_id': [6345],
+            # 'uuid': '81c137f0-0a1d-403b-befb-83c40a24b81e',
+            # 'fileserviceuuid': 'a09300e9-879a-4309-af82-b52e4aea9228',
+            # 'sequencing_type': ['genome'],
+            # 'filename': '939336-UDN525121-P.bam.bai',
+            # 'sequencing_site': 'baylorseq',
+            # 'complete': True,
+            # 'file_data': {'creationdate': '2021-03-26T00:09:06-04:00',
+            # 'modifydate': '2021-03-26T00:09:06-04:00',
+            # 'description': '',
+            # 'tags': [],
+            # 'locations': [{'url': 'S3://udnarchive/8471503a-18a0-4a20-ae95-88e3681628ff/939336-UDN525121-P.bam.bai',
+            #     'storagetype': 's3',
+            #     'uploadComplete': '2021-03-26T00:09:08-04:00',
+            #     'id': 933980,
+            #     'filesize': 9481464}],
+            # 'uuid': 'a09300e9-879a-4309-af82-b52e4aea9228',
+            # 'filename': '939336-UDN525121-P.bam.bai',
+            # 'expirationdate': '2021-10-12',
+            # 'owner': {'email': 'imachol@bcm.edu'},
+            # 'permissions': ['udn'],
+            # 'id': 80272,
+            # 'metadata': {'sequenceid': '6345',
+            # 'assembly': 'hg38',
+            # 'description': 'Binary Index File.',
+            # 'md5sum': 'd21c930dbcbb160d6ecdde4069aa11c5',
+            # 'patientid': '9fd8379b-a074-4457-83e5-b6f84e4fadf8',
+            # 'sequencing_type': 'genome',
+            # 'filename': '939336-UDN525121-P.bam.bai',
+            # 'sequencing_location': 'baylor',
+            # 'permissions': 'udn',
+            # 'sequencing_sampleid': '939336-UDN525121'}}}
+
+    # udn_id - list
+    # sequence_id - list
+    # sequencing_type - list
+    # fileserviceuuid * useful
+    # filename
+    # complete
+
+    # file_data
+    #         uuid # same as fileserviceuuid in above layer
+    #         filename
+    #         metadata
+    #                 sequenceid
+    #                 assembly
+    #                 md5sum
+    #                 sequencing_type
+    #                 filename
+    #         locations  # is a list, ele=dict
+    #                 url = S3 url
+    #                 filesize
+
+            completed = ifl['complete']
+
+            try:
+                fl_loc = ifl['file_data']['locations']
+                fl_meta = ifl['file_data']['metadata']
+            except:
+                logger.error(f"wrong file json: {ifl}")
+                raise
+            else:
+                try:
+                    fl_loc = fl_loc[0]
+                except:
+                    fl_loc = 'NA'
+                    logger.error(colored(f'file_locations is empty : {ifl}, \nfilename = {ifl.get("filename") or ""}\nurl= https://gateway.undiagnosed.hms.harvard.edu/patient/sequence/{seq_id}/files/#\n\n', 'red'))
+
+
+            fn = ifl['file_data']['filename']
+
+            if re.match(r'.+\.bai$', fn):
+                pass
+            elif re.match(r'.+\.bam$', fn):
+                pass
+            elif re.match(r'.+\.g?vcf', fn):
+                pass
+            elif re.match(r'.+\.fastq.gz$', fn):
+                pass
+            else:
+                logger.debug(f'unkown filetype: {sequence_type}: {fn}')
+                continue
+
+            # use fileserviceuuid key, rather than the uuid key
+            file_uuid = ifl['fileserviceuuid']
+
+            # the above file_uuid is used for api query, but the file_uuid used for the js query is ifl['uuid']
+            file_uuid_js = ifl['uuid']
+            file_uuid1 = ifl['file_data']['uuid']
+            if file_uuid != file_uuid1:
+                demo_d = {'fileserviceuuid': file_uuid, 'file_data': {'uuid': file_uuid1}}
+                logger.warning(f'fs_uuid not match within json: {demo_d}')
+
+            try:
+                fl_url = fl_loc['url']
+                fl_size = fl_loc['filesize']
+            except:
+                # logger.debug(f'unexpected fl_info {fn}: {fl_loc}')
+                fl_url = fl_size = fl_loc
+
+    #         metadata
+    #                 sequenceid
+    #                 assembly
+    #                 md5sum
+    #                 sequencing_type
+    #                 filename
+            try:
+                seq_id = fl_meta['sequenceid']
+            except:
+                pass
+            try:
+                fl_assembly = fl_meta.get('assembly')
+                fl_md5 = fl_meta.get('md5sum') or fl_meta.get('md5')
+            except:
+                logger.warning(f'unexpected fl meta info  {fn}: {fl_meta}')
+                fl_assembly = fl_md5 = 'NA'
+
+
+
+            # to get the actual amazon presined URL, there is a trick.
+            # on each file URL, the click action is binded to
+            # <a href="#" onclick="sequencing_file.show_file_download_modal(event, this)" file_uuid="c9ecb8c4-2760-4cdb-a3fe-d8fa61521da2" filename="921192-UDN830680-P.bam">921192-UDN830680-P.bam</a>
+            # the action is sequencing_file.show_file_download_modal
+            # after checking https://gateway.undiagnosed.hms.harvard.edu/static/js/patient/sequencing_file.js
+
+            # there is a download link function
+            # download_url = "/patient/downloadsequenceurl/" + file_uuid + "/";
+
+            # request this URL would responde a json object
+            # {"messages": [], "download_url": "https://udnarchive.s3.amazonaws.com:443/db488479-8923-4a60-9779-48f58b2f1dad/921192-UDN830680-P.bam?Signature=iZaOBprDz69DFzCZ%2BF0Pn9qEjDk%3D&Expires=1600299340&AWSAccessKeyId=AKIAZNIVXXYEAPHA7BGD", "success": true}
+
+            # which include the amazon presigned URL
+            ext, gz = get_file_extension(fn)
+            try:
+                ext = ft_convert[ext]
+            except:
+                logger.error(f'invalid file extension: {fn}')
+                sys.exit(1)
+
+
+            if not gz and ext in gzip_only:
+                logger.debug(f'file skipped due to gzip file only: {fn}')
+                download = 'NA'
+
+            if get_aws_ft and len(get_aws_ft) > 0 and ext not in get_aws_ft:
+                logger.debug(f'skip update amazon link due to file type limit: {fn} ext={ext}, valid ft={get_aws_ft}')
+                download = 'NA'
+            else:
+                time.sleep(2)
+                cookie_token, download, res_source = get_amazon_download_link(fn, file_uuid, cookie_token, seq_id=seq_id, demo=demo, driver=driver, file_uuid_js=file_uuid_js)
+                if not download:
+                    logger.debug(f'error when getting_amazon_download_link cookie_token = {cookie_token} \nfn="{fn}"\nfile_uuid="{file_uuid}"')
+                    download = 'NA'
+                else:
+                    logger.info(f'{sequence_type} seq_id={seq_id}: {fn}, amazon link resolved ({res_source})')
+
+            files.append({'download': download, 'relative': rel_to_proband, 'file_uuid': file_uuid, 'file_uuid_js': file_uuid_js, 'fn': fn, 'url': fl_url, 'complete': completed, 'size': fl_size, 'build': fl_assembly, 'assembly': fl_assembly, 'md5': fl_md5, 'seq_type': sequence_type, 'seq_id': seq_id})
+    res['files'] = files
+    res_all[rel_to_proband] = res
+
+    if rel_to_proband == 'Proband':
+        try:
+            parse_api_res(res_all, cookie_token=cookie_token, udn_raw=udn_raw, valid_family=valid_family, driver=driver, sv_caller=sv_caller, newname_prefix=newname_prefix)
+        except:
+            logger.error(f'fail to parse the result dict, try again')
+            raise
+    return res_all, driver
+
+
+
+def get_all_info_old(udn, cookie_token, rel_to_proband=None, res_all=None, info_passed_in=None, sequence_type_desired=None, demo=False, get_aws_ft=None, udn_raw=None, valid_family=None, lite_mode=None, udn_proband=None, gzip_only=None, driver=None, sv_caller='dragen', newname_prefix=None):
     """
     rel_to_proband, if run as proband, this is None, otherwize, this func is called during geting the relatives of proband, and specified
     info_passed_in,  {'affected': rel_aff, 'seq_status': have_seq}   include the affect state, sequenced_state, only valid when called during geting the relatives of proband, and specified
