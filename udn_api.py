@@ -305,6 +305,53 @@ def ts(timestamp):
     except:
         return 'NA'
 
+def parse_seq_files(info):
+    reports = []
+    files = []
+    udn = info['udnId']
+    for i in info['requests']:
+        for i1 in i['reports']:
+            rep_id = i['id']
+            rep_name = i['filename']
+            reports.append((rep_id, rep_name))
+
+            if not os.path.exists(f'intermed/{rep_name}'):
+                logger.info(f'\tdownloading seq report {rep_name}')
+                try:
+                    rep_url = get_json(f'participants/{udn}/sequencing/reports/{rep_id}')['downloadLink']
+                    os.system(f'wget "{rep_url}" -O intermed/{rep_name}')
+                except:
+                    logger.warning(f'\tfail to download report: {rep_name}')
+
+
+        for ifl in i['files']:
+            ires = {}
+            try:
+                ires['url'] = ifl['storageLocation']
+            except:
+                ires['url'] = 'NA'
+
+            try:
+                ires['file_id'] = ifl['id']
+            except:
+                ires['file_id'] = 'NA'
+            try:
+                ires['size'] = ifl['filesize']
+            except:
+                ires['size'] = 'NA'
+
+            ires['download'] = 'NA'
+
+            for k1, k2 in [('sequenceid', 'seq_id'), ('assembly', 'assembly'), ('md5sum', 'md5'), ('sequencing_type', 'seq_type'), ('filename', 'filename')]:
+                try:
+                    ires[k2] = ifl['metadata'][k2]
+                except:
+                    ires[k2] = 'NA'
+
+            files.append(ires)
+
+    return report, files
+
 def get_all_info(udn, cookie_token, res_all=None, demo=False, get_aws_ft=None, udn_raw=None, valid_family=None, lite_mode=None, udn_proband=None, gzip_only=None, driver=None, sv_caller='dragen', newname_prefix=None):
     """
     res_all,  when running specific relative, use this dict to accumulate among the family member
@@ -340,32 +387,131 @@ def get_all_info(udn, cookie_token, res_all=None, demo=False, get_aws_ft=None, u
     res = {}
 
     # get the basic info
-    json = get_json(f'participants/{udn}')
+    basic_info = get_json(f'participants/{udn}')
+    sequence_info = get_json(f'participants/{udn}/sequencing')
     is_proband = False
 
     res['simpleid'] = udn
+    res['reports'], res['files'] = parse_seq_files(sequence_info)
+
+    check_items = [
+        ('firstname',['nameFirst'], basic_info),
+        ('lastname',['nameLast'], basic_info),
+        ('rel_to_proband',['relation'], basic_info, lambda _: _ or 'Proband'),
+        ('dob',['dateOfBirth'], basic_info, ts),
+        ('race',['races', 'name'], basic_info),
+        ('gender',['birthAssignedSex', 'name'], basic_info),
+        ('alive',['deceased'], basic_info, lambda _: int(not _)),
+        ('affected',['affected', 'name'], basic_info),
+        ('phenotip',['phenoTipsId'], basic_info),
+        ]
+
+    if is_proband:
+        family_members = get_json(f'participants/{udn}/family')
+        phenotip_info = get_json(f'participants/{udn}/phenotip')
+        application_id = basic_info['application']['id']
+        application = get_json(f'applications/{application_id}')
+        baylor_candidate_raw = basic_info['diagnoses']
 
 
-    for i in [
-        ('firstname',['nameFirst']),
-        ('lastname',['nameLast']),
-        ('rel_to_proband',['relation'], lambda _: _ or 'Proband'),
-        ('dob',['dateOfBirth'], ts),
-        ('race',['races', 'name']),
-        ('gender',['birthAssignedSex', 'name']),
-        ('alive',['deceased'], lambda _: int(not _)),
-        ('affected',['affected', 'name']),
-        ('',['']),
-        ('',['']),
-        ('',['']),
+        res_family = []
+        baylor_candidate = []
+        res_pheno = []
 
-        ]:
-        k, json_keys = i[:2]
+        for i in family_members['familyMembers']:
+            ires = []
+            try:
+                ires.append(f'{i["nameFirst"]} {i["nameLast"]}')
+            except:
+                pass
+
+            try:
+                ires.append(i['relation']['shortname'])
+            except:
+                pass
+
+            try:
+                ires.append(i['udnId'])
+            except:
+                pass
+
+
+            # name, relation, udn_id,
+            res_family.append(ires)
+
+        res['family'] = res_family
+
+
+        for i in baylor_candidate_raw:
+            ires = []
+            k = 'OMIM_gene'
+            try:
+                v = i['geneName']
+            except:
+                v = 'NA'
+            ires.append((k, v))
+
+            k = 'OMIM_gene_id'
+            try:
+                v = i['geneMIM']
+            except:
+                v = 'NA'
+            ires.append((k, v))
+
+            k = 'certainty'
+            try:
+                v = i['certainty']['shortDescription']
+            except:
+                v = 'NA'
+            ires.append((k, v))
+
+            k = 'phenothype_explain'
+            try:
+                v = i['majorPhenotypeDegreeExplain']
+            except:
+                v = 'NA'
+            ires.append((k, v))
+            baylor_candidate.append(ires)
+
+        res['baylor_candidate'] = balyor_candidate
+
+
+        for i in phenotip_info['features']:
+            if i['observed'] != 'yes':
+                continue
+
+            try:
+                res_pheno.append((i['id'], i['label']))
+            except:
+                logger.warning(f'invalid pheno, participants/{udn}/phenotip\n{i}')
+        res['symp'] = res_pheno
         try:
-            func = i[2]
+            res['family_history'] = phenotip_info['notes']['family_history']
+        except:
+            res['family_history'] = 'NA'
+
+        try:
+            res['medical_history'] = phenotip_info['notes']['medical_history']
+        except:
+            res['medical_history'] = 'NA'
+
+
+        check_items.extend(
+            [
+                ('similar_symp',['familyWithSimilarSymptoms'], application),
+                ('summary',['review', 'narrativeSummary', ], application),
+                ('evaluation',['review', 'pertinentPriorEvaluations', ], application),
+                ('comment',['review', 'comments'], application),
+            ]
+        )
+
+
+    for i in check_items:
+        k, json_keys, v = i[:3]
+        try:
+            func = i[3]
         except:
             func = None
-        v = json
         try:
             for ktmp in json_keys:
                 v = v[ktmp]
@@ -375,261 +521,9 @@ def get_all_info(udn, cookie_token, res_all=None, demo=False, get_aws_ft=None, u
             v = 'NA'
         res[k] = v
 
-    if not cookie_token:
-        driver, cookie_token = get_cookie(driver)
-
-    if not cookie_token:
-        logger.error('fail to get cookie, can\'t get the amazon s3 presigned URL, exit')
-        return 0
-    header_cookie = get_header_cookie(cookie_token)
-
-    # get followup files
-    action = 'followup/attachment'
-    json = get_json(udn, action)
-    # some case don't have followup files
-    if json:
-        res['followup'] = []
-        if isinstance(json, list):
-            for ijson in json:
-                try:
-                    res['followup'].append(ijson['file'])
-                except KeyError:
-                    logger.warning(f'fail to get followup file: {udn} - json={ijson}')
-        else:
-            try:
-                res['followup'].append(json['file'])
-            except KeyError:
-                logger.warning(f'fail to get followup file: {udn} - json={json}')
-        if not lite_mode:
-            for n, ifl in enumerate(res['followup']):
-                logger.info(f'downloading followup file: {udn}-{n+1}')
-                r = requests.request('GET', ifl, headers=header_cookie)
-                with open(f'origin/{udn}.followup-{n}.pdf', 'wb') as out:
-                    out.write(r.content)
-
-    # basic patient info
-    action = 'patientrecord'
-    json = get_json(udn, action)
-
-    d_json['basic_info'] = json
-    dump_json(d_json, fn_json_pk)
-
-    if json:
-        try:
-            res['gender'] = json['patient']['gender']['name']
-        except:
-            res['gender'] = json['patient']['sex']['name']
-
-        res['firstname'] = json['patient']['patientfirst']
-        res['lastname'] = json['patient']['patientlast']
-
-        try:
-            res['race'] = json['patient']['race'][0]['name']  # 1=male
-        except:
-            res['race'] = json['patient']['race']
-        res['uuid'] = json['patient']['uuid']  #
-        res['uuid_case'] = json['uuid']  #
-        res['dob'] = json['patient']['dob']  # birthday
-
-        try:
-            affect_state_raw = json['patient']['affected'] # 2 = affected, 3=unaffected
-            affect_state_raw = aff_convert[affect_state_raw]
-        except:
-            affect_state_raw = 'Unknown'
-
-        if res['affect_from_proband_list'] == affect_state_raw:
-            res['affect_final'] = affect_state_raw
-        elif rel_to_proband == 'Proband':
-            res['affect_final'] = affect_state_raw
-        else:
-            res['affect_final'] = f'{affect_state_raw} / {res["affect_from_proband_list"]}'
-
-        res['phenotip'] = json['patient']['phenotipsid']
-        res['alive'] = not json['deceased']
-
-        res['simpleid'] = json['patient']['simpleid']
-        try:
-            res['similar_symp'] = format_comment(json['patient'].get('similarsymptomsexplain'))
-        except:
-            res['similar_symp'] = None
-
-        try:
-            res['comment'] = format_comment(json['comment'])
-        except:
-            res['comment'] = None
-
-
-    # patien info
-    # url = "https://gateway.undiagnosed.hms.harvard.edu/api/patient/{uuid}/"
-    # the result is just like above patientrecord
-
-    # proband only code
-    if rel_to_proband.lower() == 'proband':
-        # download the phenotip PDF file
-        url_pdf = f'https://gateway.undiagnosed.hms.harvard.edu/phenotips/export/data/{res["phenotip"]}?format=pdf&pdfcover=0&pdftoc=0&pdftemplate=PhenoTips.PatientSheetCode'
-
-        r = requests.request('GET', url_pdf, headers=header_cookie)
-
-        with open(f'intermed/phenotip.{udn}.pdf', 'wb') as out:
-            out.write(r.content)
-
-        # get relatives
-        uuid_case = res['uuid_case']
-        url_relative = f'https://gateway.undiagnosed.hms.harvard.edu/patient/relatives/{uuid_case}/'
-        if not uuid_case:
-            logger.error(f'case UUID not found: patient record={res}')
-            return 0
-
-        try:
-            driver.get(url_relative)
-        except:
-            logger.error(f'fail to get relatives page using selenium')
-            try:
-                response_relative = requests.request('GET', url_relative, headers=header_cookie).text
-            except:
-                logger.error(f'fail to get relatives info: {udn}')
-                return 0
-        else:
-            try:
-                _tmp_ele = wait(driver, 20).until(lambda _:_.find_element_by_xpath(f'//a[text()="Sequence uploaded"]'))
-                # logger.warning(f'type={type(response_relative)}, len={len(response_relative)}')
-                driver.save_screenshot(f'relatives_table.{udn}.png')
-            except:
-                logger.warning(f'{udn} : This case seems donnot have any relatives info !, check screenshot')
-                driver.save_screenshot(f'relative_not.found.{udn}.png')
-            response_relative = driver.page_source
-
-        r = bs(response_relative, features='lxml')
-        try:
-            tb = r.find('tbody').find_all('tr')
-        except:
-            tb = []
-        if len(tb) == 0:
-            logger.error('Relative list is empty')
-
-        # for this part, even the sequence state is noted as "-"  not uploaded, when clicking the actual case, sometimes, the sequence file still exist
-        for i in tb:
-            try:
-                seq_status = i.find(attrs={'class': 'sequploaded'})
-                have_seq = seq_status.text
-            except:
-                logger.warning(f'fail to get the sequence uploaded info from relative: {i}')
-                continue
-
-            rel_udn = i.find(attrs={'class': 'patientsimpleid'}).text
-            rel_aff = i.find(attrs={'class': 'affected'}).text.strip()
-            rel_aff = aff_convert[rel_aff]
-            rel_to_proband_tmp = i.find(attrs={'class': 'relative'}).text
-
-            if valid_family is not None:
-                if rel_udn not in valid_family:
-                    logger.warning(f'family member skipped due to not in valid family list: {rel_to_proband_tmp} - @{rel_udn}@ {valid_family}')
-                    logger.info('\n\n****************')
-
-                    continue
-
-            # avoid the overwritten of res_all keys, such as multipel sisters /brothers
-            try:
-                rel_in_prev_run = [_.split('#')[-1] for _ in res_all if re.match(rel_to_proband_tmp, _)]
-            except:
-                logger.error(res_all)
-                sys.exit(1)
-
-            # incase multiple sister, multiple brother ...
-            rel_seq = 0
-            for _ in rel_in_prev_run:
-                try:
-                    n = int(_)
-                except:
-                    n = 1
-                rel_seq = n if n > rel_seq else rel_seq
-
-            if rel_seq > 0:
-                # if no previous key was found, rel_seq shoul be zero
-                rel_seq += 1
-                rel_to_proband_tmp = f'{rel_to_proband_tmp}#{rel_seq}'
-
-            res_all, driver = get_all_info(rel_udn, cookie_token, rel_to_proband=rel_to_proband_tmp, res_all=res_all,  demo=demo, get_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite_mode, udn_proband=udn_proband, gzip_only=gzip_only, driver=driver, sv_caller=sv_caller, newname_prefix=newname_prefix)
-            # logger.info(res_all.keys())
-
-        # patient dignosis
-        action = 'application'
-        json = get_json(udn, action)
-
-        d_json['doctor_review'] = json
-        dump_json(d_json, fn_json_pk)
-
-        if json:
-            review = json[0]['application_review_set']
-            if len(review) > 0:
-                res['summary'] = format_comment(review[0]['summary'])
-                res['evaluation'] = format_comment(review[0]['evaluations'])
-            else:
-                res['summary'] = res['evaluation'] = None
-
-
-        # pehnotip
-        try:
-            uuid = res['uuid']
-        except:
-            logger.warning(f'{udn}: fail to get phenotip, UUID not available')
-        else:
-            url = f'{base_url}/phenotips/{uuid}/'
-            json = get_json(udn, url=url)
-            if json:
-                symp_raw = json['phenotips']['features']
-                symp = [[_['id'], _['label']] for _ in symp_raw if _['observed'] == 'yes']
-                res['symp'] = symp
-
-    # sequencing
-    # https://gateway.undiagnosed.hms.harvard.edu/patient/sequence/5366/
-    action = 'sequences'
-    json = get_json(udn, action)
-
-    d_json['files'] = json
-    dump_json(d_json, fn_json_pk)
-
-    print('\n\n****************')
-    logger.info(f'\tnow getting information of {rel_to_proband} : {udn}')
-    # if rel_to_proband.find('#') > -1:
-    #     logger.warning(f'Family member with same relative to proband: {rel_to_proband}')
-
-    json_all = json
-
-    # json_all is a list
-    # each element is a dict, which is a sequencing request like
-    # {'id': 1984,
-    #   'patient': {'simpleid': 'UDN139529'},
-    #   'sequencingfiles': [...]}
-    seq_type_convert = {2: 'wes', 3: 'wgs', 4: 'rna', 5: 'reanalysis', 1: 'targeted variant'}
-    seq_type_convert.update({str(k): v for k, v in seq_type_convert.items()})
-    files = []
-    res['bayler_report'] = []
-
-
-    seq_type_available = [seq_type_convert.get(json['sequencing_type']) or json['sequencing_type'] for json in json_all]
-
-    if len(json_all) > 1:
-        logger.warning(f'multi seq type found ({len(seq_type_available)}): {seq_type_available}')
-    elif not json or len(json_all) == 0:
-        logger.error(f'\t{rel_to_proband}: fail to get sequencing json')
-
-    use_all_seq_res = 0
-    if len(set(sequence_type_desired) & set(seq_type_available)) == 0:
-        use_all_seq_res = 1
-
-    res['seq_json_all'] = json_all
-
+    # stopped here  08/29/22
+    # startover
     for json in json_all:
-        seq_id = json["id"]
-        res.setdefault('seq_id', []).append(seq_id)
-
-        sequence_type_raw = json['sequencing_type']
-        try:
-            sequence_type = seq_type_convert[sequence_type_raw]
-        except:
-            logger.warning(f'{rel_to_proband} seq_id = {seq_id}: unkown sequence type: type code={sequence_type_raw}')
-            continue
 
         if sequence_type in sequence_type_desired  or'all' in  sequence_type_desired or sequence_type == 'reanalysis':
             logger.info(f'\tdesired seq type found: {sequence_type}')
