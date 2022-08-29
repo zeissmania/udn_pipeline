@@ -321,14 +321,21 @@ def get_all_info(udn, cookie_token, res_all=None, demo=False, get_aws_ft=None, u
     # res_all
     # k1 = rel_to_proband, (Proband, Father, Mother)
     # k2 =
-    #   rel_to_proband , firstname, lastname, race, dob, gender
-    #   comment,  summary, evaluation, similar_symp
-    #   affect_final
-    #   phenotip
-    #   symp
-    #   sampleid (UDNxxx)
-    #   seq_id  , list [int, int]
-    #   baylor_report, list
+# { files:
+#   seq_json_all
+
+#  'similar_symp': 'MOTHER',
+#  'comment': None,
+#  'summary': '',
+#  'symp': [['HP:0001251', 'Ataxia'],
+#   ['HP:0001288', 'Gait disturbance'],
+#   ['HP:0001337', 'Tremor'],
+#   ['HP:0002194', 'Delayed gross motor development'],
+#   ['HP:0012622', 'Chronic kidney disease'],
+#   ['HP:0100022', 'Abnormality of movement']],
+#  'bayler_report': ['https://gateway.undiagnosed.hms.harvard.edu/patient/sequencing-report/9256/',
+#   'https://gateway.undiagnosed.hms.harvard.edu/patient/sequencing-report/9257/'],
+#  'seq_id': [7645]}
 
     res = {}
 
@@ -367,52 +374,6 @@ def get_all_info(udn, cookie_token, res_all=None, demo=False, get_aws_ft=None, u
         except:
             v = 'NA'
         res[k] = v
-
-
-
-    k = 'firstname'
-    try:
-        res[k] = json['nameFirst']
-    except:
-        res[k] = 'NA'
-
-    k = 'firstname'
-    try:
-        res[k] = json['nameFirst']
-    except:
-        res[k] = 'NA'
-
-    k = 'firstname'
-    try:
-        res[k] = json['nameFirst']
-    except:
-        res[k] = 'NA'
-
-    k = 'firstname'
-    try:
-        res[k] = json['nameFirst']
-    except:
-        res[k] = 'NA'
-
-    k = 'firstname'
-    try:
-        res[k] = json['nameFirst']
-    except:
-        res[k] = 'NA'
-
-    k = 'firstname'
-    try:
-        res[k] = json['nameFirst']
-    except:
-        res[k] = 'NA'
-
-    k = 'firstname'
-    try:
-        res[k] = json['nameFirst']
-    except:
-        res[k] = 'NA'
-
-
 
     if not cookie_token:
         driver, cookie_token = get_cookie(driver)
