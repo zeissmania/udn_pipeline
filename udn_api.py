@@ -27,6 +27,8 @@ import requests
 # from selenium.webdriver.common.keys import Keys
 import udn_igv
 from termcolor import colored
+from datetime import datetime
+fromtimestamp = datetime.fromtimestamp
 
 import hashlib
 from getpass import getpass
@@ -148,9 +150,16 @@ def format_comment(comment):
 
 
 def ts(timestamp):
-    from datetime.datetime import fromtimestamp
     try:
         return fromtimestamp(timestamp/1000).strftime('%Y-%m-%d')
+    except:
+        return 'NA'
+
+def get_age(timestamp):
+    try:
+        dob = fromtimestamp(timestamp/1000)
+        today = datetime.today()
+        return f'{(today - dob).days / 365:.1f} yo'
     except:
         return 'NA'
 
@@ -198,6 +207,11 @@ def parse_seq_files(info, rel_to_proband):
                 ires['size'] = ifl['filesize']
             except:
                 ires['size'] = 'NA'
+            try:
+                ires['uploaded'] = ts(ifl['uploaded'])
+            except:
+                ires['uploaded'] = 'NA'
+
 
             ires['download'] = 'NA'
 
@@ -292,25 +306,6 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
 
     res_all = res_all or {}
 
-    # res_all
-    # k1 = rel_to_proband, (Proband, Father, Mother)
-    # k2 =
-    # { files:
-    #   seq_json_all
-
-    #  'similar_symp': 'MOTHER',
-    #  'comment': None,
-    #  'summary': '',
-    #  'symp': [['HP:0001251', 'Ataxia'],
-    #   ['HP:0001288', 'Gait disturbance'],
-    #   ['HP:0001337', 'Tremor'],
-    #   ['HP:0002194', 'Delayed gross motor development'],
-    #   ['HP:0012622', 'Chronic kidney disease'],
-    #   ['HP:0100022', 'Abnormality of movement']],
-    #  'bayler_report': ['https://gateway.undiagnosed.hms.harvard.edu/patient/sequencing-report/9256/',
-    #   'https://gateway.undiagnosed.hms.harvard.edu/patient/sequencing-report/9257/'],
-    #  'seq_id': [7645]}
-
     res = {}
 
     # get the basic info
@@ -321,17 +316,6 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
     get_report = True if 'report' in get_aws_ft else False
     res['simpleid'] = udn
 
-    # add the download link
-    for ifl in res['files']:
-        download_link = get_download_link(udn, ifl, get_aws_ft, gzip_only=None)
-        if download_link == 0:
-            logger.info(colored(f'\tamazon link still valid: {ifl["fn"]}', 'green'))
-        elif download_link == 1:
-            logger.info(colored(f'\tfail to get amazon link {ifl["fn"]}', 'red'))
-        elif download_link == 2:
-            continue
-        else:
-            ifl['download'] = download_link
 
     relation = basic_info['relation']
     if relation is None:
@@ -346,19 +330,40 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
 
     res['reports'], res['files'] = parse_seq_files(sequence_info, rel_to_proband)
 
+    # add the download link
+    uploaded_date_ready = 0
+    res['seq_uploaded'] = 'NA'
+
+    for ifl in res['files']:
+        if uploaded_date_ready == 0:
+            if ifl['fn'].find('fastq') > -1:
+                tmp = ifl['uploaded']
+                if tmp != 'NA':
+                    uploaded_date_ready = 1
+                    res['seq_uploaded'] = tmp
+
+
+        download_link = get_download_link(udn, ifl, get_aws_ft, gzip_only=None)
+        if download_link == 0:
+            logger.info(colored(f'\tamazon link still valid: {ifl["fn"]}', 'green'))
+        elif download_link == 1:
+            logger.info(colored(f'\tfail to get amazon link {ifl["fn"]}', 'red'))
+        elif download_link == 2:
+            continue
+        else:
+            ifl['download'] = download_link
+
     if get_report:
         download_report(res['reports'])
-    else:
-        logger.warning(red('\treport downloading skipped: rel_to_proband'))
-
-
-
+    # else:
+    #     logger.warning(red(f'\treport downloading skipped: rel_to_proband'))
 
     check_items = [
         ('firstname',['nameFirst'], basic_info),
         ('lastname',['nameLast'], basic_info),
         ('dob',['dateOfBirth'], basic_info, ts),
-        ('race',['races', 'name'], basic_info),
+        ('age',['dateOfBirth'], basic_info, get_age),
+        ('race',['races', 'name', 0], basic_info),
         ('gender',['birthAssignedSex', 'name'], basic_info),
         ('alive',['deceased'], basic_info, lambda _: int(not _)),
         ('affected',['affected', 'name'], basic_info),
@@ -406,12 +411,12 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
             try:
                 ires.append(res_family_member['gender'])
                 ires.append(res_family_member['affected'])
+                ires.append(res_family_member['seq_uploaded'])
             except:
                 logger.error(f'missing keys for family member res:\n{res_family_member}')
                 raise
 
             # | Relative | Name | UDN | Gender | Affected| Sequence_Uploaded
-
             res_family.append(ires)
 
         res['family'] = res_family
@@ -649,19 +654,19 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
 
     fn_pdf = f'basic_info.{udn}.pdf'
     fn_md = f'basic_info.{udn}.md'
-    force_new_pdf = True
+    force_new_pdf = False
     if force_new_pdf or not os.path.exists(fn_pdf):
         with open(fn_md, 'w') as out:
             out.write(f'# {udn}\n## 1. Basic Info\n- UDN\t{udn}\n')
-            for k, v in zip('firstname,lastname,gender,race,dob,alive,affected,phenotip'.split(','), 'FirstName,LastName,Gender,Race,DateBirth,Alive,Affect_state,Phenotip_ID'.split(',')):
-                out.write(f'- {v}\t{proband[k]}\n')
+            for k, v in zip('firstname,lastname,gender,race,dob,age,alive,affected,phenotip,seq_uploaded'.split(','), 'FirstName,LastName,Gender,Race,DateBirth,Age,Alive,Affect_state,Phenotip_ID,Seq_uploaded'.split(',')):
+                out.write(f'- {v}: - \t{proband.get(k) or "NA"}\n')
             out.write('\n\n')
 
             # family members
 
             out.write('## 2. Family Members\n\n')
-            out.write('| Relative | Name | UDN | Gender | Affected| \n')
-            out.write('| :----: | :----: | :----: | :----: | :----: |\n')
+            out.write('| Relative | Name | UDN | Gender | Affected|Seq_uploaded \n')
+            out.write('| :----: | :----: | :----: | :----: | :----: | :----: |\n')
             for ifam in proband["family"]:
                 out.write('|' + '|'.join(ifam) + '|\n')
 
@@ -805,7 +810,7 @@ default:
     if 'cnv' in update_aws_ft:
         fn_cnv_sh = f'intermed/download.cnv.{udn}.sh'
         out_cnv = open(fn_cnv_sh, 'w')
-        out_cnv.write('missing=0')
+        out_cnv.write('missing=0\n\n')
 
     tmp = udn_raw or udn
     remote_pw = re.sub(r'^\d+_', '', tmp, 1)
@@ -876,7 +881,7 @@ default:
                     if url.lower() == 'na':
                         logger.error(f'invalid CNV file url')
                     else:
-                        out_cnv.write(f'size=$(stat -c %s origin/{fn} 2>/dev/null);if [[ "$size" -lt 1000 ]];then wget "{url}" -c -O "origin/{fn}";\nelse echo already exist: "origin/{fn}";fi\nsize=$(stat -c %s origin/{fn} 2>/dev/null);if [[ "$size" -lt 1000 ]];then missing=1;fi')
+                        out_cnv.write(f'size=$(stat -c %s origin/{fn} 2>/dev/null);if [[ "$size" -lt 1000 ]];then wget "{url}" -c -O "origin/{fn}";\nelse echo already exist: "origin/{fn}";fi\nsize=$(stat -c %s origin/{fn} 2>/dev/null);\nif [[ "$size" -lt 1000 ]];then missing=1;fi\n\n')
 
 
             out_info.write(f'{rel_to_proband}\t{fn}\t{newname}\t{newname_base}\t{url}\t{udn}\t{seq_type}\t{size}\t{build}\t{md5}\t{url_s3}\n')
@@ -884,7 +889,7 @@ default:
 
 
     if 'cnv' in update_aws_ft:
-        out_cnv.write('if [[ $missing -eq 0 ]];then touch intermed/download.cnv.{udn}.done;fi')
+        out_cnv.write(f'if [[ $missing -eq 0 ]];\n    then touch intermed/download.cnv.{udn}.done;\nelse \n    rm intermed/download.cnv.{udn}.done 2>/dev/null;\nfi')
         out_cnv.close()
 
     out_md5.close()
@@ -1309,7 +1314,7 @@ if __name__ == "__main__":
         fn_udn_api_pkl = f'{root}/{udn_raw}/intermed/{udn}.udn_api_query.pkl'
 
         if os.path.exists(fn_udn_api_pkl) and not force:
-            logger.info('directly load API query result from pickle file')
+            logger.info(green('\tdirectly load API query result from pickle file'))
             res = pickle.load(open(fn_udn_api_pkl, 'rb'))
             if demo:
                 renew_amazon_link = False
@@ -1331,7 +1336,7 @@ if __name__ == "__main__":
             if os.path.exists(f'intermed/download.cnv.{udn}.done'):
                 logger.info(green('\tCNV file already downloaded'))
             else:
-                logger.info(f'downloading CNV vcf file')
+                logger.info(f'\tdownloading CNV vcf file')
                 os.system(f'bash intermed/download.cnv.{udn}.sh >/dev/null 2>&1')
         try:
             os.unlink('geckodriver.log')
