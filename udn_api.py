@@ -21,10 +21,10 @@ import json
 import pickle
 import logging
 import requests
-from selenium import webdriver
-import selenium.common.exceptions as sel_exp
-from selenium.webdriver.support.ui import WebDriverWait as wait
-from selenium.webdriver.common.keys import Keys
+# from selenium import webdriver
+# import selenium.common.exceptions as sel_exp
+# from selenium.webdriver.support.ui import WebDriverWait as wait
+# from selenium.webdriver.common.keys import Keys
 import udn_igv
 from termcolor import colored
 
@@ -110,21 +110,20 @@ def get_json(action=None, payload=None, url=None, header=None):
 
     headers = header or header1
     if not action and not url:
-        print(f'Neither action nor URL was specified: {action}')
+        logger.error(f'Neither action nor URL was specified: {action}')
         return 0
     url = url or f'{base_url}/{action}'
 
     payload = payload or {}
     r = requests.get(url, headers=headers, data=payload)
     if r.status_code != 200:
-        print(f'action={action} - status_code = {r.status_code}')
+        logger.error(f'action={action} - status_code = {r.status_code}')
         return 0
     try:
         return r.json()
     except:
-        print(f'action={action} - fail to get json')
+        logger.error(f'action={action} - fail to get json')
         return 0
-
 
 def dump_json(obj, fn):
     with open(fn, 'wb') as out:
@@ -155,24 +154,34 @@ def ts(timestamp):
     except:
         return 'NA'
 
-def parse_seq_files(info):
+
+def download_report(reports):
+    for rep_id, rep_name in reports:
+        if not os.path.exists(f'intermed/{rep_name}'):
+            logger.info(f'\tdownloading seq report {rep_name}')
+            try:
+                rep_url = get_json(f'participants/{udn}/sequencing/reports/{rep_id}')['downloadLink']
+                os.system(f'wget "{rep_url}" -O intermed/{rep_name} > /dev/null 2>&1')
+            except:
+                logger.warning(f'\tfail to download report: {rep_name}')
+        else:
+            logger.info(f'\treport  already downloaded: {rep_name}')
+
+def parse_seq_files(info, rel_to_proband):
     reports = []
     files = []
     udn = info['udnId']
+
     for i in info['requests']:
         for i1 in i['reports']:
-            rep_id = i['id']
-            rep_name = i['filename']
+            try:
+                rep_id = i1['id']
+                rep_name = f'{rel_to_proband}-{i1["filename"]}'
+            except:
+                logger.warning(f'invalid report:  \n{i1}')
+                raise
+                continue
             reports.append((rep_id, rep_name))
-
-            if not os.path.exists(f'intermed/{rep_name}'):
-                logger.info(f'\tdownloading seq report {rep_name}')
-                try:
-                    rep_url = get_json(f'participants/{udn}/sequencing/reports/{rep_id}')['downloadLink']
-                    os.system(f'wget "{rep_url}" -O intermed/{rep_name}')
-                except:
-                    logger.warning(f'\tfail to download report: {rep_name}')
-
 
         for ifl in i['files']:
             ires = {}
@@ -192,20 +201,34 @@ def parse_seq_files(info):
 
             ires['download'] = 'NA'
 
-            for k1, k2 in [('sequenceid', 'seq_id'), ('assembly', 'build'), ('md5sum', 'md5'), ('sequencing_type', 'seq_type'), ('fn', 'filename')]:
+            for k1, k2 in [('sequenceid', 'seq_id'), ('assembly', 'build'), ('md5sum', 'md5'), ('sequencing_type', 'seq_type'), ('filename', 'fn')]:
                 try:
-                    ires[k2] = ifl['metadata'][k2]
+                    ires[k2] = ifl['metadata'][k1]
                 except:
                     ires[k2] = 'NA'
 
+            if ires['fn'] == 'NA':
+                logger.error(f'invalid file info: \n{ifl}')
+                sys.exit(1)
+
             files.append(ires)
 
-    return report, files
+
+    return reports, files
 
 
 def get_download_link(udn, fl_info, get_aws_ft, gzip_only=None, force_update=False):
+    # return, if 0, still valid,
+    # if 1, error getting link
+    # if 2, the file type is not included in the get amazon url list
+    # else, the actual link
 
-    fn = fl_info['fn']
+    try:
+        fn = fl_info['fn']
+    except:
+        logger.error(f'invalid file info: udn = {udn}, file info = {fl_info}')
+        sys.exit(1)
+
     if not isinstance(gzip_only, set):
         gzip_only = set()
 
@@ -215,15 +238,15 @@ def get_download_link(udn, fl_info, get_aws_ft, gzip_only=None, force_update=Fal
         ext = ft_convert[ext]
     except:
         logger.error(f'invalid file extension: {fn}: ext = {ext}')
-        return 'NA'
+        return 1
 
     if not gz and ext in gzip_only:
         logger.warning(f'file skipped due to gzip file only: {fn}')
-        return 'NA'
+        return 1
 
     if ext not in get_aws_ft:
         logger.debug(f'skip update amazon link due to file type limit: {fn} ext={ext}, valid ft={get_aws_ft}')
-        return 'NA'
+        return 2
 
     # check if the url is still valid
     get_url = force_update
@@ -235,17 +258,27 @@ def get_download_link(udn, fl_info, get_aws_ft, gzip_only=None, force_update=Fal
             err_line_count = validate_download_link(prev_url)
             if err_line_count > 0:
                 get_url = True
+            else:
+                return 0
 
     if get_url:
-        file_id = file_info['id']
+        try:
+            file_id = fl_info['file_id']
+        except:
+            logger.error(f'file id not found: info = \n{fl_info}')
         try:
             download_json = get_json(f'participants/{udn}/sequencing/files/{file_id}')
             return download_json['downloadLink']
         except:
             logger.warning(f'fail to get download link json: fn = {fn}, file_id = {file_id}')
-            return 'NA'
+            return 1
 
 
+def red(msg):
+    return colored(msg, 'red')
+
+def green(msg):
+    return colored(msg, 'green')
 
 
 
@@ -262,21 +295,21 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
     # res_all
     # k1 = rel_to_proband, (Proband, Father, Mother)
     # k2 =
-# { files:
-#   seq_json_all
+    # { files:
+    #   seq_json_all
 
-#  'similar_symp': 'MOTHER',
-#  'comment': None,
-#  'summary': '',
-#  'symp': [['HP:0001251', 'Ataxia'],
-#   ['HP:0001288', 'Gait disturbance'],
-#   ['HP:0001337', 'Tremor'],
-#   ['HP:0002194', 'Delayed gross motor development'],
-#   ['HP:0012622', 'Chronic kidney disease'],
-#   ['HP:0100022', 'Abnormality of movement']],
-#  'bayler_report': ['https://gateway.undiagnosed.hms.harvard.edu/patient/sequencing-report/9256/',
-#   'https://gateway.undiagnosed.hms.harvard.edu/patient/sequencing-report/9257/'],
-#  'seq_id': [7645]}
+    #  'similar_symp': 'MOTHER',
+    #  'comment': None,
+    #  'summary': '',
+    #  'symp': [['HP:0001251', 'Ataxia'],
+    #   ['HP:0001288', 'Gait disturbance'],
+    #   ['HP:0001337', 'Tremor'],
+    #   ['HP:0002194', 'Delayed gross motor development'],
+    #   ['HP:0012622', 'Chronic kidney disease'],
+    #   ['HP:0100022', 'Abnormality of movement']],
+    #  'bayler_report': ['https://gateway.undiagnosed.hms.harvard.edu/patient/sequencing-report/9256/',
+    #   'https://gateway.undiagnosed.hms.harvard.edu/patient/sequencing-report/9257/'],
+    #  'seq_id': [7645]}
 
     res = {}
 
@@ -285,13 +318,20 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
     sequence_info = get_json(f'participants/{udn}/sequencing')
     is_proband = False
 
+    get_report = True if 'report' in get_aws_ft else False
     res['simpleid'] = udn
-    res['reports'], res['files'] = parse_seq_files(sequence_info)
 
     # add the download link
     for ifl in res['files']:
         download_link = get_download_link(udn, ifl, get_aws_ft, gzip_only=None)
-        ifl['download'] = download_link
+        if download_link == 0:
+            logger.info(colored(f'\tamazon link still valid: {ifl["fn"]}', 'green'))
+        elif download_link == 1:
+            logger.info(colored(f'\tfail to get amazon link {ifl["fn"]}', 'red'))
+        elif download_link == 2:
+            continue
+        else:
+            ifl['download'] = download_link
 
     relation = basic_info['relation']
     if relation is None:
@@ -303,6 +343,15 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
         rel_to_proband = relation['name']
         res['rel_to_proband'] = rel_to_proband
         res['rel_to_proband_short'] = relation['shortName']
+
+    res['reports'], res['files'] = parse_seq_files(sequence_info, rel_to_proband)
+
+    if get_report:
+        download_report(res['reports'])
+    else:
+        logger.warning(red('\treport downloading skipped: rel_to_proband'))
+
+
 
 
     check_items = [
@@ -318,7 +367,7 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
 
     if is_proband:
         family_members = get_json(f'participants/{udn}/family')
-        phenotip_info = get_json(f'participants/{udn}/phenotip')
+        phenotip_info = get_json(f'participants/{udn}/phenotips')['phenotips']
         application_id = basic_info['application']['id']
         application = get_json(f'applications/{application_id}')
         baylor_candidate_raw = basic_info['diagnoses']
@@ -327,11 +376,9 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
         res_family = []
         baylor_candidate = []
         res_pheno = []
-
-        res_family.append(['Name', 'relation', 'relation_short', 'UDN'])
         for i in family_members['familyMembers']:
             try:
-                name = f'{i["nameFirst"]} {i["nameLast"]}')
+                name = f'{i["nameFirst"]} {i["nameLast"]}'
             except:
                 name = 'NA'
 
@@ -351,12 +398,21 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
             except:
                 fam_udn = 'NA'
 
-            ires = [name, rel_full, rel_short, fam_udn]
+            ires = [rel_full, name, fam_udn]
+
+
+            res_all = get_all_info(fam_udn, res_all=res_all, get_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family,  udn_proband=udn, gzip_only=gzip_only, sv_caller=sv_caller, newname_prefix=newname_prefix)
+            res_family_member = res_all[rel_full]
+            try:
+                ires.append(res_family_member['gender'])
+                ires.append(res_family_member['affected'])
+            except:
+                logger.error(f'missing keys for family member res:\n{res_family_member}')
+                raise
+
+            # | Relative | Name | UDN | Gender | Affected| Sequence_Uploaded
+
             res_family.append(ires)
-
-            res_all[rel_full] = get_all_info(fam_udn, res_all=res_all, get_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family,  udn_proband=udn, gzip_only=gzip_only, sv_caller=sv_caller, newname_prefix=newname_prefix)
-
-            # name, relation, udn_id,
 
         res['family'] = res_family
 
@@ -391,7 +447,7 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
             ires.append((k, v))
             baylor_candidate.append(ires)
 
-        res['baylor_candidate'] = balyor_candidate
+        res['baylor_candidate'] = baylor_candidate
 
 
         for i in phenotip_info['features']:
@@ -444,13 +500,12 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
 
     if is_proband:
         try:
-            parse_api_res(res_all, udn_raw=udn_raw, valid_family=valid_family, sv_caller=sv_caller, newname_prefix=newname_prefix, gzip_only=gzip_only)
+            parse_api_res(res_all, udn_raw=udn_raw, valid_family=valid_family, sv_caller=sv_caller, newname_prefix=newname_prefix)
         except:
             logger.error(f'fail to parse the result dict, try again')
             raise
 
-    return res_all, driver
-
+    return res_all
 
 
 def get_logger(prefix=None, level='INFO'):
@@ -559,46 +614,6 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
     logger.info(f'keys for the result: {res.keys()}')
     proband_id = res['Proband']['simpleid']
 
-    # get the screenshot of relative table
-    fn_reltive_png = f'{proband_id}.relatives_table.png'
-    if save_rel_table or not os.path.exists(fn_reltive_png):
-        logger.info(f'now save the screenshot for relatives table')
-        uuid_case = res['Proband']['uuid_case']
-        url_relative = f'https://gateway.undiagnosed.hms.harvard.edu/patient/relatives/{uuid_case}/'
-        if not uuid_case:
-            logger.error(f'case UUID not found: patient record={res["Proband"]}')
-            return 0
-
-        driver = login(driver, headless=headless, source='parse_api_res, get relative table')
-
-        try:
-            driver.get(url_relative)
-        except:
-            logger.error(f'fail to get relatives page using selenium')
-        else:
-            driver.save_screenshot('browser.init.png')
-            try:
-                _tmp_ele = wait(driver, 10).until(lambda _:_.find_element_by_xpath(f'//a[text()="Sequence uploaded"]'))
-
-                driver.save_screenshot(fn_reltive_png)
-                logger.info(f'Screenshot: relative table saved!')
-            except:
-                driver.save_screenshot(f'{proband_id}.no_relatives_found.table.png')
-                try:
-                    os.symlink(f'{proband_id}.no_relatives_found.table.png', fn_reltive_png)
-                except:
-                    pass
-                logger.warning(f'no relatives found for {proband_id}')
-
-    # if not cookie_token:
-    #     driver, cookie_token = get_cookie(driver)
-    # header_cookie = get_header_cookie(cookie_token)
-    # if not cookie_token:
-    #     logger.error('fail to get cookie, can\'t get the amazon s3 presigned URL, exit')
-    #     return 0
-
-    # export the sequencing html table
-
     # filter on the valid_family
     if valid_family is not None:
         for irel in list(res.keys()):
@@ -609,120 +624,64 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
                 logger.warning(f'family member not in select family list, excluded: {irel} - {iudn}')
                 del res[irel]
 
-
-    affect_convert_to_01 = {'Affected': 1, 'Unaffected': 0, '3 / Unaffected': 0, '2 / Affected': 1, 'Unaffected / 3': 0, 'Affected / 2': 1, 'Unknown': -1}
-
-
+    # update the URL
     if renew_amazon_link:
-        for rel_to_proband, v in res.items():
-            logger.info(f'renew amazon download link for {rel_to_proband}')
-            if 'files' not in v:
-                logger.info(f'{rel_to_proband}: no files found')
-                continue
-            try:
-                seq_id = v['seq_id'][0][0]
-                logger.info(f'seq_id found in the outer of res dict ')
-            except:
-                # logger.warning(f'seq ID not found in dict: {rel_to_proband}')
-                pass
-                # continue
-            seq_id_source = 'outer'
-            for ifl in v['files']:
-                fn = ifl['fn']
-                file_uuid = ifl['file_uuid']
-                file_uuid_js = ifl.get('file_uuid_js')
-                old_download_link = ifl['download']
-                try:
-                    seq_id = ifl['seq_id']
-                    seq_id_source = 'from_file'
-                except:
-                    pass
+        for irel, v1 in res.items():
+            iudn = v1['simpleid']
+            for ifl in v1['files']:
+                download_link = get_download_link(iudn, ifl, get_aws_ft=update_aws_ft, gzip_only=gzip_only)
 
-                try:
-                    seq_id = int(seq_id)
-                except:
-                    logger.error(f'wrong seq ID: {seq_id} ,  source = {seq_id_source}')
-                    sys.exit(1)
-                logger.debug(f'seq_id, source = {seq_id_source}')
-
-                if update_aws_ft and len(update_aws_ft) > 0:
-                    ext, gz = get_file_extension(fn)
-                    logger.debug(f'      {fn}: ext={ext}, gz={gz}')
-                    if not gz and ext in gzip_only:
-                        logger.debug(f'        file skipped due to gzip file only: {fn}')
-                        continue
-                    if ext not in update_aws_ft:
-                        logger.debug(f'      skipp update amazon link due to file type limit: {fn} - ext={ext}, selected file type={update_aws_ft}')
-                        continue
-
-                if validate_download_link(old_download_link):
-                    logger.info(f'      {fn}: href still valid')
-                    # print(old_download_link)
+                if download_link == 0:
+                    logger.info(colored(f'\tamazon link still valid: {ifl["fn"]}', 'green'))
+                elif download_link == 1:
+                    logger.info(colored(f'\tfail to get amazon link {ifl["fn"]}', 'red'))
+                elif download_link == 2:
                     continue
-
-                time.sleep(2)
-                cookie_token, download, res_source = get_amazon_download_link(fn, file_uuid, cookie_token, seq_id=seq_id, demo=demo, driver=driver, file_uuid_js=file_uuid_js)
-                if not download:
-                    download = 'NA'
-                    logger.warning(colored(f'      {fn}:fail to get amazon link', 'red'))
-                    continue
-                logger.info(f'      {fn}: update amazon_link done ({res_source})')
-                ifl['download'] = download
-
-        pkl_fn = pkl_fn or f'intermed/{proband_id}.udn_api_query.pkl'
-        if os.path.exists(pkl_fn) and os.path.getsize(pkl_fn) > 5000:
-            os.system(f'mv {pkl_fn} {pkl_fn}.bk')
-        dump_json(res, pkl_fn)
+                else:
+                    ifl['download'] = download_link
 
     # report for proband
-
-
     proband = res['Proband']
     udn = proband['simpleid']
     hpo = proband['symp']
-    # logger.info(f'Proband files = {proband["files"]}')
 
-
-    with open(f'basic_info.{udn}.md', 'w') as out:
-        out.write(f'# {udn}\n## 1. Basic Info\n- UDN\t{udn}\n')
-        for k, v in zip('firstname,lastname,gender,race,dob,alive,affect_final,uuid_case,phenotip'.split(','), 'FirstName,LastName,Gender,Race,DateBirth,Alive,Affect_state,UUID_case,Phenotip_ID'.split(',')):
-            out.write(f'- {v}\t{proband[k]}\n')
-        out.write('\n\n')
-
-        # family members
-
-        out.write('## 2. Family Members\n\n')
-        out.write('| Relative | Name | UDN | Gender | Affected| Sequence_Uploaded | \n')
-        out.write('| :----: | :----: | :----: | :----: | :----: | :----: |\n')
-        for rel_to_proband, i in res.items():
-            if rel_to_proband == 'Proband':
-                continue
-
-            # if gender not added
-            out.write(f'| {rel_to_proband} | {i["firstname"]} {i["lastname"]} | {i["simpleid"]} | {i["gender"]} | {i["affect_final"]}| {i["seq_status"]} |\n')
-        out.write('\n\n')
-
-        # HPO terms
-        out.write(f'## 3. HPO terms\n')
-
-        for k, v in hpo:
-            out.write(f'- {k}\t{v}\n')
-        out.write('\n\n')
-        # for k, v in hpo:
-        #     out.write(f'- {v}\n')
-        # out.write('\n\n')
-
-        # symp,uuid_case
-        out.write('## 4. Summary and diagnosis\n')
-        for k, v in zip('similar_symp,comment,summary,evaluation'.split(','), 'Similar_Sympt,Comment,Summary,Evaluation'.split(',')):
-            if proband[k]:
-                out.write(f'\n\n### {v}\n\n{proband[k]}\n')
-        out.write('\n\n')
 
 
     fn_pdf = f'basic_info.{udn}.pdf'
     fn_md = f'basic_info.{udn}.md'
-    if not os.path.exists(fn_pdf):
+    force_new_pdf = True
+    if force_new_pdf or not os.path.exists(fn_pdf):
+        with open(fn_md, 'w') as out:
+            out.write(f'# {udn}\n## 1. Basic Info\n- UDN\t{udn}\n')
+            for k, v in zip('firstname,lastname,gender,race,dob,alive,affected,phenotip'.split(','), 'FirstName,LastName,Gender,Race,DateBirth,Alive,Affect_state,Phenotip_ID'.split(',')):
+                out.write(f'- {v}\t{proband[k]}\n')
+            out.write('\n\n')
+
+            # family members
+
+            out.write('## 2. Family Members\n\n')
+            out.write('| Relative | Name | UDN | Gender | Affected| \n')
+            out.write('| :----: | :----: | :----: | :----: | :----: |\n')
+            for ifam in proband["family"]:
+                out.write('|' + '|'.join(ifam) + '|\n')
+
+            out.write('\n\n')
+
+            # HPO terms
+            out.write(f'## 3. HPO terms\n')
+
+            for k, v in hpo:
+                out.write(f'- {k}\t{v}\n')
+            out.write('\n\n')
+
+
+            # symp,uuid_case
+            out.write('## 4. Summary and diagnosis\n')
+            for k, k_formal in zip('similar_symp,family_history,comment,medical_history,summary,evaluation'.split(','), 'Similar_Sympt,Family_history,Medical_history,Comment,Summary,Evaluation'.split(',')):
+                v = proband.get(k) or 'NA'
+                out.write(f'\n\n### {k_formal}\n\n{v}\n')
+            out.write('\n\n')
+
         logger.info('converting basic info to pdf')
         os.system(f"pandoc  -t pdf {fn_md} --pdf-engine xelatex -o {fn_pdf}")
         try:
@@ -733,7 +692,6 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
 
 
     # build the HPO terms file
-
     with open(f'origin/{udn}.terms.txt', 'w') as out:
         for k, v in hpo:
             out.write(v+'\n')
@@ -759,18 +717,18 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
 
     # build the udn config file
     sex_convert = {'Female' : 2, 'Male': 1}
+    affect_convert_to_01 = {'affected': 1, 'unaffected': 0}
 
     cfg_info = {'father': '', 'mother':'', 'male':[], 'female':[], 'other': []}
 
     for rel_to_proband, irel in res.items():
-
         if rel_to_proband == 'Proband':
             continue
         try:
             rel_udn = irel['simpleid']
             rel_gender = irel['gender']
         except:
-            tmp_set = set(['simpleid', 'affect_final', 'gender'])
+            tmp_set = set(['simpleid', 'affected', 'gender'])
             logger.info(f'{rel_to_proband}: key not found: {[_ for _ in tmp_set if _ not in irel]}, keys={irel.keys()}')
             continue
 
@@ -779,9 +737,9 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
             continue
 
         try:
-            rel_aff = affect_convert_to_01[irel['affect_final']]
+            rel_aff = affect_convert_to_01[irel['affected'].lower()]
         except:
-            logger.warning(f"{rel_to_proband}: unkown affect state: {irel['affect_final']}")
+            logger.warning(f"{rel_to_proband}: unkown affect state: {irel['affected']}")
             continue
 
         if rel_to_proband.lower() == 'father':
@@ -799,10 +757,8 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
         else:
             cfg_info['other'].append([rel_udn, rel_aff, rel_to_proband])
 
-
     logger.debug(cfg_info)
-    # brothers = '\n'.join([f'brother{n+1}: {str(_)}' for n, _ in enumerate(cfg_info['brother'])])
-    # sisters = '\n'.join([f'sister{n+1}: {str(_)}' for n, _ in enumerate(cfg_info['sister'])])
+
     male = '\n  '.join([f'male{n+1}: {str(_)}' for n, _ in enumerate(cfg_info['male'])])
     female = '\n  '.join([f'female{n+1}: {str(_)}' for n, _ in enumerate(cfg_info['female'])])
     other = '\n  '.join([f'other{n+1}: {str(_)}' for n, _ in enumerate(cfg_info['other'])])
@@ -849,6 +805,7 @@ default:
     if 'cnv' in update_aws_ft:
         fn_cnv_sh = f'intermed/download.cnv.{udn}.sh'
         out_cnv = open(fn_cnv_sh, 'w')
+        out_cnv.write('missing=0')
 
     tmp = udn_raw or udn
     remote_pw = re.sub(r'^\d+_', '', tmp, 1)
@@ -885,6 +842,7 @@ default:
             url_s3 = ifl['url']
             size = ifl['size']
             build = ifl['build']
+            seq_type = ifl.get('seq_type') or 'NA'
             md5 = ifl['md5']
             newname = ''
             newname_base = ''
@@ -912,20 +870,22 @@ default:
                         check_dup[newname_base] += 1
                         newname = f'{newname_base}_{n_prev + 1}'
 
-            seq_type = ifl.get('seq_type')
-
 
             if re.match(r'.+\.cnv\.vcf(\.gz)?$', fn) and 'cnv' in update_aws_ft and fn.find('joint') < 0:
                 if not os.path.exists(f'origin{fn}'):
-                    if url == 'na':
+                    if url.lower() == 'na':
                         logger.error(f'invalid CNV file url')
                     else:
-                        out_cnv.write(f'size=$(stat -c %s origin/{fn} 2>/dev/null);if [[ "$size" -lt 1000 ]];then wget "{url}" -c -O "origin/{fn}";\nelse echo already exist: "origin/{fn}";fi\n')
+                        out_cnv.write(f'size=$(stat -c %s origin/{fn} 2>/dev/null);if [[ "$size" -lt 1000 ]];then wget "{url}" -c -O "origin/{fn}";\nelse echo already exist: "origin/{fn}";fi\nsize=$(stat -c %s origin/{fn} 2>/dev/null);if [[ "$size" -lt 1000 ]];then missing=1;fi')
 
 
             out_info.write(f'{rel_to_proband}\t{fn}\t{newname}\t{newname_base}\t{url}\t{udn}\t{seq_type}\t{size}\t{build}\t{md5}\t{url_s3}\n')
             out_md5.write(f'{md5}  {fn}\n')
 
+
+    if 'cnv' in update_aws_ft:
+        out_cnv.write('if [[ $missing -eq 0 ]];then touch intermed/download.cnv.{udn}.done;fi')
+        out_cnv.close()
 
     out_md5.close()
     out_info.close()
@@ -934,7 +894,6 @@ default:
         logger.info('building IGV script')
         udn_igv.main('.', udn, logger)
 
-    return driver
 
 def resolve_udn_id(s):
     """
@@ -1292,8 +1251,8 @@ if __name__ == "__main__":
 
     # driver, cookie_token = get_cookie(None, headless=headless)
     # logger.info(f'cookie_token=\n{cookie_token}')
-    driver = None
-    cookie_token = None
+    # driver = None
+    # cookie_token = None
 
     header1 = {
         'Content-Type': 'application/json',
@@ -1356,33 +1315,28 @@ if __name__ == "__main__":
                 renew_amazon_link = False
             else:
                 renew_amazon_link = args.renew
-            # url only
-            if urlonly:
-                parse_seq_url(res)
-                continue
 
             # regular
-            driver = parse_api_res(res, cookie_token=cookie_token, update_aws_ft=update_aws_ft, renew_amazon_link=renew_amazon_link, demo=demo, udn_raw=udn_raw, valid_family=valid_family, gzip_only=gzip_only, driver=driver, sv_caller=sv_caller, newname_prefix=newname_prefix)
+            parse_api_res(res, update_aws_ft=update_aws_ft, renew_amazon_link=renew_amazon_link, udn_raw=udn_raw, valid_family=valid_family, gzip_only=gzip_only, sv_caller=sv_caller, newname_prefix=newname_prefix)
 
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
         else:
-            res, driver = get_all_info(udn, cookie_token=cookie_token, demo=demo, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, lite_mode=lite, udn_proband=udn, gzip_only=gzip_only, driver=driver, sv_caller=sv_caller, newname_prefix=newname_prefix)
+            res = get_all_info(udn, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, udn_proband=udn, gzip_only=gzip_only, sv_caller=sv_caller, newname_prefix=newname_prefix)
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
 
-            if urlonly:
-                parse_seq_url(res)
-                continue
 
         if not lite and 'cnv' in update_aws_ft:
-            logger.info(f'downloading CNV vcf file')
-            os.system(f'bash intermed/download.cnv.{udn}.sh >/dev/null 2>&1')
+            if os.path.exists(f'intermed/download.cnv.{udn}.done'):
+                logger.info(green('\tCNV file already downloaded'))
+            else:
+                logger.info(f'downloading CNV vcf file')
+                os.system(f'bash intermed/download.cnv.{udn}.sh >/dev/null 2>&1')
         try:
             os.unlink('geckodriver.log')
         except:
             pass
-
 
         initial_upload_flag = 'origin/initial_uploaded'
         if upload and os.path.exists(fn_udn_api_pkl) and not force_upload and os.path.exists(initial_upload_flag):
