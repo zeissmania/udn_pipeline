@@ -342,7 +342,7 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
                     uploaded_date_ready = 1
                     res['seq_uploaded'] = tmp
 
-
+        ifn = ifl['fn']
         download_link = get_download_link(udn, ifl, get_aws_ft, gzip_only=None)
         if download_link == 0:
             logger.info(colored(f'\tamazon link still valid: {ifl["fn"]}', 'green'))
@@ -351,6 +351,7 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
         elif download_link == 2:
             continue
         else:
+            logger.info(green(f'\turl updated: {ifn}'))
             ifl['download'] = download_link
 
     if get_report:
@@ -569,11 +570,12 @@ def create_cred():
 def validate_download_link(url):
     """
     Does the url contain a downloadable resource
+    return = error lines, so if == 0, means the url is still valid
     """
-    error_code = os.popen(f'curl "{url}" 2>&1|head -c 10000|egrep -i "Error|Could not resolve host"|wc -l').read().strip()
+    error_code = os.popen(f'curl "{url}" 2>&1|head -c 10000|egrep -i "(Error|AccessDenied)"|wc -l').read().strip()
 
     error_code = int(error_code)
-    return not error_code
+    return error_code
 
 
     # try:
@@ -738,7 +740,7 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
             continue
 
         if not irel.get('files') and sv_caller != 'pacbio':
-            logger.warning(f'{rel_to_proband}: no files available, skip... ')
+            logger.warning(red(f'{rel_to_proband}: no files available, skip... '))
             continue
 
         try:
