@@ -645,6 +645,7 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
                 elif download_link == 2:
                     continue
                 else:
+                    logger.info(green(f'\turl updated: {ifn}'))
                     ifl['download'] = download_link
 
     # report for proband
