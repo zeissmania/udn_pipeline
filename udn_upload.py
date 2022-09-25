@@ -46,7 +46,7 @@ ps.add_argument('-simple', help="""simple mode, for uploading local file to drop
 
 ps.add_argument('-remote', '-r', '-remote_pw', dest='remote_pw', help="""the remote path, if not exist, would create one. start from the root path, donot include the leading and ending slash. dropbox is like UDN12345/proband_UDN12345  for emedgene is like UDN12345, if the remote folder is not in the root path, include all the path from root, e.g. cases_202107/34_269_AA_UDN616750""", default=None, nargs='?')
 ps.add_argument('-remote_base', '-r_base', '-rbase', '-rb', help="remote path base, default is from the root of the remote folder")
-ps.add_argument('-ft', help="""the file type to upload, could be multiple types sep by space, such as fastq, fq, vcf, bam, default = fastq""", nargs='*')
+ps.add_argument('-ft', help="""the file type to upload, could be multiple types sep by space, such as fastq, fq, vcf, bam, default = fastq, if upload all files in the info file, use all""", nargs='*')
 ps.add_argument('-pw', help="""the folder for each case, could be multiple, default = current folder, and would search for child folder for info.txt file""", nargs='*')
 ps.add_argument('-profile', help="""aws profile, default=emedgene, other valid could be pacbio""", default='emedgene')
 ps.add_argument('-demo', help="""demo mode, would not create remote folder, won't rename the local file with wrong file size""", action='store_true')
@@ -380,7 +380,10 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                 d_exist_all[remote_pw] = (d_exist, sub_folders)
 
             # get the ext
-            ext, gz = get_file_extension(fn)
+            if 'all' not in ft:
+                ext, gz = get_file_extension(fn)
+            else:
+                ext, gz = None, None
             if 'all' not in ft and ext not in ft:
                 logger.debug(f'file skipped due to file type not selected: {ext}  - {fn}')
                 continue
