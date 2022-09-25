@@ -262,6 +262,9 @@ def get_download_link(udn, fl_info, get_aws_ft, gzip_only=None, force_update=Fal
         logger.debug(f'skip update amazon link due to file type limit: {fn} ext={ext}, valid ft={get_aws_ft}')
         return 2
 
+    if ext == 'cnv' and os.path.exists(f'intermed/download.cnv.{udn}.done'):
+        logger.debug(f'cnv already done, skipped')
+
     # check if the url is still valid
     get_url = force_update
     if not get_url:
@@ -612,6 +615,7 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
         gzip_only = set()
     update_aws_ft = set([ft_convert[_] for _ in update_aws_ft]) if update_aws_ft else set(['fastq', 'cnv'])
 
+
     logger.debug(f'file type to update url = {update_aws_ft}')
     # pw_raw = os.getcwd().rsplit('/', 1)[-1]
     # pw = f'/data/cqs/chenh19/udn/{pw_raw}'
@@ -635,6 +639,7 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
     if renew_amazon_link:
         for irel, v1 in res.items():
             iudn = v1['simpleid']
+
             for ifl in v1['files']:
                 download_link = get_download_link(iudn, ifl, get_aws_ft=update_aws_ft, gzip_only=gzip_only)
 
@@ -645,7 +650,7 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
                 elif download_link == 2:
                     continue
                 else:
-                    logger.info(green(f'\turl updated: {ifn}'))
+                    logger.info(green(f'\turl updated: {ifl["fn"]}'))
                     ifl['download'] = download_link
 
     # report for proband
@@ -1121,7 +1126,7 @@ if __name__ == "__main__":
     update_aws_ft = set()
 
     if ft_input is None:
-        update_aws_ft = ['cnv', 'fastq']
+        update_aws_ft = ['fastq']
     else:
         err = 0
         ft_input = [_ for _ in ft_input if _.strip()]
