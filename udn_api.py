@@ -219,7 +219,10 @@ def parse_seq_files(info, rel_to_proband):
                 try:
                     ires[k2] = ifl['metadata'][k1]
                 except:
-                    ires[k2] = 'NA'
+                    try:
+                        ires[k2] = ifl[k1]
+                    except:
+                        ires[k2] = 'NA'
 
             if ires['fn'] == 'NA':
                 logger.error(f'invalid file info: \n{ifl}')
@@ -269,7 +272,7 @@ def get_download_link(udn, fl_info, get_aws_ft, gzip_only=None, force_update=Fal
     get_url = force_update
     if not get_url:
         prev_url = fl_info['download']
-        if prev_url == 'NA':
+        if not prev_url or prev_url == 'NA' or prev_url[:4] != 'http':
             get_url = True
         else:
             err_line_count = validate_download_link(prev_url)
@@ -285,7 +288,11 @@ def get_download_link(udn, fl_info, get_aws_ft, gzip_only=None, force_update=Fal
             logger.error(f'file id not found: info = \n{fl_info}')
         try:
             download_json = get_json(f'participants/{udn}/sequencing/files/{file_id}')
-            return download_json['downloadLink']
+            link = download_json['downloadLink']
+            if link is None:
+                logger.warning(f'downloadlink is not available in json: {fn}, {download_json}')
+                return 1
+            return link
         except:
             logger.warning(f'fail to get download link json: fn = {fn}, file_id = {file_id}')
             return 1
