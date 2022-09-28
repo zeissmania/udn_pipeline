@@ -480,7 +480,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
             remote_pw_final = re.sub(r'/$', '', remote_pw_final)
 
             if not force_download:
-                downloaded = downloaded or uploaded
+                downloaded = downloaded
 
             v = {'size': size_exp, 'download_type': download_type, 'upload_type': upload_type, 'url': url, 'remote': remote_pw_final, 'downloaded': downloaded, 'uploaded': uploaded, 'size_remote': f'{size_remote:,}', 'rename': rename, 'sample_list': sample_list}
             try:
@@ -597,12 +597,13 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                     logger.error(colored(f'\tmd5 not match: {fn}:  exp = {md5_exp}, real={md5_local}', 'red'))
 
                 if not force_download:
-                    n_downloaded += 1
+                    # n_downloaded += 1
                     continue
 
             if not v['downloaded']:
-                need_upload.append(fn)
-                script_list['needdown'].append(fn_script)
+                if not v['uploaded']:
+                    need_upload.append(fn)
+                    script_list['needdown'].append(fn_script)
             else:
                 n_downloaded += 1
                 need_upload.append(fn)
@@ -619,7 +620,6 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
         print('\t' + '\n\t'.join(need_upload))
         if n_invalid_url > 0:
             print(f'ERROR: {n_invalid_url} files with NA url:\n\t' + '\n\t'.join(invalid_url))
-
     else:
         print('\n', '*' * 50)
         print(colored('Done, all files already uploaded', 'green', attrs=['bold']))
