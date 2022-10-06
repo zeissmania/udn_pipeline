@@ -1,0 +1,179 @@
+#! /usr/bin/env python3
+"""
+build the sample_sheet.csv file for fabric genomics
+the main function is rename the fastq files
+"""
+
+import os, sys, re
+import logging
+from termcolor import colored
+
+
+fmt = logging.Formatter('%(asctime)s  %(levelname)-6s %(funcName)-20s  line: %(lineno)-5s  %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+console = logging.StreamHandler(sys.stdout)
+console.setFormatter(fmt)
+console.setLevel('INFO')
+try:
+    logger = logging.getLogger(__file__)
+except:
+    logger = logging.getLogger('terminal')
+logger.setLevel('DEBUG')
+logger.addHandler(console)
+
+def rename_fq(fn, relation_map, case_prefix, kw_dedup, d_sam_sn):
+    fn_pure = os.path.basename(fn)
+    fn = os.path.realpath(fn)
+    relation_map = relation_map or {}
+
+    if not fn.endswith('.fastq.gz'):
+        logger.warning(f'non fastq file found, ignored: {fn}')
+        return None
+    fn_lite = re.sub('[._-]R[12]\.fastq\.gz', '', fn_pure)
+    fn_lite = re.sub(r'L0\d{2}[_.]', '', fn_lite)
+
+    try:
+        sam_sn = d_sam_sn[fn_lite]
+    except:
+        sam_sn = d_sam_sn['current'] + 1
+        d_sam_sn[fn_lite] = sam_sn
+        d_sam_sn['current'] += 1
+
+    sam_sn = f'{sam_sn:>02}'
+
+    m_r12 = re.match(r'.*[._-](R[12])', fn_pure)
+    if m_r12:
+        r12 = m_r12.group(1)
+    else:
+        logger.error(f'R1/R2 not found in file name: {fn}')
+        return None
+
+    m = re.match(r'.*{L0\d{2}}[_.]', fn_pure)
+    if m:
+        lane_info = m.group(1)
+    else:
+        lane_info = 'L001'
+
+    relation = ''
+    for kw, family_relation in relation_map.items():
+        kw = kw.lower()
+        if fn_pure.lower().find(kw) > -1:
+            kw_dedup.setdefault(kw, set()).add(fn_lite)
+            relation = f'-{family_relation}'
+            break
+
+    lb = fn_pure.split('_', 1)[0]
+    if len(lb) < 4:
+        logger.warning(f'invalid fastq name, the string before first underscore should be unique sample name')
+        return None
+
+    # {prefix}_S0{sample_sn}_L001_R1/R2_001.fastq.gz
+
+    sample_ID = f'{case_prefix}{relation}-{lb}'
+    new_fn = f'{sample_ID}_S{sam_sn}_{lane_info}_{r12}_001.fastq.gz'
+
+    fn_full = f'{pw_fq}/{new_fn}'
+    if not os.path.exists(fn_full):
+        try:
+            os.symlink(fn, fn_full)
+        except:
+            logger.error(f'fail to create the symlink for {fn}, newname = {new_fn}')
+            raise
+            return None
+
+    return sample_ID
+
+def red(s):
+    return colored(s, 'red')
+
+
+def build_sample_sheet(case, res, fabric_prj, report_type, assay_type, job_type, test_id):
+    fn_sample_sheet = f'{case}_samplesheet.csv'
+    with open(fn_sample_sheet, 'w') as o:
+        print(f"""[Header],,,,,,,
+{case} (Case Name),,,,,,,
+[Reads],,,,,,,
+,,,,,,,
+[Settings],,,,,,,
+,,,,,,,
+[Data],,,,,,,
+Sample_ID,Sample_Name,project,sex,report_type,assay_type,job_type,test_id""", file=o)
+        for i in res:
+            print(f'{i},{i},{fabric_prj},unspecified,{report_type},{assay_type},{job_type},{test_id}', file=o)
+
+
+    with open('fabric_upload.sh', 'w') as o:
+        print(f"fabric_upload  {pw_fq}  --sample-sheet {fn_sample_sheet} --instrument-run-id {case}", file=o)
+
+    return 'fabric_upload.sh'
+
+def parse_relation_map(relation_map):
+    if relation_map is None:
+        return {}
+
+    res = {}
+    invalid = 0
+    for i in relation_map:
+        try:
+            k, v = i.split(':')
+        except:
+            logger.error(f'invalid relation map: {i}, should contain 1 and only 1 colon')
+            invalid += 1
+            continue
+        res[k] = v
+    if invalid > 0:
+        logger.error('exit now')
+        sys.exit(1)
+    return res
+
+if __name__ == "__main__":
+
+    import argparse as arg
+    from argparse import RawTextHelpFormatter
+    ps = arg.ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
+    ps.add_argument("case",  help="case / project prefix, must specify")
+    ps.add_argument("fq", help="fastq file list", nargs='+')
+    ps.add_argument("-map", '-m',  help="name map, will try to use this map to add the Proband, Father or mother str, format is like : 005628:Proband", nargs='*')
+    ps.add_argument('-report_type', "-rep",  help="report type, default=solo", choices=['solo', 'trio'], default='solo')
+    ps.add_argument("-job_type", '-j',  help="job type, usually secondary_haplotyper", default="secondary_haplotyper")
+    ps.add_argument("-assay_type", '-aid',  help="pre-built secondary analysis assay UID, default=1237381", default="1237381")
+    ps.add_argument("-test_id", '-tid',  help="pre-built test pipeline UID, default=1237385", default="1237385")
+    ps.add_argument("-fabric_prj", '-fabprj',  help="fabric genomic project name, usually always UDP samples", default="UDP samples")
+
+
+    args = ps.parse_args()
+
+
+    fqlist = args.fq
+    relation_map = args.map
+    case_prefix = args.case
+    report_type = args.report_type
+    job_type = args.job_type
+    assay_type = args.assay_type
+    test_id = args.test_id
+    fabric_prj = args.fabric_prj
+
+    pw_fq = 'fabric_data'
+    os.makedirs(pw_fq, exist_ok=True)
+
+    relation_map = parse_relation_map(relation_map)
+
+
+    invalid = []
+    res = set()
+    kw_dedup = {}
+    d_sam_sn = {'current': 0}
+    for fn in fqlist:
+        sample_id = rename_fq(fn, relation_map, case_prefix, kw_dedup, d_sam_sn)
+        if sample_id is None:
+            invalid.append(fn)
+            continue
+        res.add(sample_id)
+
+    res = sorted(res)
+    if len(invalid) > 0:
+        logger.error(red(f'the following {len(invalid)} file name are invalid: plese check\n\t' + '\n\t'.join(invalid)))
+        sys.exit(1)
+
+    fn_script = build_sample_sheet(case_prefix, res, fabric_prj, report_type, assay_type, job_type, test_id)
+
+    logger.info(f'all done, please check and run {fn_script} to upload the file')

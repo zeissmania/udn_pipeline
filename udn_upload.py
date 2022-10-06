@@ -40,9 +40,10 @@ from pprint import pprint as pp
 import argparse as arg
 from argparse import RawTextHelpFormatter
 ps = arg.ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
-ps.add_argument('dest', help="""the destinition for the uploading, valid = dropbox/db, emedgene/em/ed""", choices=['emedgene', 'em', 'ed', 'dropbox', 'db'], nargs='?', default='emedgene')
+ps.add_argument('local_files', help="""local files list, for simple mode only""", nargs='*')
+ps.add_argument('-dest', help="""the destinition for the uploading, valid = dropbox/db, emedgene/em/ed""", choices=['emedgene', 'em', 'ed', 'dropbox', 'db'], nargs='?', default='emedgene')
 ps.add_argument('-info_file', '-info', '-fn', help="""the file containing the amazon download link, usually like download.info.UDN945671.txt""", nargs='?', default=None)
-ps.add_argument('-simple', help="""simple mode, for uploading local file to dropbox only. the info file can have only 2 columns, col name = fn, remote, which is the local file path and remote path, will upload the local file to dropbox folder""", action='store_true')
+ps.add_argument('-simple', help="""simple mode, for uploading local file to dropbox/emedgene only. no info file needed, just set the -remote  -dest, and put all the local file path as the positional arugments""", action='store_true')
 
 ps.add_argument('-remote', '-r', '-remote_pw', dest='remote_pw', help="""the remote path, if not exist, would create one. start from the root path, donot include the leading and ending slash. dropbox is like UDN12345/proband_UDN12345  for emedgene is like UDN12345, if the remote folder is not in the root path, include all the path from root, e.g. cases_202107/34_269_AA_UDN616750""", default=None, nargs='?')
 ps.add_argument('-remote_base', '-r_base', '-rbase', '-rb', help="remote path base, default is from the root of the remote folder")
@@ -197,46 +198,6 @@ def get_remote_file_list(pw, dest, remote_pw):
     return d_exist, sub_folders
 
 
-def build_upload_script_simple(pw, fn, remote_pw, fn_new=None):
-    fn_pure = fn_new or fn
-    fn_pure = fn_pure.rsplit('/', 1)[-1]
-    if not os.path.exists(fn):
-        logger.warning(f'file not exist: {fn}')
-        return 0
-
-    if os.path.exists(f'{pw}/shell_done/{fn_pure}.upload.sh'):
-        return 0
-
-    fn_script = f'{pw}/shell/{fn_pure}.upload.sh'
-    fn_status = f'{pw}/log/status.{fn_pure}.txt'
-    with open(fn_script, 'w') as out:
-        out.write(f"""#! /usr/bin/env bash
-date +"%m-%d  %T">> {fn_status}
-local_size=$(stat -c "%s" {fn} 2>/dev/null)
-remote_file_size=$({dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_pure}"|head -1|tr -s " "|cut -d " " -f 3)
-
-if [[ "$local_size" -eq "$remote_file_size" ]];then
-    echo already uploaded: {fn}
-    mv "{fn_script}" {pw}/shell_done
-    exit 0
-fi
-
-{dock} aws s3 cp {fn} "s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_pure}" > {pw}/log/upload.{dest}.{fn_pure}.log 2>&1
-
-remote_file_size=$({dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_pure}"|head -1|tr -s " "|cut -d " " -f 3)
-
-if [[ "$remote_file_size" -eq "$local_size" ]];then
-    echo {fn} successfully uploaded to {remote_pw}/  filesize=$local_size >> {fn_status}
-    mv "{fn_script}" {pw}/shell_done
-fi
-
-echo upload completed > {pw}/log/upload.{dest}.{fn_pure}.log
-echo upload completed >> {fn_status}
-date +"%m-%d  %T">> {fn_status}
-""")
-    return fn_script
-
-
 def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, updated_version_only=True, script_list=None, no_upload=False, remote_flat=False):
     """
     the info file is like
@@ -294,7 +255,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
             else:
                 # build the script
                 # logger.info(f'upload md5 file')
-                fnscript = build_upload_script_simple(pw, fn_md5, remote_pw_in, fn_new=fn_new)
+                fnscript = build_script_single(dest, remote_pw_in, fn_md5, fn_remote=fn_new, pw=pw, need_upload=True)
                 if fnscript:
                     script_list['needup'].append(fnscript)
 
@@ -518,7 +479,6 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
     else:
         logger.info(f'all remote subfolder are ready')
 
-
     # check the status
     n_downloaded = 0
     n_uploaded = 0
@@ -705,102 +665,101 @@ def refine_remote_pw(remote_pw):
         remote_pw = m[1] + p_trailing
         return remote_pw
 
+def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, fn_remote=None, fn_deid=None, sample_list=None, pw=None, download_type=None, size_exp=None, need_upload=True):
+    # url_var is for the normal upload script with download step
+    # the format is like  f"""url=$(awk -F "\\t" '$2=="{fn}" {{print ${idx_url} }}' {info_file})"""
 
-def build_script(pw, d, info_file, no_upload=False):
-    with open(info_file) as f:
-        info_header = f.readline().strip().split('\t')
-        idx_url = info_header.index('url') + 1
+    # if fn_deid is not None, then sample_list must be specified
+    # fn_remote, if not specified, use the same as the local file
 
+    fn = os.path.basename(fn_local)
+    pw = pw or os.getcwd()
+    fn_remote = fn_remote or fn
 
-    for _, v1 in d.items():
-        for fn, v in v1.items():
-            # {'size': size_exp, 'remote': f'{remote_pw}/{name}', 'url': url, 'downloaded': downloaded, 'uploaded': uploaded}
-            url = v['url']
-            size_exp = v['size']
-            remote_pw = v['remote']
-            download_type = v['download_type']
-            upload_type = v['upload_type']
-            ext = fn.rsplit('.', 1)[-1]
-            rename = v['rename']
-            sample_list = v['sample_list']
+    fn_script = f'{pw}/shell/{fn}.download_upload.{dest}.sh'
+    fn_status = f'{pw}/log/status.{fn}.txt'
 
-            fn_download = f'{pw}/download/{fn}'
-            # fn_download_chunk = fn_download.replace('.gz', '')
-            fn_script = f'{pw}/shell/{fn}.download_upload.{dest}.sh'
-            fn_status = f'{pw}/log/status.{fn}.txt'
+    if simple == False and (url_var is None or url_var[:3] != 'url='):
+        logger.error(f'invalid url_var define: {fn_local}')
+        return None
+    cmd = []
+    if url_var is not None:
+        cmd.append(url_var)
 
-            need_upload = not v['uploaded']
+    if fn_deid is not None and sample_list is None:
+        logger.error(f'when fn_deid is specified, the sample_list must also be specified')
+        return None
 
-            if v['uploaded'] and not  args.force and not force_download:
-                os.system(f'mv  {fn_script} {pw}/shell_done/{fn}.download_upload.{dest}.sh 2>/dev/null')
-                continue
+    if simple:
+        size_exp = os.path.getsize(fn_local)
+        cmd_check_md5 = ''
 
-            if url.lower() == 'na':
-                continue
-
-            with open(fn_script, 'w') as out:
-
-                get_url = f"""url=$(awk -F "\\t" '$2=="{fn}" {{print ${idx_url} }}' {info_file})"""
-                print(get_url, file=out)
-                rm_cmd = ''
-                if rm:
-                    rm_cmd = f'    rm {fn_download}\n    rm {pw}/log/upload.{dest}.{fn}.log\n    rm {pw}/log/download.{fn}.log'
-
-                if download_type == 'dropbox':
-                   download_cmd = f'dbxcli get "$url"  "{fn_download}" > {pw}/log/download.{fn}.log 2>&1'
-                elif download_type == 'wget':
-                    download_cmd = f'wget "$url" -c -O "{fn_download}" > {pw}/log/download.{fn}.log 2>&1'
-
-                cmd = f"""
-checklocal(){{
-    local_size=$(stat -c "%s" {fn_download} 2>/dev/null)
-    if [[ $local_size -eq 0 ]];then
-        rm {fn_download} 2>/dev/null
-        echo 1
-        return
-    fi
-
-    # check local file
-    if [[ "{size_exp}" -ne "na" ]] & [[ "$local_size" -ne "{size_exp}" ]];then
-        echo local file not match with exp local_size=$local_size,  expected={size_exp}. skip uploading >> {fn_status}
-        echo 1
-        return
-    fi
-
-    # check md5sum
+    else:
+        cmd_check_md5 = f"""# check md5sum
     if [[ ! -f {pw}/download/{fn}.md5 ]];then
-        md5sum  {fn_download} >{pw}/download/{fn}.md5 2>{pw}/download/{fn}.md5.log
+    md5sum  {fn_local} >{pw}/download/{fn}.md5 2>{pw}/download/{fn}.md5.log
     fi
 
     md5_exp=$(grep -h "{fn}" {pw}/download.UDN*.md5 2>/dev/null|head -1|cut -d " " -f1)
     md5_local=$(head -1 {pw}/download/{fn}.md5|cut -d " " -f1)
 
     if [[ -z $md5_exp ]];then
-        echo expected md5 not found : {fn} >> {fn_status}
-        echo 0
+    echo expected md5 not found : {fn} >> {fn_status}
+    echo 0
     elif [[ md5_exp == md5_local ]];then
-        echo good, md5 match!  >> {fn_status}
-        echo 0
+    echo good, md5 match!  >> {fn_status}
+    echo 0
     else
-        echo 1
-        echo ERROR, md5 not match! {fn_download}; exp=$md5_exp , local=$md5_local  >> {fn_status}
+    echo 1
+    echo ERROR, md5 not match! {fn_local}; exp=$md5_exp , local=$md5_local  >> {fn_status}
 
-        echo $(date): ERROR, md5 not match! {fn_download}; exp=$md5_exp , local=$md5_local  >> /fs0/members/chenh19/tmp/upload/error.md5_not_match.files.txt
+    echo $(date): ERROR, md5 not match! {fn_local}; exp=$md5_exp , local=$md5_local  >> /fs0/members/chenh19/tmp/upload/error.md5_not_match.files.txt
+    fi
+    """
+
+
+    with open(fn_script, 'w') as out:
+        rm_cmd = ''
+        if rm:
+            rm_cmd = f'    rm {fn_local}\n    rm {pw}/log/upload.{dest}.{fn}.log\n    rm {pw}/log/download.{fn}.log'
+        if simple or download_type is None:
+            download_cmd = ''
+        if download_type == 'dropbox':
+            download_cmd = f'dbxcli get "$url"  "{fn_local}" > {pw}/log/download.{fn}.log 2>&1'
+        elif download_type == 'wget':
+            download_cmd = f'wget "$url" -c -O "{fn_local}" > {pw}/log/download.{fn}.log 2>&1'
+
+
+
+        cmd.append(f"""
+    checklocal(){{
+    local_size=$(stat -c "%s" {fn_local} 2>/dev/null)
+    if [[ $local_size -eq 0 ]];then
+    rm {fn_local} 2>/dev/null
+    echo 1
+    return
     fi
 
-}}
-"""
-                if upload_type == 'emedgene':
-                    cmd += f"""
-checkremote(){{
-    cd {pw}/download
-    local_size=$(stat -c "%s" {fn_download} 2>/dev/null)
+    # check local file
+    if [[ "{size_exp}" -ne "na" ]] & [[ "$local_size" -ne "{size_exp}" ]];then
+    echo local file not match with exp local_size=$local_size,  expected={size_exp}. skip uploading >> {fn_status}
+    echo 1
+    return
+    fi
+
+    {cmd_check_md5}
+    }}
+    """)
+        # check remote
+        if dest == 'emedgene':
+            cmd.append(f"""
+    checkremote(){{
+    local_size=$(stat -c "%s" {fn_local} 2>/dev/null)
     # determine need to upload or not
-    remote_file_size=$({dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn}"|grep "{fn}$" | tr -s " "|cut -d " " -f 3)
+    remote_file_size=$({dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_remote}"|grep "{fn_remote}$" | tr -s " "|cut -d " " -f 3)
     size_exp={size_exp}
 
     if [[ -z $remote_file_size ]];then
-
         # local file not exist
         if [[ -z $local_size ]];then
             echo "not downloaded yet" >> {fn_status}
@@ -810,13 +769,13 @@ checkremote(){{
 
         # exp size unkown, upload anyway
         if [[ $size_exp == "na" ]];then
-            echo "size_exp not specified, upload anyway : {fn_download}" >> {fn_status}
+            echo "size_exp not specified, upload anyway : {fn_local}" >> {fn_status}
             echo upload
             return
         fi
 
         if [[ $local_size -eq $size_exp ]];then
-            echo "local size is correct, prepare to upload: {fn_download}" >> {fn_status}
+            echo "local size is correct, prepare to upload: {fn_local}" >> {fn_status}
             echo upload
             return
         else
@@ -824,7 +783,6 @@ checkremote(){{
             echo "local_not_ready"
             return
         fi
-
         echo -e "unkown situation! \\n local=$local_size\\n remote=$remote_file_size \\n exp = $size_exp" >> {fn_status}
 
         exit 1
@@ -838,19 +796,13 @@ checkremote(){{
             echo upload
             return
         fi
-    elif [[ $size_exp -eq $local_size ]];then
-        if [[ "$remote_file_size" -eq "{size_exp}" ]];then
+    elif [[ "$remote_file_size" -eq "{size_exp}" ]];then
             echo {fn} successfully uploaded to {remote_pw}/  filesize={size_exp} >> {fn_status}
             echo already_uploaded
             return
-        else
-            echo remote size not correct: remote = $remote_file_size, exp = {size_exp}
+    elif [[ $size_exp -eq $local_size ]];then
+        echo remote size not correct: remote = $remote_file_size, exp = {size_exp}
             echo upload
-            return
-        fi
-    elif [[ $size_exp -eq $remote_file_size ]];then
-            echo {fn} already uploaded to {remote_pw}/  filesize={size_exp} >> {fn_status}
-            echo already_uploaded
             return
     elif [[ $size_exp -ne $local_size ]];then
         echo {fn} local size not match exp, exp=$size_exp, local=$local_size > {fn_status}
@@ -861,110 +813,144 @@ checkremote(){{
         exit 1
     fi
 
-}}
-"""
-                else:
-                    # there is no way for dropbox to get byte file size
-                    cmd += f"""
-checkremote(){{
-    file_exist_from_remote=$({dock} dbxcli ls -l "/{remote_pw}/"|grep "{fn}")
+    }}
+    """)
+        else:
+            # there is no way for dropbox to get byte file size
+            cmd.append(f"""
+    checkremote(){{
+    file_exist_from_remote=$({dock} dbxcli ls -l "/{remote_pw}/"|grep "{fn_remote}")
     if [[ ! -z "$file_exist_from_remote" ]];then
         echo alrady_uploaded
     else
         echo upload
     fi
 
-}}
+    }}
 
-                    """
-                cmd += f"""
-postupload(){{
-    mv {pw}/shell/{fn}.download_upload.{dest}.sh {pw}/shell_done/{fn}.download_upload.{dest}.sh
-    fntmp={pw}/log/{fn}.tmplog
+    """)
+        cmd.append(f"""
+    postupload(){{
+        mv {pw}/shell/{fn}.download_upload.{dest}.sh {pw}/shell_done/{fn}.download_upload.{dest}.sh
+        fntmp={pw}/log/{fn}.tmplog
 
-    tail -c 3000 {pw}/log/upload.{dest}.{fn}.log|sed 's/\\r/\\n/g' > $fntmp;
-    mv $fntmp {pw}/log/upload.{dest}.{fn}.log
-    tail -n 30 {pw}/log/download.{fn}.log > $fntmp;
-    mv $fntmp {pw}/log/download.{fn}.log
+        tail -c 3000 {pw}/log/upload.{dest}.{fn}.log  2>/dev/null|sed 's/\\r/\\n/g' > $fntmp;
+        mv $fntmp {pw}/log/upload.{dest}.{fn}.log
+        tail -n 30 {pw}/log/download.{fn}.log > $fntmp 2>/dev/null;
+        mv $fntmp {pw}/log/download.{fn}.log
 
-    {rm_cmd}
+        {rm_cmd}
 
-    exit 0
-}}
+        exit 0
+    }}
 
-download_status=$(checklocal)
-
-"""
-                if not no_upload and not force_download:
-                    cmd += f"""
-upload_status=$(checkremote)
-
-if [[ $upload_status = "already_uploaded" ]];then
-    postupload
-    exit 0
-fi
-
-"""
-                cmd += f"""
-
-if [[ $download_status -eq 1 ]];then
-    {download_cmd}
     download_status=$(checklocal)
-    if [[ $download_status -eq 1 ]];then
-        echo download failed >> {fn_status}
-        exit 1
+
+    """)
+        if not no_upload and not force_download:
+            cmd.append(f"""
+    upload_status=$(checkremote)
+
+    if [[ $upload_status = "already_uploaded" ]];then
+        postupload
+        exit 0
     fi
-fi
-"""
-                # rename the vcf and bgzip
-                if rename:
-                    fn = f'{rename}.vcf.gz'
-                    # prev command is
-                    # bcftools view --no-version {fn_download}|bcftools reheader -s  <(echo "{rename}") |bgzip > {pw}/download/{fn}.tmp
-                    # mv {pw}/download/{fn}.tmp {pw}/download/{fn}
-                    # sample list example: 971146-  971147-
 
-                    cmd += f"""
-# rename the fq file
-vcf_deid {fn_download} -newname {rename} -sample_list {sample_list}|bgzip > {pw}/download/{fn}
-bgzip -r {pw}/download/{fn}
-ln -sf {fn_download} {pw}/download/{rename}.link
+    """)
+        cmd.append(f"""
 
-                    """
+    if [[ $download_status -eq 1 ]];then
+        {download_cmd}
+        download_status=$(checklocal)
+        if [[ $download_status -eq 1 ]];then
+            echo download failed >> {fn_status}
+            exit 1
+        fi
+    fi
+    """)
+        # rename the vcf and bgzip
+        if fn_deid:
+            fn = f'{fn_deid}.vcf.gz'
+            # prev command is
+            # bcftools view --no-version {fn_download}|bcftools reheader -s  <(echo "{rename}") |bgzip > {pw}/download/{fn}.tmp
+            # mv {pw}/download/{fn}.tmp {pw}/download/{fn}
+            # sample list example: 971146-  971147-
 
-                if upload_type == 'dropbox' and need_upload:
-                    upload_cmd = f'{dock} dbxcli put {pw}/download/{fn} "/{remote_pw}/{fn}" > {pw}/log/upload.{dest}.{fn}.log 2>&1'
-                elif upload_type == 'emedgene' and need_upload:
-                    upload_cmd = f'{dock} aws s3 cp "{pw}/download/{fn}" "s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn}" > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log'
+            cmd.append(f"""
+    # rename the fq file
+    vcf_deid {fn_local} -newname {fn_deid} -sample_list {sample_list}|bgzip > {pw}/download/{fn}
+    bgzip -r {pw}/download/{fn}
+    ln -sf {fn_local} {pw}/download/{fn_deid}.link
 
-                if not no_upload and need_upload:
-                    cmd += f"""
+            """)
 
-upload_status=$(checkremote)
+        if dest == 'dropbox':
+            upload_cmd = f'{dock} dbxcli put "{fn_local}" "/{remote_pw}/{fn_remote}" > {pw}/log/upload.{dest}.{fn}.log 2>&1'
+        elif dest == 'emedgene':
+            upload_cmd = f'{dock} aws s3 cp ""{fn_local}"" "s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_remote}" > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log'
 
-if [[ $upload_status = "local_not_ready" ]];then
+        if need_upload:
+            cmd.append(f"""
+    upload_status=$(checkremote)
+
+    if [[ $upload_status = "local_not_ready" ]];then
     echo local file note ready >> {fn_status}
     exit 1
-fi
+    fi
 
-# local size is ok, try upload
-echo start uploading >> {fn_status}
-date +"%m-%d  %T">> {fn_status}
+    # local size is ok, try upload
+    echo start uploading >> {fn_status}
+    date +"%m-%d  %T">> {fn_status}
 
-{upload_cmd}
-echo upload finish >> {fn_status}
-date +"%m-%d  %T"  >> {fn_status}
-upload_status=$(checkremote)
-if [[ $upload_status = "already_uploaded" ]];then
+    {upload_cmd}
+    echo upload finish >> {fn_status}
+    date +"%m-%d  %T"  >> {fn_status}
+    upload_status=$(checkremote)
+    if [[ $upload_status = "already_uploaded" ]];then
     postupload
     exit 0
-else
+    else
     echo "fail to upload"
     exit 1
-fi
-                """
-                print(cmd, file=out)
-            os.chmod(fn_script, 0o755)
+    fi
+        """)
+        print('\n'.join(cmd), file=out)
+    os.chmod(fn_script, 0o755)
+    return fn_script
+
+def build_script(pw, d, info_file, no_upload=False):
+    with open(info_file) as f:
+        info_header = f.readline().strip().split('\t')
+        idx_url = info_header.index('url') + 1
+
+    for _, v1 in d.items():
+        for fn, v in v1.items():
+            # {'size': size_exp, 'remote': f'{remote_pw}/{name}', 'url': url, 'downloaded': downloaded, 'uploaded': uploaded}
+            url = v['url']
+            size_exp = v['size']
+            remote_pw = v['remote']
+            download_type = v['download_type']
+            # ext = fn.rsplit('.', 1)[-1]
+            fn_deid = v['rename']
+            sample_list = v['sample_list']
+
+            fn_download = f'{pw}/download/{fn}'
+            # fn_download_chunk = fn_download.replace('.gz', '')
+
+            need_upload = not v['uploaded']
+
+            if v['uploaded'] and not  args.force and not force_download:
+                os.system(f'mv  {fn_script} {pw}/shell_done/{fn}.download_upload.{dest}.sh 2>/dev/null')
+                continue
+
+            if url.lower() == 'na':
+                continue
+            url_var = f"""url=$(awk -F "\\t" '$2=="{fn}" {{print ${idx_url} }}' {info_file})"""
+            fn_script = build_script_single(dest, remote_pw, fn_download, url_var, simple=False, fn_deid=fn_deid, sample_list=sample_list, pw=pw, download_type=download_type, size_exp=size_exp, need_upload=need_upload)
+            if fn_script is None:
+                logger.warning(f'fail to build script for {fn}')
+
+
 
 def get_prj_name(pw):
     # get project name, not used
@@ -1014,40 +1000,6 @@ def main(pw, script_list, info_file=None, remote_pw_in=None, updated_version_onl
         build_script(pw, d, info_file, no_upload=no_upload)
     return ct, script_list
 
-
-def simple_upload(infofile):
-
-    os.makedirs('shell', exist_ok=True)
-    all_scripts = open('all_scripts.sh', 'w')
-
-    with open(infofile) as f:
-        header = f.readline().strip().split('\t')
-        header = [_.lower() for _ in header]
-
-        exp = {'fn', 'remote'}
-        not_found = exp - set(header)
-        if len(not_found) > 0:
-            logger.error(f'columns not found: {not_found}')
-            sys.exit(1)
-
-        idx = {k: header.index(k) for k in exp}
-
-        for i in f:
-            a = i.strip().split('\t')
-
-            if len(a) == 0:
-                continue
-
-            fn, remote_pw = [a[idx[_]] for _ in ['fn', 'remote']]
-
-            fn_lite = fn.rsplit('/', 0)[-1]
-            fn_script = f'shell/{fn_lite}.upload.sh'
-            with open(fn_script, 'w') as o:
-                print(f'dbxcli put "{fn}" "/{remote_pw}/{fn_lite}"', file=o)
-
-            print(fn_script, file=all_scripts)
-    all_scripts.close()
-
 def clearlog():
     fls = os.popen(f'find . -iname "*.log" -type f -size +100k|grep "/log/"').read().strip().split('\n')
     fls = [_.strip() for _ in fls if _.strip()]
@@ -1072,23 +1024,23 @@ def clearlog():
     if len(download_fls) > 0:
         download_fls = '\n'.join(download_fls)
         cmd += f"""
-while read fn;do
-    tail -n 30 $fn > ${{fn}}.tmp;
-    mv ${{fn}}.tmp $fn
-done <<EOF_
-{download_fls}
-EOF_
-"""
-    if len(upload_fls) > 0:
-        upload_fls = '\n'.join(upload_fls)
-        cmd += f"""
-while read fn;do
-    tail -c 2000 $fn|sed 's/\\r/\\n/g' > ${{fn}}.tmp;
-    mv ${{fn}}.tmp $fn
-done << EOF_
-{upload_fls}
-EOF_
-"""
+    while read fn;do
+        tail -n 30 $fn  2>/dev/null> ${{fn}}.tmp;
+        mv ${{fn}}.tmp $fn
+    done <<EOF_
+    {download_fls}
+    EOF_
+    """
+        if len(upload_fls) > 0:
+            upload_fls = '\n'.join(upload_fls)
+            cmd += f"""
+    while read fn;do
+        tail -c 2000 $fn 2>/dev/null|sed 's/\\r/\\n/g' > ${{fn}}.tmp;
+        mv ${{fn}}.tmp $fn
+    done << EOF_
+    {upload_fls}
+    EOF_
+    """
 
 
     # remove the log files in shell
@@ -1106,21 +1058,6 @@ if __name__ == "__main__":
     logger = getlogger()
 
     simple_mode = args.simple
-    if simple_mode:
-        infofile = args.info_file
-        if not infofile:
-            logger.error(f'for simple mode, you must specify the info file')
-            sys.exit(1)
-
-        simple_upload(infofile)
-        sys.exit(0)
-
-
-
-    convert1 = {'dropbox': 'dropbox', 'db': 'dropbox', 'emedgene': 'emedgene', 'em': 'emedgene', 'ed':'emedgene'}
-    convert2 = {'emedgene': 'emedgene', 'em': 'emedgene', 'ed':'emedgene', 'pacbio': 'pacbio', 'pac': 'pacbio'}
-    dest = convert1[args.dest]
-    demo = args.demo
 
     remote_flat = args.remote_flat
     lite = args.lite
@@ -1131,17 +1068,14 @@ if __name__ == "__main__":
     force_download = args.forcedown
     no_upload = args.noupload
     profile = args.profile
-    profile = convert2[profile]
     clearlog_flag = args.clear
+    demo = args.demo
 
     asis = args.asis  # use the remote_pw in the cmd line input, do not do the re-format
     rm = args.rm
     remote_pw = args.remote_pw
     remote_base = args.remote_base
-    print(args)
-
-    if clearlog_flag:
-        sys.exit(clearlog())
+    # print(args)
 
     node_name = platform.node()
     updated_version_only = not args.allversion
@@ -1150,6 +1084,90 @@ if __name__ == "__main__":
         dock = 'singularity exec -B /mnt /mnt/d/dock/centos.sif '
     elif node_name.find('vampire') > -1:
         dock = 'singularity exec -B /fs0 /data/cqs/chenh19/dock/centos.sif '
+
+
+    convert1 = {'dropbox': 'dropbox', 'db': 'dropbox', 'emedgene': 'emedgene', 'em': 'emedgene', 'ed':'emedgene'}
+    convert2 = {'emedgene': 'emedgene', 'em': 'emedgene', 'ed':'emedgene', 'pacbio': 'pacbio', 'pac': 'pacbio'}
+    dest = convert1[args.dest]
+    profile = convert2[profile]
+
+    if simple_mode:
+        local_files = args.local_files
+        remote_pw = args.remote_pw
+        pw = os.getcwd()
+        os.makedirs('log', exist_ok=True)
+        os.makedirs('shell', exist_ok=True)
+        os.makedirs('shell_done', exist_ok=True)
+
+        local_files_ft_ct = {}
+        for fn in local_files:
+            ext = fn.replace('.gz', '').rsplit('.', 1)[-1]
+            local_files_ft_ct.setdefault(ext, 0)
+            local_files_ft_ct[ext] += 1
+
+
+
+        if not remote_pw:
+            logger.error('you must specify the remote path for uploading')
+            sys.exit(1)
+        confirm_dest = input(f'Your are uploading {len(local_files)} files: {local_files_ft_ct} to {dest}, is that correct? (yes/no):\n').lower()
+
+        if confirm_dest not in {'yes', 'y'}:
+            logger.error(f'you denied, please specify the correct -dest argument')
+            sys.exit(1)
+
+        d_exist, sub_folders = get_remote_file_list(pw, dest, remote_pw)
+        file_status = {'uploaded': [], 'need_to_upload': [], 'size_not_match': []}
+
+        for fn in local_files:
+            fn_pure = os.path.basename(fn)
+            if fn_pure not in d_exist:
+                file_status['need_to_upload'].append(fn)
+            elif d_exist[fn_pure][1] == os.path.getsize(fn):
+                file_status['uploaded'].append(fn)
+            else:
+                file_status['need_to_upload'].append(fn)
+                file_status['size_not_match'].append(fn)
+        size_not_match = file_status['size_not_match']
+        fn_not_match = 'remote_size_not_match.txt'
+        if len(size_not_match) > 0:
+            logger.error(colored(f'{len(size_not_match)} files uploaded, but the size not match, please check: {fn_not_match}', 'red'))
+            with open(fn_not_match, 'w') as o:
+                print('\n'.join(size_not_match), file=o)
+        else:
+            try:
+                os.unlink(fn_not_match)
+            except:
+                pass
+
+
+
+        if len(file_status['uploaded']) > 0:
+            logger.info(colored(f'\nthe following files has been uploaded:\n\t' + '\n\t'.join(file_status['uploaded']), 'green'))
+
+        if len(file_status['need_to_upload']) == 0:
+            print(colored('All done', 'green'))
+            sys.exit(0)
+        else:
+            logger.info(f'now building scripts for {len(file_status["need_to_upload"])} files')
+
+        if not demo:
+            build_remote_subfolder(remote_pw, dest)
+
+        scripts = []
+        for fn in local_files:
+            fn_pure = os.path.basename(fn)
+            fn_script = build_script_single(dest, remote_pw, fn, simple=True, need_upload=True)
+            if fn_script is None:
+                logger.warning(f'fail to build script for {fn_pure}')
+                continue
+            scripts.append(fn_script)
+        with open(f'script_list.txt', 'w') as o:
+            print('\n'.join(scripts), file=o)
+        sys.exit(0)
+
+    if clearlog_flag:
+        sys.exit(clearlog())
 
     # get pw
     pw_raw = args.pw or [os.getcwd()]
