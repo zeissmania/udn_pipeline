@@ -69,6 +69,7 @@ args = ps.parse_args()
 ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'gvcf', 'fasta': 'fasta', 'fq': 'fastq', 'vcf': 'vcf'}
 ft_convert.update({_: _ for _ in ft_convert.values()})
 
+file_ct = {}
 
 # ps.add_argument('-prj', help="""project name for this run, if not set, would use the UDN infered from info file or current folder name""")
 
@@ -143,10 +144,10 @@ def get_remote_file_list(pw, dest, remote_pw):
     sub_folders = set()
     if dest == 'dropbox':
 
-# Revision                        Size    Last modified Path
-# -                               -       -             /CG2UDN/For Emedgene Upload
-# 015be260c9d805e000000022be8dc00 9.5 KiB 1 day ago     /CG2UDN/cg2udn.key.xlsx
-# 015be3846dafbcf000000022be8dc00 1.1 MiB 8 hours ago   /CG2UDN/Family VU097/Mom/20-097-002902_VUC2000652_D1_N1_LP200615017_UDI0067_HP200028_PL200021_SEQ_2006170017.292.final.vcf.gz
+    # Revision                        Size    Last modified Path
+    # -                               -       -             /CG2UDN/For Emedgene Upload
+    # 015be260c9d805e000000022be8dc00 9.5 KiB 1 day ago     /CG2UDN/cg2udn.key.xlsx
+    # 015be3846dafbcf000000022be8dc00 1.1 MiB 8 hours ago   /CG2UDN/Family VU097/Mom/20-097-002902_VUC2000652_D1_N1_LP200615017_UDI0067_HP200028_PL200021_SEQ_2006170017.292.final.vcf.gz
 
         with open(fn_exist) as fp:
             fp.readline()
@@ -163,16 +164,16 @@ def get_remote_file_list(pw, dest, remote_pw):
                     folder = re.sub(r'/$', '', folder)
                     sub_folders.add(folder)
     elif dest == 'emedgene':
-# 2021-02-22 15:45:30          0 Vanderbilt/upload/UDN782882_261_DP/Father_UDN098366/
-# 2021-02-22 18:43:14 44042338086 Vanderbilt/upload/UDN782882_261_DP/Father_UDN098366/939022-UDN098366-D_R1.fastq.gz
-# 2021-02-22 18:48:16 48156982037 Vanderbilt/upload/UDN782882_261_DP/Father_UDN098366/939022-UDN098366-D_R2.fastq.gz
-# 2021-02-22 15:45:29          0 Vanderbilt/upload/UDN782882_261_DP/Mother_UDN954693/
-# 2021-02-22 18:25:53 43856874123 Vanderbilt/upload/UDN782882_261_DP/Mother_UDN954693/939020-UDN954693-M_R1.fastq.gz
-# 2021-02-22 18:53:31 47591653919 Vanderbilt/upload/UDN782882_261_DP/Mother_UDN954693/939020-UDN954693-M_R2.fastq.gz
-# 2021-02-22 15:45:32          0 Vanderbilt/upload/UDN782882_261_DP/Proband_UDN782882/
-# 2021-02-22 19:10:52 43542249072 Vanderbilt/upload/UDN782882_261_DP/Proband_UDN782882/939019-UDN782882-P_R1.fastq.gz
-# 2021-02-22 19:49:40 47567355208 Vanderbilt/upload/UDN782882_261_DP/Proband_UDN782882/939019-UDN782882-P_R2.fastq.gz
-# 2021-02-22 15:46:55       1829 Vanderbilt/upload/UDN782882_261_DP/UDN782882_all_files.md5
+    # 2021-02-22 15:45:30          0 Vanderbilt/upload/UDN782882_261_DP/Father_UDN098366/
+    # 2021-02-22 18:43:14 44042338086 Vanderbilt/upload/UDN782882_261_DP/Father_UDN098366/939022-UDN098366-D_R1.fastq.gz
+    # 2021-02-22 18:48:16 48156982037 Vanderbilt/upload/UDN782882_261_DP/Father_UDN098366/939022-UDN098366-D_R2.fastq.gz
+    # 2021-02-22 15:45:29          0 Vanderbilt/upload/UDN782882_261_DP/Mother_UDN954693/
+    # 2021-02-22 18:25:53 43856874123 Vanderbilt/upload/UDN782882_261_DP/Mother_UDN954693/939020-UDN954693-M_R1.fastq.gz
+    # 2021-02-22 18:53:31 47591653919 Vanderbilt/upload/UDN782882_261_DP/Mother_UDN954693/939020-UDN954693-M_R2.fastq.gz
+    # 2021-02-22 15:45:32          0 Vanderbilt/upload/UDN782882_261_DP/Proband_UDN782882/
+    # 2021-02-22 19:10:52 43542249072 Vanderbilt/upload/UDN782882_261_DP/Proband_UDN782882/939019-UDN782882-P_R1.fastq.gz
+    # 2021-02-22 19:49:40 47567355208 Vanderbilt/upload/UDN782882_261_DP/Proband_UDN782882/939019-UDN782882-P_R2.fastq.gz
+    # 2021-02-22 15:46:55       1829 Vanderbilt/upload/UDN782882_261_DP/UDN782882_all_files.md5
         with open(fn_exist) as fp:
             for i in fp:
                 i = i.strip()
@@ -215,6 +216,11 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
 
 
     script_list = script_list or {'needdown': [], 'needup': []}
+
+    # download.info.UDN133971.txt
+    udnmain = info_file.rsplit('/', 1)[-1].replace('download.info.', '').replace('.txt', '')
+    ifile_ct = {}
+    file_ct[udnmain] = ifile_ct
 
     if not isinstance(gzip_only, set):
         gzip_only = set()
@@ -285,6 +291,8 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                 logger.error(f'wrong info format: {a}')
                 logger.error(f'idx = {idx}')
                 raise
+            reltmp = rel or 'NA'
+
 
             download_type = 'wget'
             try:
@@ -352,6 +360,9 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
             if ext in gzip_only and not gz:
                 logger.info(f'file skipped due to gzip file only: {fn}')
                 continue
+
+
+            ifile_ct.setdefault(reltmp, {}).setdefault(ext, []).append(fn)
 
             rel = re.sub(r'\W+', '_', rel)
             rel = '' if not rel or rel.lower() == 'na' else f'{rel}_'
@@ -454,7 +465,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
     #     remote_pw_plain = re.sub(r'\W+', '_', remote_pw)
     #     all_uploaded = 1 if all([_['uploaded'] for _ in v.values()]) else 0
 
-    logger.debug(d)
+    # logger.debug(d)
     sub_folders_exist = set()
     for remote_pw, v in d_exist_all.items():
         i = set([f'{remote_pw}/{name}' for name in v[1]])
@@ -679,12 +690,16 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
     fn_script = f'{pw}/shell/{fn}.download_upload.{dest}.sh'
     fn_status = f'{pw}/log/status.{fn}.txt'
 
-    if simple == False and (url_var is None or url_var[:3] != 'url='):
-        logger.error(f'invalid url_var define: {fn_local}')
+    if simple == False and (url_var is None):
+        logger.error(f'invalid url_var define: {url_var}, file= {fn_local}')
         return None
     cmd = []
     if url_var is not None:
+        if url_var[:4] != 'url=':
+            url_var = f'url="{url_var}"'
+
         cmd.append(url_var)
+
 
     if fn_deid is not None and sample_list is None:
         logger.error(f'when fn_deid is specified, the sample_list must also be specified')
@@ -939,6 +954,7 @@ def build_script(pw, d, info_file, no_upload=False):
 
             need_upload = not v['uploaded']
 
+            fn_script = f'{pw}/shell/{fn}.download_upload.{dest}.sh'
             if v['uploaded'] and not  args.force and not force_download:
                 os.system(f'mv  {fn_script} {pw}/shell_done/{fn}.download_upload.{dest}.sh 2>/dev/null')
                 continue
@@ -1248,6 +1264,7 @@ if __name__ == "__main__":
         # ct = {'total': n_desired, 'downloaded': n_downloaded, 'uploaded': n_uploaded, 'need_to_upload': n_need_upload}
 
     print('\n' + '#' * 50)
+
     print(json.dumps(ct, indent=4))
 
 
@@ -1256,6 +1273,22 @@ if __name__ == "__main__":
     n_needdown = len(script_list['needdown'])
 
     print(f'total scripts = {n_needup + n_needdown}')
+
+    for udn, v1 in file_ct.items():
+        print(udn)
+        for rel, v2 in v1.items():
+
+            line = f'    {rel}'
+            for ift, v3 in v2.items():
+                n_file = len(v3)
+                if len(ft) == 1:
+                    line += f'\t{n_file}'
+                else:
+                    line += '\n        {ift}\t{n_file}'
+            print(line)
+
+
+    # print(json.dumps(file_ct, indent=4))
 
     with open(f'script_list.txt', 'w') as o:
         for k in ['needup', 'needdown']:
