@@ -119,7 +119,7 @@ def get_json(action=None, payload=None, url=None, header=None):
     payload = payload or {}
     r = requests.get(url, headers=headers, data=payload)
     if r.status_code != 200:
-        logger.error(f'action={action} - status_code = {r.status_code}')
+        logger.error(f'action=  {action} - {r.json()}')
         return 0
     try:
         return r.json()
@@ -288,6 +288,9 @@ def get_download_link(udn, fl_info, get_aws_ft, gzip_only=None, force_update=Fal
             logger.error(f'file id not found: info = \n{fl_info}')
         try:
             download_json = get_json(f'participants/{udn}/sequencing/files/{file_id}')
+            if download_json == 0:
+                return 1
+
             link = download_json['downloadLink']
             if link is None:
                 logger.warning(f'downloadlink is not available in json: {fn}, {download_json}')
@@ -295,6 +298,7 @@ def get_download_link(udn, fl_info, get_aws_ft, gzip_only=None, force_update=Fal
             return link
         except:
             logger.warning(f'fail to get download link json: fn = {fn}, file_id = {file_id}')
+            raise
             return 1
 
 
