@@ -41,7 +41,7 @@ from bs4 import BeautifulSoup as bs
 base_url = 'https://gateway.undiagnosed.hms.harvard.edu/api/2.0'
 platform = sys.platform.lower()
 
-ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'gvcf', 'fq': 'fastq', 'vcf': 'vcf'}
+ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'gvcf', 'fq': 'fastq', 'vcf': 'vcf', 'bz2': 'bz2', 'txt': 'txt', 'bed': 'bed', 'xls': 'xls', 'xlsx': 'xlsx', 'wig': 'wig'}
 ft_convert.update({_: _ for _ in ft_convert.values()})
 
 class Credential():
@@ -133,14 +133,15 @@ def dump_json(obj, fn):
 
 
 def get_file_extension(fn):
-    m = re.match(r'.*?\.(bam|bai|cnv|fastq|fq|gvcf|vcf)\b(\.gz)?', fn.lower())
+    # m = re.match(r'.*?\.(bam|bai|cnv|fastq|fq|gvcf|vcf)\b(\.gz)?', fn.lower())
+    m = re.match(r'.*?\.([a-z]+)(\.gz)?$', fn.lower())
     if m:
         try:
             return ft_convert[m.group(1)], m.group(2)
         except:
             return m.group(1), m.group(2)
     else:
-        logger.warning(f'unclear file type: {fn}')
+        logger.info(f'unclear file type: {fn}')
         return None, None
 
 def format_comment(comment):
@@ -255,11 +256,11 @@ def get_download_link(udn, fl_info, get_aws_ft, gzip_only=None, force_update=Fal
         ext = ft_convert[ext]
     except:
         logger.error(f'invalid file extension: {fn}: ext = {ext}')
-        return 1
+        return 2
 
     if not gz and ext in gzip_only:
         logger.warning(f'file skipped due to gzip file only: {fn}')
-        return 1
+        return 2
 
     if ext not in get_aws_ft:
         logger.debug(f'skip update amazon link due to file type limit: {fn} ext={ext}, valid ft={get_aws_ft}')
@@ -748,6 +749,8 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
     for rel_to_proband, irel in res.items():
         if rel_to_proband == 'Proband':
             continue
+        logger.info(irel)
+        
         try:
             rel_udn = irel['simpleid']
             rel_gender = irel['gender']
