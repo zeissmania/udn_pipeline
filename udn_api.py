@@ -917,7 +917,7 @@ default:
                         if url.lower() == 'na':
                             logger.error(red(f'invalid CNV file url'))
                         else:
-                            out_cnv.write(f'size=$(stat -c %s origin/{fn} 2>/dev/null);if [[ "$size" -lt 1000 ]];then wget "{url}" -c -O "origin/{fn}";\nelse echo already exist: "origin/{fn}";fi\nsize=$(stat -c %s origin/{fn} 2>/dev/null);\nif [[ "$size" -lt 1000 ]];then missing=1;fi\n\nif [[ $missing -eq 0 ]];\n    then touch intermed/download.cnv.{udn}.done;\nelse \n    rm intermed/download.cnv.{udn}.done 2>/dev/null;\nfi')
+                            out_cnv.write(f'size=$(stat -c %s origin/{fn} 2>/dev/null);\nif [[ "$size" -lt 1000 ]];then \n    wget "{url}" -c -O "origin/{fn}";\nelse \n    echo already exist: "origin/{fn}";\nfi\nsize=$(stat -c %s origin/{fn} 2>/dev/null);\nif [[ "$size" -lt 1000 ]];then \n    missing=1;\nfi\n\nif [[ $missing -eq 0 ]];\n    then touch intermed/download.cnv.{udn}.done;\nelse \n    rm intermed/download.cnv.{udn}.done 2>/dev/null;\nfi\n\n')
                             
                 else:
                     logger.info(f'joint.cnv found:{fn} - skip')
