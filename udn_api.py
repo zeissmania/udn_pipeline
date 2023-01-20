@@ -134,7 +134,7 @@ def dump_json(obj, fn):
 
 def get_file_extension(fn):
     # m = re.match(r'.*?\.(bam|bai|cnv|fastq|fq|gvcf|vcf)\b(\.gz)?', fn.lower())
-    m = re.match(r'.*?\.([a-z]+)(\.gz)?$', fn.lower())
+    m = re.match(r'.*?\.([a-z]+)(\.gz)?$', fn.lower().replace('.tbi', ''))
     if m:
         try:
             return ft_convert[m.group(1)], m.group(2)
@@ -749,7 +749,7 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
     for rel_to_proband, irel in res.items():
         if rel_to_proband == 'Proband':
             continue
-        logger.info(irel)
+        # logger.info(irel)
         
         try:
             rel_udn = irel['simpleid']
