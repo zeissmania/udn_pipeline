@@ -134,7 +134,7 @@ def dump_json(obj, fn):
 
 def get_file_extension(fn):
     # m = re.match(r'.*?\.(bam|bai|cnv|fastq|fq|gvcf|vcf)\b(\.gz)?', fn.lower())
-    m = re.match(r'.*?\.([a-z]+)(\.gz)?$', fn.lower().replace('.tbi', ''))
+    m = re.match(r'.*?\.([a-z]+(?:.vcf)?)(\.gz)?$', fn.lower().replace('.tbi', ''))
     if m:
         try:
             return ft_convert[m.group(1)], m.group(2)
@@ -143,6 +143,9 @@ def get_file_extension(fn):
     else:
         logger.info(f'unclear file type: {fn}')
         return None, None
+
+# print(get_file_extension('1165326-UDN844742-P_reheadered.cnv.vcf.gz'))
+# sys.exit(1)
 
 def format_comment(comment):
     tmp = [_.strip() for _ in comment.split('\n') if _.strip()]
@@ -255,7 +258,7 @@ def get_download_link(udn, fl_info, get_aws_ft, gzip_only=None, force_update=Fal
     try:
         ext = ft_convert[ext]
     except:
-        logger.error(f'invalid file extension: {fn}: ext = {ext}')
+        logger.debug(f'invalid file extension: {fn}: ext = {ext}')
         return 2
 
     if not gz and ext in gzip_only:
@@ -520,6 +523,9 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
     res_all[rel_to_proband] = res
 
     if is_proband:
+        fn_udn_api_pkl = f'{root}/{udn_raw}/intermed/{udn}.udn_api_query.pkl'
+        with open(fn_udn_api_pkl, 'wb') as out:
+            pickle.dump(res_all, out)
         try:
             parse_api_res(res_all, udn_raw=udn_raw, valid_family=valid_family, sv_caller=sv_caller, newname_prefix=newname_prefix)
         except:
@@ -541,7 +547,7 @@ def get_logger(prefix=None, level='INFO'):
     console.setFormatter(fmt)
     console.setLevel(level)
 
-    fh_file = logging.FileHandler(fn_log, mode='w', encoding='utf8')
+    fh_file = logging.FileHandler(fn_log, mode='a', encoding='utf8')
     fh_err = logging.FileHandler(fn_err, mode='a', encoding='utf8')
 
     fh_file.setLevel('DEBUG')
@@ -628,7 +634,7 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
     update_aws_ft = set([ft_convert[_] for _ in update_aws_ft]) if update_aws_ft else set(['fastq', 'cnv'])
 
 
-    logger.debug(f'file type to update url = {update_aws_ft}')
+    logger.info(green(f'file type to update url = {update_aws_ft}'))
     # pw_raw = os.getcwd().rsplit('/', 1)[-1]
     # pw = f'/data/cqs/chenh19/udn/{pw_raw}'
     if not os.path.isdir('origin'):
@@ -869,16 +875,22 @@ default:
             url_s3 = ifl['url']
             size = ifl['size']
             build = ifl['build']
+            seq_id = ifl['seq_id']
+            file_id = ifl.get('file_id') or 'NA'
             seq_type = ifl.get('seq_type') or 'NA'
             md5 = ifl['md5']
             newname = ''
             newname_base = ''
 
             ext, gz = get_file_extension(fn)
+            # logger.info(f'{fn}, {ext}, {gz}')
 
             if ext not in update_aws_ft:
                 # logger.info(f'skipped due to not target file type: {ext}')
                 continue
+
+            logger.debug(f'{fn}\t{url}')
+            
 
             if newname_prefix and re.match(r'.+\.vcf', fn.lower()) and not re.match(r'(cnv|joint)', fn.lower()):
                 # 971146-UDN131930-P_971147-UDN771313-M_reheadered.joint.repeats.merged.vcf.gz
@@ -898,21 +910,26 @@ default:
                         newname = f'{newname_base}_{n_prev + 1}'
 
 
-            if re.match(r'.+\.cnv\.vcf(\.gz)?$', fn) and 'cnv' in update_aws_ft and fn.find('joint') < 0:
-                if not os.path.exists(f'origin{fn}'):
-                    if url.lower() == 'na':
-                        logger.error(f'invalid CNV file url')
-                    else:
-                        out_cnv.write(f'size=$(stat -c %s origin/{fn} 2>/dev/null);if [[ "$size" -lt 1000 ]];then wget "{url}" -c -O "origin/{fn}";\nelse echo already exist: "origin/{fn}";fi\nsize=$(stat -c %s origin/{fn} 2>/dev/null);\nif [[ "$size" -lt 1000 ]];then missing=1;fi\n\n')
+            if re.match(r'.+\.cnv\.vcf(\.gz)?$', fn) and 'cnv' in update_aws_ft:
+                if  fn.find('joint') < 0:
+                    logger.info(green(f'seq_id:{seq_id}\t{fn}:\tfile_id:{file_id}'))
+                    if not os.path.exists(f'origin{fn}'):
+                        if url.lower() == 'na':
+                            logger.error(red(f'invalid CNV file url'))
+                        else:
+                            out_cnv.write(f'size=$(stat -c %s origin/{fn} 2>/dev/null);if [[ "$size" -lt 1000 ]];then wget "{url}" -c -O "origin/{fn}";\nelse echo already exist: "origin/{fn}";fi\nsize=$(stat -c %s origin/{fn} 2>/dev/null);\nif [[ "$size" -lt 1000 ]];then missing=1;fi\n\nif [[ $missing -eq 0 ]];\n    then touch intermed/download.cnv.{udn}.done;\nelse \n    rm intermed/download.cnv.{udn}.done 2>/dev/null;\nfi')
+                            
+                else:
+                    logger.info(f'joint.cnv found:{fn} - skip')
 
 
             out_info.write(f'{rel_to_proband}\t{fn}\t{newname}\t{newname_base}\t{url}\t{udn}\t{seq_type}\t{size}\t{build}\t{md5}\t{url_s3}\n')
             out_md5.write(f'{md5}  {fn}\n')
 
-
-    if 'cnv' in update_aws_ft:
-        out_cnv.write(f'if [[ $missing -eq 0 ]];\n    then touch intermed/download.cnv.{udn}.done;\nelse \n    rm intermed/download.cnv.{udn}.done 2>/dev/null;\nfi')
+    try:
         out_cnv.close()
+    except:
+        pass
 
     out_md5.close()
     out_info.close()
@@ -1315,23 +1332,21 @@ if __name__ == "__main__":
                 logger.warning(f'rename the folder, old = {udn_raw_old} , new = {udn_raw}')
                 os.system(f'mv {root}/{udn_raw_old} {root}/{udn_raw}')
                 rename_remote = True
-        else:
-            try:
-                os.makedirs(f'{root}/{udn_raw}/origin', exist_ok=True)
-            except:
-                pass
-            try:
-                os.makedirs(f'{root}/{udn_raw}/intermed', exist_ok=True)
-            except:
-                pass
+        # logger.info(os.getcwd() + f', rename to {newname_prefix}' if newname_prefix else '')
 
 
-        logger.info(f'now running {udn_raw}')
         pw_case = f'{root}/{udn_raw}'
         os.chdir(pw_case)
+        logger.info(f'now running {pw_case}')
 
-        logger = get_logger(f'{root}/{udn_raw}/{udn_raw}', level=args.v)
-        logger.info(os.getcwd() + f', rename to {newname_prefix}' if newname_prefix else '')
+        try:
+            os.makedirs(f'{pw_case}/origin', exist_ok=True)
+        except:
+            pass
+        try:
+            os.makedirs(f'{pw_case}/intermed', exist_ok=True)
+        except:
+            pass
 
         fn_udn_api_pkl = f'{root}/{udn_raw}/intermed/{udn}.udn_api_query.pkl'
 
@@ -1352,7 +1367,6 @@ if __name__ == "__main__":
             res = get_all_info(udn, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, udn_proband=udn, gzip_only=gzip_only, sv_caller=sv_caller, newname_prefix=newname_prefix)
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
-
 
         if not lite and 'cnv' in update_aws_ft:
             if os.path.exists(f'intermed/download.cnv.{udn}.done'):
