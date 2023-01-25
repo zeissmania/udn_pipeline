@@ -44,7 +44,7 @@ ps.add_argument('local_files', help="""local files list, for simple mode only"""
 ps.add_argument('-dest', help="""the destinition for the uploading, valid = dropbox/db, emedgene/em/ed""", choices=['emedgene', 'em', 'ed', 'dropbox', 'db'], nargs='?', default='emedgene')
 ps.add_argument('-info_file', '-info', '-fn', help="""the file containing the amazon download link, usually like download.info.UDN945671.txt""", nargs='?', default=None)
 ps.add_argument('-simple', help="""simple mode, for uploading local file to dropbox/emedgene only. no info file needed, just set the -remote  -dest, and put all the local file path as the positional arugments""", action='store_true')
-
+ps.add_argument('-local_pw_layers', '-local_depth', '-d', '-localn', help="the local folder structure to keep, start from lower to upper. eg. a/b/c/1.txt  if set as 1, will keep c/1.txt, default = 0", type=int, default=0)
 ps.add_argument('-remote', '-r', '-remote_pw', dest='remote_pw', help="""the remote path, if not exist, would create one. start from the root path, donot include the leading and ending slash. dropbox is like UDN12345/proband_UDN12345  for emedgene is like UDN12345, if the remote folder is not in the root path, include all the path from root, e.g. cases_202107/34_269_AA_UDN616750""", default=None, nargs='?')
 ps.add_argument('-remote_base', '-r_base', '-rbase', '-rb', help="remote path base, default is from the root of the remote folder")
 ps.add_argument('-ft', help="""the file type to upload, could be multiple types sep by space, such as fastq, fq, vcf, bam, default = fastq, if upload all files in the info file, use all""", nargs='*')
@@ -676,7 +676,7 @@ def refine_remote_pw(remote_pw):
         remote_pw = m[1] + p_trailing
         return remote_pw
 
-def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, fn_remote=None, fn_deid=None, sample_list=None, pw=None, download_type=None, size_exp=None, need_upload=True):
+def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, fn_remote=None, fn_deid=None, sample_list=None, pw=None, download_type=None, size_exp=None, need_upload=True, local_pw_layers=0):
     # url_var is for the normal upload script with download step
     # the format is like  f"""url=$(awk -F "\\t" '$2=="{fn}" {{print ${idx_url} }}' {info_file})"""
 
@@ -686,6 +686,18 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
     fn = os.path.basename(fn_local)
     pw = pw or os.getcwd()
     fn_remote = fn_remote or fn
+    
+    if local_pw_layers:
+        tmp = fn_local.split('/')
+        try:
+            pw_remote_addition = tmp[-local_pw_layers - 1]
+        except:
+            pass
+        else:
+            
+            if not fn_remote.startswith(pw_remote_addition):
+                fn_remote = f'{pw_remote_addition}/{fn_remote}'
+    
 
     fn_script = f'{pw}/shell/{fn}.download_upload.{dest}.sh'
     fn_status = f'{pw}/log/status.{fn}.txt'
@@ -766,65 +778,69 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
     }}
     """)
         # check remote
+        fn_pure = os.path.basename(fn_remote)
         if dest == 'emedgene':
             cmd.append(f"""
     checkremote(){{
     local_size=$(stat -c "%s" {fn_local} 2>/dev/null)
+    fnlog="{fn_status}"
     # determine need to upload or not
-    remote_file_size=$({dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_remote}"|grep "{fn_remote}$" | tr -s " "|cut -d " " -f 3)
+    remote_file_size=$({dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_remote}"|grep "{fn_pure}$" | tr -s " "|cut -d " " -f 3)
     size_exp={size_exp}
+    echo local_size=$local_size , remote size = $remote_file_size exp size = $size_exp >> $fnlog
+
 
     if [[ -z $remote_file_size ]];then
         # local file not exist
         if [[ -z $local_size ]];then
-            echo "not downloaded yet" >> {fn_status}
+            echo "not downloaded yet" >> $fnlog
             echo "local_not_ready"
             return
         fi
 
         # exp size unkown, upload anyway
         if [[ $size_exp == "na" ]];then
-            echo "size_exp not specified, upload anyway : {fn_local}" >> {fn_status}
+            echo "size_exp not specified, upload anyway : {fn_local}" >>  $fnlog
             echo upload
             return
         fi
 
         if [[ $local_size -eq $size_exp ]];then
-            echo "local size is correct, prepare to upload: {fn_local}" >> {fn_status}
+            echo "local size is correct, prepare to upload: {fn_local}" >>  $fnlog
             echo upload
             return
         else
-            echo "local size not correct: local=$local_size , exp = $size_exp" >> {fn_status}
+            echo "local size not correct: local=$local_size , exp = $size_exp" >>  $fnlog
             echo "local_not_ready"
             return
         fi
-        echo -e "unkown situation! \\n local=$local_size\\n remote=$remote_file_size \\n exp = $size_exp" >> {fn_status}
+        echo -e "unkown situation! \\n local=$local_size\\n remote=$remote_file_size \\n exp = $size_exp" >>  $fnlog
 
         exit 1
     elif [[ $size_exp == "na" ]];then
         if [[ "$local_size" -eq "$remote_file_size" ]];then
-            echo size check is not specified, remote_file_size=$remote_file_size local_filesize=$local_size >> {fn_status}
+            echo size check is not specified, remote_file_size=$remote_file_size local_filesize=$local_size >>  $fnlog
             echo already_uploaded
             return
         else
-            echo remote size not correct: remote = $remote_file_size, local = $local_size
+            echo remote size not correct: remote = $remote_file_size, local = $local_size >>  $fnlog
             echo upload
             return
         fi
     elif [[ "$remote_file_size" -eq "{size_exp}" ]];then
-            echo {fn} successfully uploaded to {remote_pw}/  filesize={size_exp} >> {fn_status}
+            echo {fn} successfully uploaded to {remote_pw}/  filesize={size_exp} >>  $fnlog
             echo already_uploaded
             return
     elif [[ $size_exp -eq $local_size ]];then
-        echo remote size not correct: remote = $remote_file_size, exp = {size_exp}
+        echo remote size not correct: remote = $remote_file_size, exp = {size_exp} >>  $fnlog
             echo upload
             return
     elif [[ $size_exp -ne $local_size ]];then
-        echo {fn} local size not match exp, exp=$size_exp, local=$local_size > {fn_status}
+        echo {fn} local size not match exp, exp=$size_exp, local=$local_size >>  $fnlog
         echo "local_not_ready"
         return
     else
-        echo -e "unkown situation! \\n local=$local_size\\n remote=$remote_file_size \\n exp = $size_exp" >> {fn_status}
+        echo -e "unkown situation! \\n local=$local_size\\n remote=$remote_file_size \\n exp = $size_exp" >>  $fnlog
         exit 1
     fi
 
@@ -1068,6 +1084,28 @@ def clearlog():
     else:
         logger.info(f'no log files need to be cleared')
 
+def get_local_files(args):
+    fls_raw = args.local_files
+    if len(fls_raw) == 0:
+        return []
+
+    if len(fls_raw) == 1 and os.path.isdir(fls_raw[0]):
+        # this is a folder
+        pwtmp = fls_raw[0]
+        flist = os.popen(f'find -L {pwtmp} -type f ').read().split('\n')
+    else:
+        flist = fls_raw
+    
+    res = []
+    for fn in flist:
+        ext = fn.replace('.gz', '').rsplit('.', 1)[-1]
+        if ext in ft:
+            res.append(fn)
+    
+    
+    return res
+
+
 
 if __name__ == "__main__":
 
@@ -1107,9 +1145,44 @@ if __name__ == "__main__":
     dest = convert1[args.dest]
     profile = convert2[profile]
 
+
+    # get the file type to upload
+    gzip_only = set()
+    ft = set()
+
+    if not args.ft:
+        ft = ['fastq']
+    elif 'all' in args.ft:
+        ft = ['all']
+    else:
+        err = 0
+        for i in args.ft:
+            ext = i.replace('.gz', '')
+            if i[-2:] == 'gz':
+                gzip_only.add(ext)
+            try:
+                ft.add(ft_convert[ext])
+            except:
+                logger.error(f'invalid filetype: {i}')
+                err = 0
+        if err:
+            sys.exit(1)
+
+    if len(ft) == 0:
+        logger.error(f'No file type selected! exit')
+        sys.exit(1)
+
+
     if simple_mode:
-        local_files = args.local_files
         remote_pw = args.remote_pw
+        local_pw_layers = args.local_pw_layers  # keep the local parent folder
+        # e.g. /a/b/c/d/1.fastq.gz   if layer = 0, will include no parent folder
+        # if layer = 1, will upload to remote_pw/d/1.fastq.gz
+        
+        local_files = get_local_files(args)
+        logger.info(f'local files n = {len(local_files)}')
+        logger.info('\n'.join(local_files))
+        
         pw = os.getcwd()
         os.makedirs('log', exist_ok=True)
         os.makedirs('shell', exist_ok=True)
@@ -1120,8 +1193,6 @@ if __name__ == "__main__":
             ext = fn.replace('.gz', '').rsplit('.', 1)[-1]
             local_files_ft_ct.setdefault(ext, 0)
             local_files_ft_ct[ext] += 1
-
-
 
         if not remote_pw:
             logger.error('you must specify the remote path for uploading')
@@ -1171,9 +1242,9 @@ if __name__ == "__main__":
             build_remote_subfolder(remote_pw, dest)
 
         scripts = []
-        for fn in local_files:
+        for fn in file_status['need_to_upload']:
             fn_pure = os.path.basename(fn)
-            fn_script = build_script_single(dest, remote_pw, fn, simple=True, need_upload=True)
+            fn_script = build_script_single(dest, remote_pw, fn, simple=True, need_upload=True, local_pw_layers=local_pw_layers)
             if fn_script is None:
                 logger.warning(f'fail to build script for {fn_pure}')
                 continue
@@ -1213,32 +1284,6 @@ if __name__ == "__main__":
     # if len(pw) > 1 and not remote_base:
     #     logger.error(f'multiple local path found, you must specify a remote_base')
     #     sys.exit(1)
-
-    # get the file type to upload
-    gzip_only = set()
-    ft = set()
-
-    if not args.ft:
-        ft = ['fastq']
-    elif 'all' in args.ft:
-        ft = ['all']
-    else:
-        err = 0
-        for i in args.ft:
-            ext = i.replace('.gz', '')
-            if i[-2:] == 'gz':
-                gzip_only.add(ext)
-            try:
-                ft.add(ft_convert[ext])
-            except:
-                logger.error(f'invalid filetype: {i}')
-                err = 0
-        if err:
-            sys.exit(1)
-
-    if len(ft) == 0:
-        logger.error(f'No file type selected! exit')
-        sys.exit(1)
 
     ct = {'total': 0, 'downloaded': 0, 'uploaded': 0, 'need_to_upload': 0}
     script_list = {'needup': [], 'needdown': []}
