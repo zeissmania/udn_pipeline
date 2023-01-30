@@ -301,6 +301,7 @@ class UDN_case():
         # get the gene list with OMIM desease
         d_gene = {}
         n_gene_total = 0
+        genes_without_omim_id = set()
         with open(fn) as fp:
             header = fp.readline()
             header = header.strip().split('\t')
@@ -381,6 +382,7 @@ class UDN_case():
                     omim_id = str(int(float(omim_id.split(';')[0])))
                 else:
                     omim_id = 'NA'
+                    genes_without_omim_id.add(gn)
 
                 if gn not in d_gene:
                     d_gene[gn] = [omim_id, cover_exon_flag, amelie_score, '\n\t' + copy_number]
@@ -391,7 +393,7 @@ class UDN_case():
                 d_gene[gn][1] = max(cover_exon_flag, d_gene[gn][1])
 
 
-        logger.info(f'd_gene gene count = {len(d_gene)}, n_gene_proband_2copy = {n_gene_proband_2copy}, multiple_hit={multiple_hit},  expected_total = {len(d_gene) + n_gene_proband_2copy + multiple_hit}, n_gene_total = {n_gene_total}')
+        logger.info(f'd_gene gene count = {len(d_gene)}, genes with 2 copies = {n_gene_proband_2copy}, multiple_hit={multiple_hit},  expected_total = {len(d_gene) + n_gene_proband_2copy + multiple_hit}, n_gene_total = {n_gene_total}')
 
         # build the predefined gene list
 
@@ -428,13 +430,15 @@ class UDN_case():
 
         logger.info(f'local total gene number with OMIM description={len(omim_gn_total)};  gene without linked omim = {len(non_omim_gn_total)}')
 
-
-
-
-        gene_with_omim = set([_[0] for _ in d_gene.values()]) & omim_gn_total
-        genes_need_scrapy = set([_[0] for _ in d_gene.values()]) - set(d_gene_comment_scrapy)
-        logger.info(f'gene count in merged.sorted.tsv: total = {n_gene_total}, with OMIM ID={len(gene_with_omim)}')
-        logger.info(f'gene count in with OMIM description: {len(gene_with_omim)}, genes need scrapy OMIM = {len(genes_need_scrapy)}')
+        logger.info(fn_omim_pkl)
+        genename_list = set(d_gene)
+        gene_with_omim = genename_list & omim_gn_total
+        genes_without_linked_pheno = genename_list & non_omim_gn_total
+        genes_need_scrapy = genename_list - set(d_gene_comment_scrapy) - genes_without_omim_id
+        
+        logger.info(f'gene count in merged.sorted.tsv: total = {n_gene_total}, genes in d_gene = {len(d_gene)}')
+        logger.info(f'\n\tgene count in with OMIM description: {len(gene_with_omim)}\n\tgenes without linked pheno = {len(genes_without_linked_pheno)},  \n\tgenes need scrapy OMIM = {len(genes_need_scrapy)}')
+        
 
         # build the phenotype keyword list
         # if 2 words link together, use +, if match the exact word, add a prefix @
@@ -668,6 +672,7 @@ class UDN_case():
         n2 = 0
         n3 = 0
         gene_match = set()
+        
         for gn, v in res.items():
             match, partial_match, comment, cover_exon_flag, amelie_score, copy_number = v
             if comment.strip() == '':
@@ -704,10 +709,15 @@ class UDN_case():
             except:
                 not_in_d_gene.append(gn)
                 continue
+            
+            try:
+                comment = res[gn][2]
+            except:
+                comment = ''
 
             n1 += 1
             amelie_str = matched_amelie.get(gn) or ''
-            print(f'## {n1}/{total_full_match}:\t{gn} amelie match only\nAmelie score = {amelie_score}\n{copy_number}\n\n{amelie_str}\n\n', file=out_full_match)
+            print(f'## {n1}/{total_full_match}:\t{gn} amelie match only\nAmelie score = {amelie_score}\n{copy_number}\n\n{amelie_str}\n\n{comment}', file=out_full_match)
             print('#' * 50 + '\n\n\n', file=out_full_match)
 
         if len(not_in_d_gene) > 0:
