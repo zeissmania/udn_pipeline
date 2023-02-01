@@ -748,15 +748,13 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
 
     # build the udn config file
     sex_convert = {'Female' : 2, 'Male': 1}
-    affect_convert_to_01 = {'affected': 1, 'unaffected': 0}
+    affect_convert_to_01 = {'affected': 1, 'unaffected': 0, 'unknown': -1}
 
     cfg_info = {'father': '', 'mother':'', 'male':[], 'female':[], 'other': []}
 
     for rel_to_proband, irel in res.items():
-        if rel_to_proband == 'Proband':
-            continue
-        # logger.info(irel)
-        
+        if rel_to_proband.lower() == 'proband':
+            continue        
         try:
             rel_udn = irel['simpleid']
             rel_gender = irel['gender']
@@ -772,8 +770,8 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
         try:
             rel_aff = affect_convert_to_01[irel['affected'].lower()]
         except:
-            logger.warning(f"{rel_to_proband}: unkown affect state: {irel['affected']}")
-            continue
+            logger.info(f"{rel_to_proband}: unkown affect state: {irel['affected']}")
+            rel_aff = -1 # for unknown
 
         if rel_to_proband.lower() == 'father':
             cfg_info['father'] = [rel_udn, rel_aff]
@@ -796,6 +794,7 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
     female = '\n  '.join([f'female{n+1}: {str(_)}' for n, _ in enumerate(cfg_info['female'])])
     other = '\n  '.join([f'other{n+1}: {str(_)}' for n, _ in enumerate(cfg_info['other'])])
 
+    logger.info(cfg_info)
 
     cfg = f"""prj: {udn}  # the project name
 path:
