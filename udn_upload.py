@@ -56,6 +56,7 @@ ps.add_argument('-noupload', '-noup', '-downonly', '-no_upload', '-download_only
 ps.add_argument('-asis', help="""use the remote_pw in the cmd line input, do not do the re-format, default is False""", action='store_true')
 ps.add_argument('-lite', '-ck', help="""toggle, just check, donot build script""", action='store_true')
 ps.add_argument('-force', '-f', help="""force create the shell file, even it already exist on the server""", action='store_true')
+ps.add_argument('-force_clear', '-fc', help="""force clear the download folder without warning""", action='store_true')
 ps.add_argument('-skip_download', '-skip', '-nodown', help="""skip download the files""", action='store_true')
 ps.add_argument('-allversion', '-all', help="""include all versions even the updated version exist""", action='store_true')
 ps.add_argument('-remote_flat', '-no_remote_sub_folder', '-flat', help="""don't create remote subfolders""", action='store_true')
@@ -73,30 +74,168 @@ file_ct = {}
 
 # ps.add_argument('-prj', help="""project name for this run, if not set, would use the UDN infered from info file or current folder name""")
 
+def colored(text, color=None, on_color=None, attrs=None):
+    # Copyright (c) 2008-2011 Volvox Development Team
+    #
+    # Permission is hereby granted, free of charge, to any person obtaining a copy
+    # of this software and associated documentation files (the "Software"), to deal
+    # in the Software without restriction, including without limitation the rights
+    # to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    # copies of the Software, and to permit persons to whom the Software is
+    # furnished to do so, subject to the following conditions:
+    #
+    # The above copyright notice and this permission notice shall be included in
+    # all copies or substantial portions of the Software.
+    #
+    # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    # IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    # FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    # AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+    # THE SOFTWARE.
+    #
+    # Author: Konstantin Lepa <konstantin.lepa@gmail.com>
+
+    ATTRIBUTES = dict(
+            list(zip([
+                'bold',
+                'dark',
+                '',
+                'underline',
+                'blink',
+                '',
+                'reverse',
+                'concealed'
+                ],
+                list(range(1, 9))
+                ))
+            )
+    del ATTRIBUTES['']
+
+
+    HIGHLIGHTS = dict(
+            list(zip([
+                'on_grey',
+                'on_red',
+                'on_green',
+                'on_yellow',
+                'on_blue',
+                'on_magenta',
+                'on_cyan',
+                'on_white'
+                ],
+                list(range(40, 48))
+                ))
+            )
+
+
+    COLORS = dict(
+            list(zip([
+                'grey',
+                'red',
+                'green',
+                'yellow',
+                'blue',
+                'magenta',
+                'cyan',
+                'white',
+                ],
+                list(range(30, 38))
+                ))
+            )
+
+
+    RESET = '\u001b[0m'
+    if os.getenv('ANSI_COLORS_DISABLED') is None:
+        fmt_str = '\u001b[%dm%s'
+        if color is not None:
+            text = fmt_str % (COLORS[color], text)
+
+        if on_color is not None:
+            text = fmt_str % (HIGHLIGHTS[on_color], text)
+
+        if attrs is not None:
+            for attr in attrs:
+                text = fmt_str % (ATTRIBUTES[attr], text)
+
+        text += RESET
+    return text
+
+def red(s):
+    return colored(s, 'red', attrs=['bold'])
+def green(s):
+    return colored(s, 'green', attrs=['bold'])
+
+
 def getlogger():
+    import sys
     import logging
-    prefix = 'download_upload_udn'
-    fn_log = f'{prefix}.debug.log'
-    fn_err = f'{prefix}.info.log'
-    fmt = logging.Formatter('%(asctime)s  %(levelname)-9s   %(funcName)-10s   line: %(lineno)-5s   %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    class CustomFormatter(logging.Formatter):
+    
+        colors = {
+            'black': '\u001b[30;20m',
+            'red': '\u001b[31;20m',
+            'r': '\u001b[31;20m',
+            'bold_red': '\u001b[31;1m',
+            'green': '\u001b[32;20m',
+            'g': '\u001b[32;20m',
+            'gb': '\u001b[32;1m',
+            'yellow': '\u001b[33;20m',
+            'blue': '\u001b[34;20m',
+            'b': '\u001b[34;20m',
+            'purple': '\u001b[35;1m',
+            'p': '\u001b[35;1m',
+            'grey': '\u001b[38;20m',
+        }
+        FORMATS = {
+            logging.WARNING: colors['purple'],
+            logging.ERROR: colors['bold_red'],
+            logging.CRITICAL: colors['bold_red'],
+        }
+    
+        def format(self, record):
+            format_str = "%(asctime)s  %(levelname)-6s %(funcName)-20s  line: %(lineno)-5s  %(message)s"
+            reset = "\u001b[0m"
+            log_fmt = None
+            
+            if '@' in record.msg[:10]:
+                try:
+                    icolor, tmp = record.msg.split('@', 1)
+                    log_fmt = self.colors.get(icolor)
+                    if log_fmt:
+                        record.msg = tmp
+                except:
+                    raise
+                    pass
+            else:
+                log_fmt = self.FORMATS.get(record.levelno)
+            if log_fmt:
+                record.msg = log_fmt + record.msg + reset
+            formatter = logging.Formatter(format_str, datefmt='%Y-%m-%d %H:%M:%S')
+            return formatter.format(record)
+    
+    prefix = 'udn_upload'
+    fn_log = f'{prefix}.log'
+    
+    fmt = logging.Formatter('%(asctime)s  %(levelname)-6s %(funcName)-20s  line: %(lineno)-5s  %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    
     console = logging.StreamHandler(sys.stdout)
-    console.setFormatter(fmt)
+    console.setFormatter(CustomFormatter())
     console.setLevel('INFO')
-
+    
     fh_file = logging.FileHandler(fn_log, mode='w', encoding='utf8')
-    fh_err = logging.FileHandler(fn_err, mode='w', encoding='utf8')
-
+    
     fh_file.setLevel('DEBUG')
     fh_file.setFormatter(fmt)
-
-    fh_err.setLevel('INFO')
-    fh_err.setFormatter(fmt)
-
-    logger = logging.getLogger(__file__)
+    
+    try:
+        logger = logging.getLogger(__file__)
+    except:
+        logger = logging.getLogger('terminal')
     logger.setLevel('DEBUG')
     logger.addHandler(console)
     logger.addHandler(fh_file)
-    logger.addHandler(fh_err)
     return logger
 
 
@@ -198,6 +337,31 @@ def get_remote_file_list(pw, dest, remote_pw):
 
     return d_exist, sub_folders
 
+def parse_md5(fn):
+    # 8ba94de338d39c9dac9ad4fd8b9cff83  2094656-UDN675219-M_L001_R1_001.fastq.gz
+    # 82d147b41d0ba93decb90452a50a10c5  2094656-UDN675219-M_L002_R1_001.fastq.gz
+    # ed04a252512aeaccfe9f6ebf402cbe53  2094656-UDN675219-M_L003_R1_001.fastq.gz
+    res = {}
+    with open(fn) as f:
+        for i in f:
+            i = re.split(r'\s+', i.strip())
+            try:
+                res[i[1]] = i[0]
+            except:
+                pass
+    
+    return res
+
+
+def get_local_md5(fn):
+    try:
+        tmp = fn.replace('/download/', '/log/')
+        with open(f'{tmp}.md5') as f:
+            for i in f:
+                v = re.split(r'\s+', i.strip())[0]
+                return v
+    except:
+        return None
 
 def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, updated_version_only=True, script_list=None, no_upload=False, remote_flat=False):
     """
@@ -246,15 +410,22 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
         d_exist_all[remote_pw_in] = (d_exist, sub_folders)
 
     # build script for md5 file
+    fn_md5 = glob.glob(f'{pw}/download.*.md5')
+    if len(fn_md5) == 0:
+        logger.warning(f'expected md5 file not found')
+        exp_md5 = {}
+    else:
+        if len(fn_md5) > 1:
+            logger.warning(f'more than one md5 file found, only first would be uploaded: {fn_md5}')
+        fn_md5 = fn_md5[0]
+    
+        exp_md5 = parse_md5(fn_md5)
+
+    # logger.info(exp_md5)
     if not no_upload:
-        fn_md5 = glob.glob(f'{pw}/download.*.md5')
-        if len(fn_md5) == 0:
-            logger.warning(f'expected md5 file not found')
-        else:
-            if len(fn_md5) > 1:
-                logger.warning(f'more than one md5 file found, only first would be uploaded: {fn_md5}')
-            fn_md5 = fn_md5[0]
             fn_new = fn_md5.rsplit('/', 1)[-1].replace('download.', '')
+            
+            
 
             if fn_new in d_exist:
                 logger.info(f'{fn_md5} already uploaded')
@@ -419,15 +590,31 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
             downloaded = 0
             if os.path.exists(fn_download):
                 size_local = os.path.getsize(fn_download)
+                fn_pure = os.path.basename(fn_download)
+                file_md5_exp = exp_md5.get(fn_pure)
+                file_md5_local = get_local_md5(fn_download)
+                
+                md5_ok = 0
+                if file_md5_exp is None:
+                    logger.warning(f'expected md5 not found for {fn_pure}')
+                    md5_ok = 1
+                elif file_md5_local is None:
+                    logger.warning(red(f'fail to get local md5 for {fn_download}'))
+                    md5_ok = 1
+                elif file_md5_exp == file_md5_local:
+                    md5_ok = 1
+                else:
+                    logger.warning(red(f'md5 not match for {fn_download}'))
+                
                 if size_local == 0:
                     os.unlink(fn_download)
                     logger.warning('empty file: {fn_download}')
-                elif size_exp == 'na':
+                elif size_exp == 'na' and md5_ok:
                     downloaded = 1
-                elif size_local == size_exp:
+                elif size_local == size_exp and md5_ok:
                     downloaded = 1
                 else:
-                    logger.warning(f'file downloaded, but size not match. exp = {size_exp}, local={size_local} : {fn_download}')
+                    logger.warning(red(f'file downloaded, but size not match. exp = {size_exp}, local={size_local} : {fn_download}'))
                     if not demo:
                         try:
                             os.symlink(fn_download, f'{fn_download}.bad')
@@ -541,53 +728,33 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                 logger.info(colored(f'file already uploaded: {fn}', 'green'))
                 n_uploaded += 1
 
-                fn_md5_local = f'{pw}/download/{fn}.md5'
-
-                msg = ''
-                if not os.path.exists(fn_md5_local):
-                    msg += f'\tlocal md5 not found'
-                    md5_local = 'NA'
-                else:
-                    with open(fn_md5_local) as f:
-                        md5_local = f.readline().strip().split(' ')[0]
-
-                md5_exp = os.popen(f'grep -h -w {fn} {pw}/download.*.md5 2>/dev/null').read().strip().split(' ')[0]
-
-                if not md5_exp:
-                    msg += '\t exp md5 not found'
-                    md5_exp = 'NA'
-
-                if md5_exp == md5_local and md5_local != 'NA':
-                    logger.info(colored(f'\tmd5 match: {fn}', 'green'))
-                elif md5_exp == 'NA':
-                    # logger.info(f'\tmd5 exp not available')
-                    pass
-                elif md5_local == 'NA':
-                    logger.warning(colored(f'\t{msg}', 'yellow'))
-                else:
-                    logger.error(colored(f'\tmd5 not match: {fn}:  exp = {md5_exp}, real={md5_local}', 'red'))
-
                 if not force_download:
                     # n_downloaded += 1
                     continue
 
             if not v['downloaded']:
                 if not v['uploaded']:
-                    need_upload.append(fn)
+                    if not no_upload:
+                        need_upload.append(fn)
                     script_list['needdown'].append(fn_script)
             else:
                 n_downloaded += 1
-                need_upload.append(fn)
-                script_list['needup'].append(fn_script)
+                if not no_upload:
+                    need_upload.append(fn)
+                    script_list['needup'].append(fn_script)
 
     n_need_upload = len(need_upload)
     logger.info(f'total files = {n_desired}, need_to_upload={n_need_upload}, already exist in server = {n_uploaded}, already downloaded = {n_downloaded}')
 
     n_invalid_url = len(invalid_url)
-    if n_need_upload > 0 or n_invalid_url > 0:
+    n_need_download = n_desired - n_downloaded - n_uploaded
+    if n_need_upload > 0 or n_invalid_url > 0 or n_need_download > 0:
         print('\n', '!' * 50)
-        print(f'{n_downloaded}/{n_desired} files already downloaded')
-        print(f'{n_need_upload}/{n_desired} files need to be uploaded')
+        print(green(f'{n_downloaded}/{n_desired} files already downloaded'))
+        if n_need_download > 0:
+            print(red(f'{n_need_download}/{n_desired} files need to be downloaded'))
+        if n_need_upload > 0:
+            print(red(f'{n_need_upload}/{n_desired} files need to be uploaded'))
         print('\t' + '\n\t'.join(need_upload))
         if n_invalid_url > 0:
             print(f'ERROR: {n_invalid_url} files with NA url:\n\t' + '\n\t'.join(invalid_url))
@@ -676,15 +843,8 @@ def refine_remote_pw(remote_pw):
         remote_pw = m[1] + p_trailing
         return remote_pw
 
-def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, fn_remote=None, fn_deid=None, sample_list=None, pw=None, download_type=None, size_exp=None, need_upload=True, local_pw_layers=0):
-    # url_var is for the normal upload script with download step
-    # the format is like  f"""url=$(awk -F "\\t" '$2=="{fn}" {{print ${idx_url} }}' {info_file})"""
-
-    # if fn_deid is not None, then sample_list must be specified
-    # fn_remote, if not specified, use the same as the local file
-
+def get_fn_remote(fn_local, local_pw_layers=0, fn_remote=None):
     fn = os.path.basename(fn_local)
-    pw = pw or os.getcwd()
     fn_remote = fn_remote or fn
     
     if local_pw_layers:
@@ -697,6 +857,21 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
             
             if not fn_remote.startswith(pw_remote_addition):
                 fn_remote = f'{pw_remote_addition}/{fn_remote}'
+
+    return fn_remote
+
+def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, fn_remote=None, fn_deid=None, sample_list=None, pw=None, download_type=None, size_exp=None, need_upload=True, local_file_size=None):
+    # url_var is for the normal upload script with download step
+    # the format is like  f"""url=$(awk -F "\\t" '$2=="{fn}" {{print ${idx_url} }}' {info_file})"""
+    # if fn_deid is not None, then sample_list must be specified
+    # fn_remote, if not specified, use the same as the local file
+
+    fn = os.path.basename(fn_local)
+    pw = pw or os.getcwd()
+    
+    local_file_size = local_file_size or {}
+
+    fn_remote = fn_remote or fn
     
 
     fn_script = f'{pw}/shell/{fn}.download_upload.{dest}.sh'
@@ -718,29 +893,29 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
         return None
 
     if simple:
-        size_exp = os.path.getsize(fn_local)
+        size_exp = local_file_size.get(fn_local) or os.path.getsize(fn_local)
         cmd_check_md5 = ''
 
     else:
         cmd_check_md5 = f"""# check md5sum
-    if [[ ! -f {pw}/download/{fn}.md5 ]];then
-    md5sum  {fn_local} >{pw}/download/{fn}.md5 2>{pw}/download/{fn}.md5.log
+    if [[ ! -f {pw}/log/{fn}.md5 ]];then
+    md5sum  {fn_local} >{pw}/log/{fn}.md5 2>{pw}/log/{fn}.md5.log
     fi
 
     md5_exp=$(grep -h "{fn}" {pw}/download.UDN*.md5 2>/dev/null|head -1|cut -d " " -f1)
-    md5_local=$(head -1 {pw}/download/{fn}.md5|cut -d " " -f1)
+    md5_local=$(head -1 {pw}/log/{fn}.md5|cut -d " " -f1)
 
     if [[ -z $md5_exp ]];then
-    echo expected md5 not found : {fn} >> {fn_status}
+    echo "expected md5 not found : {fn}" >> {fn_status}
     echo 0
-    elif [[ md5_exp == md5_local ]];then
+    elif [[ "$md5_exp" == "$md5_local" ]];then
     echo good, md5 match!  >> {fn_status}
     echo 0
     else
     echo 1
-    echo ERROR, md5 not match! {fn_local}; exp=$md5_exp , local=$md5_local  >> {fn_status}
+    echo "ERROR  md5 not match! {fn_local}; exp=@${{md5_exp}}@  local=@${{md5_local}}@"  >> {fn_status}
 
-    echo $(date): ERROR, md5 not match! {fn_local}; exp=$md5_exp , local=$md5_local  >> /fs0/members/chenh19/tmp/upload/error.md5_not_match.files.txt
+    echo $(date): "ERROR, md5 not match! {fn_local}; exp=@${{md5_exp}}@  local=@${{md5_local}}@"  >> /fs0/members/chenh19/tmp/upload/error.md5_not_match.files.txt
     fi
     """
 
@@ -760,21 +935,21 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
 
         cmd.append(f"""
     checklocal(){{
-    local_size=$(stat -c "%s" {fn_local} 2>/dev/null)
-    if [[ $local_size -eq 0 ]];then
-    rm {fn_local} 2>/dev/null
-    echo 1
-    return
-    fi
+        local_size=$(stat -c "%s" {fn_local} 2>/dev/null)
+        if [[ $local_size -eq 0 ]];then
+        rm {fn_local} 2>/dev/null
+        echo 1
+        return
+        fi
 
-    # check local file
-    if [[ "{size_exp}" -ne "na" ]] & [[ "$local_size" -ne "{size_exp}" ]];then
-    echo local file not match with exp local_size=$local_size,  expected={size_exp}. skip uploading >> {fn_status}
-    echo 1
-    return
-    fi
+        # check local file
+        if [[ "{size_exp}" -ne "na" ]] & [[ "$local_size" -ne "{size_exp}" ]];then
+        echo local file not match with exp local_size=$local_size,  expected={size_exp}. skip uploading >> {fn_status}
+        echo 1
+        return
+        fi
 
-    {cmd_check_md5}
+        {cmd_check_md5}
     }}
     """)
         # check remote
@@ -782,67 +957,67 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
         if dest == 'emedgene':
             cmd.append(f"""
     checkremote(){{
-    local_size=$(stat -c "%s" {fn_local} 2>/dev/null)
-    fnlog="{fn_status}"
-    # determine need to upload or not
-    remote_file_size=$({dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_remote}"|grep "{fn_pure}$" | tr -s " "|cut -d " " -f 3)
-    size_exp={size_exp}
-    echo local_size=$local_size , remote size = $remote_file_size exp size = $size_exp >> $fnlog
+        local_size=$(stat -c "%s" {fn_local} 2>/dev/null)
+        fnlog="{fn_status}"
+        # determine need to upload or not
+        remote_file_size=$({dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_remote}"|grep "{fn_pure}$" | tr -s " "|cut -d " " -f 3)
+        size_exp={size_exp}
+        echo local_size=$local_size , remote size = $remote_file_size exp size = $size_exp >> $fnlog
 
 
-    if [[ -z $remote_file_size ]];then
-        # local file not exist
-        if [[ -z $local_size ]];then
-            echo "not downloaded yet" >> $fnlog
+        if [[ -z $remote_file_size ]];then
+            # local file not exist
+            if [[ -z $local_size ]];then
+                echo "not downloaded yet" >> $fnlog
+                echo "local_not_ready"
+                return
+            fi
+
+            # exp size unkown, upload anyway
+            if [[ $size_exp == "na" ]];then
+                echo "size_exp not specified, upload anyway : {fn_local}" >>  $fnlog
+                echo upload
+                return
+            fi
+
+            if [[ $local_size -eq $size_exp ]];then
+                echo "local size is correct, prepare to upload: {fn_local}" >>  $fnlog
+                echo upload
+                return
+            else
+                echo "local size not correct: local=$local_size , exp = $size_exp" >>  $fnlog
+                echo "local_not_ready"
+                return
+            fi
+            echo -e "unkown situation! \\n local=$local_size\\n remote=$remote_file_size \\n exp = $size_exp" >>  $fnlog
+
+            exit 1
+        elif [[ $size_exp == "na" ]];then
+            if [[ "$local_size" -eq "$remote_file_size" ]];then
+                echo size check is not specified, remote_file_size=$remote_file_size local_filesize=$local_size >>  $fnlog
+                echo already_uploaded
+                return
+            else
+                echo remote size not correct: remote = $remote_file_size, local = $local_size >>  $fnlog
+                echo upload
+                return
+            fi
+        elif [[ "$remote_file_size" -eq "{size_exp}" ]];then
+                echo {fn} successfully uploaded to {remote_pw}/  filesize={size_exp} >>  $fnlog
+                echo already_uploaded
+                return
+        elif [[ $size_exp -eq $local_size ]];then
+            echo remote size not correct: remote = $remote_file_size, exp = {size_exp} >>  $fnlog
+                echo upload
+                return
+        elif [[ $size_exp -ne $local_size ]];then
+            echo {fn} local size not match exp, exp=$size_exp, local=$local_size >>  $fnlog
             echo "local_not_ready"
             return
-        fi
-
-        # exp size unkown, upload anyway
-        if [[ $size_exp == "na" ]];then
-            echo "size_exp not specified, upload anyway : {fn_local}" >>  $fnlog
-            echo upload
-            return
-        fi
-
-        if [[ $local_size -eq $size_exp ]];then
-            echo "local size is correct, prepare to upload: {fn_local}" >>  $fnlog
-            echo upload
-            return
         else
-            echo "local size not correct: local=$local_size , exp = $size_exp" >>  $fnlog
-            echo "local_not_ready"
-            return
+            echo -e "unkown situation! \\n local=$local_size\\n remote=$remote_file_size \\n exp = $size_exp" >>  $fnlog
+            exit 1
         fi
-        echo -e "unkown situation! \\n local=$local_size\\n remote=$remote_file_size \\n exp = $size_exp" >>  $fnlog
-
-        exit 1
-    elif [[ $size_exp == "na" ]];then
-        if [[ "$local_size" -eq "$remote_file_size" ]];then
-            echo size check is not specified, remote_file_size=$remote_file_size local_filesize=$local_size >>  $fnlog
-            echo already_uploaded
-            return
-        else
-            echo remote size not correct: remote = $remote_file_size, local = $local_size >>  $fnlog
-            echo upload
-            return
-        fi
-    elif [[ "$remote_file_size" -eq "{size_exp}" ]];then
-            echo {fn} successfully uploaded to {remote_pw}/  filesize={size_exp} >>  $fnlog
-            echo already_uploaded
-            return
-    elif [[ $size_exp -eq $local_size ]];then
-        echo remote size not correct: remote = $remote_file_size, exp = {size_exp} >>  $fnlog
-            echo upload
-            return
-    elif [[ $size_exp -ne $local_size ]];then
-        echo {fn} local size not match exp, exp=$size_exp, local=$local_size >>  $fnlog
-        echo "local_not_ready"
-        return
-    else
-        echo -e "unkown situation! \\n local=$local_size\\n remote=$remote_file_size \\n exp = $size_exp" >>  $fnlog
-        exit 1
-    fi
 
     }}
     """)
@@ -850,19 +1025,19 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
             # there is no way for dropbox to get byte file size
             cmd.append(f"""
     checkremote(){{
-    file_exist_from_remote=$({dock} dbxcli ls -l "/{remote_pw}/"|grep "{fn_remote}")
-    if [[ ! -z "$file_exist_from_remote" ]];then
-        echo alrady_uploaded
-    else
-        echo upload
-    fi
-
+        file_exist_from_remote=$({dock} dbxcli ls -l "/{remote_pw}/"|grep "{fn_remote}")
+        if [[ ! -z "$file_exist_from_remote" ]];then
+            echo alrady_uploaded
+        else
+            echo upload
+        fi
     }}
 
     """)
         cmd.append(f"""
     postupload(){{
-        mv {pw}/shell/{fn}.download_upload.{dest}.sh {pw}/shell_done/{fn}.download_upload.{dest}.sh
+        mv {pw}/shell/{fn}.download_upload.{dest}.sh \\
+            {pw}/shell_done/{fn}.download_upload.{dest}.sh
         fntmp={pw}/log/{fn}.tmplog
 
         tail -c 3000 {pw}/log/upload.{dest}.{fn}.log  2>/dev/null|sed 's/\\r/\\n/g' > $fntmp;
@@ -920,7 +1095,7 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
         elif dest == 'emedgene':
             upload_cmd = f'{dock} aws s3 cp ""{fn_local}"" "s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_remote}" > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log'
 
-        if need_upload:
+        if not no_upload and need_upload:
             cmd.append(f"""
     upload_status=$(checkremote)
 
@@ -1032,25 +1207,35 @@ def main(pw, script_list, info_file=None, remote_pw_in=None, updated_version_onl
         build_script(pw, d, info_file, no_upload=no_upload)
     return ct, script_list
 
-def clearlog():
-    fls = os.popen(f'find . -iname "*.log" -type f -size +100k|grep "/log/"').read().strip().split('\n')
-    fls = [_.strip() for _ in fls if _.strip()]
-    logger.warning(f'now trying to clear the logs, n = {len(fls)}')
+def clearlog(force=False):
+    # get folder list
+    pw_list = os.popen(f'ls -d *UDN*/ vudp*/ VUDP*/ 2>/dev/null|sort|uniq').read().strip().split('\n')
+    pw_list = [_[:-1] for _ in pw_list if _.strip()]
+    n_pw = len(pw_list)
+    
+    if len(pw_list) == 0:
+        info_file = glob.glob(f'UDN*.yaml')
+        if len(info_file) > 0:
+            pw_list = [os.path.abspath('.')]
+        else:
+            logger.info(f'gb@no UDN folder found under current folder')
+            return 0
+    logger.info(f'gb@there are {len(pw_list)} UDN folders found')
+    log_fls = []
 
+    for ipw in pw_list:
+        fls = os.popen(f'find {ipw}/log -iname "*.log" -type f -size +50k 2>/dev/null').read().strip().split('\n')
+        log_fls += [_.strip() for _ in fls if _.strip()]
+
+    logger.warning(f'now trying to clear the logs, n = {len(log_fls)}')
     upload_fls = []
     download_fls = []
-    for fn in fls:
+
+    for fn in log_fls:
         if fn.find('log/upload') > 0:
             upload_fls.append(fn)
         elif fn.find('log/download') > 0:
             download_fls.append(fn)
-
-    if len(upload_fls) + len(download_fls) == 0:
-        logger.info(f'no log files need to be cleared')
-        return
-
-    logger.info(f'upload files = {len(upload_fls)}, download files = {len(download_fls)}')
-
 
     cmd = ""
     if len(download_fls) > 0:
@@ -1060,50 +1245,98 @@ def clearlog():
         tail -n 30 $fn  2>/dev/null> ${{fn}}.tmp;
         mv ${{fn}}.tmp $fn
     done <<EOF_
-    {download_fls}
-    EOF_
+    {download_fls}\nEOF_
     """
-        if len(upload_fls) > 0:
-            upload_fls = '\n'.join(upload_fls)
-            cmd += f"""
+    if len(upload_fls) > 0:
+        upload_fls = '\n'.join(upload_fls)
+        cmd += f"""
     while read fn;do
         tail -c 2000 $fn 2>/dev/null|sed 's/\\r/\\n/g' > ${{fn}}.tmp;
         mv ${{fn}}.tmp $fn
     done << EOF_
-    {upload_fls}
-    EOF_
+    {upload_fls}\nEOF_
     """
-
-
-    # remove the log files in shell
-    cmd += """find . -iname "*.sh.log" -size -100c|grep -w "/shell/|xargs -I {} rm {}\n"""
-    cmd += """find . -iname "*.md5.log" -size -100c|grep -w "/download/|xargs -I {} rm {}\n"""
+    
 
     if cmd:
+        logger.warning(f'upload files = {len(upload_fls)}, download files = {len(download_fls)}')
         os.system(cmd)
     else:
-        logger.info(f'no log files need to be cleared')
+        logger.info(f'gb@no log files need to be cleared')
+        
+    # deal with the download folder
+    for ipw in pw_list:
+        pw_download = f'{ipw}/download'
+        if not os.path.exists(pw_download):
+            continue
+        if not force:
+            proceed = input(f'are you sure you need to remove folder\n  {pw_download}?  (y/n): ')
+            if not proceed.lower().strip().startswith('y'):
+                logger.warning(f'\tskip...')
+                continue
+        logger.info(f'gb@now removing {pw_download}')
+        fn_flist = f'{ipw}/download.flist.txt'
+        os.system(f'echo -e "\n\n$(date)\\n" >> {fn_flist}; ls {pw_download} -lha >> {fn_flist}; echo -e "***********\\n\\n" >> {fn_flist}; rm -rf {pw_download}')
 
-def get_local_files(args):
+
+def parse_ls_dump(fn):
+    res = {}
+    with open(fn) as f:
+        f.readline()
+        for i in f:
+            a = re.split(r'\s+', i.strip())
+            # -rw-r--r-- 1 chenh19 h_vangard_1    11716344 Jan 30 09:24 2022-344-011-PGnome-PatientOnlyDiag.bed
+            try:
+                size, ifl = a[4], a[8]
+            except:
+                logger.info(f'invalid line: {a}')
+                sys.exit(1)
+            if ifl in ['.', '..']:
+                continue
+            try:
+                size = int(size)
+            except:
+                logger.info(f'invalid line in ls file list: {i[:-1]}')
+                continue
+            res[ifl] = size
+    if len(res) == 0:
+        return None, None
+    
+    return sorted(res), res
+
+
+def get_local_files(args, ft):
     fls_raw = args.local_files
     if len(fls_raw) == 0:
-        return []
-
-    if len(fls_raw) == 1 and os.path.isdir(fls_raw[0]):
+        fls_raw = [os.path.abspath('.')]
+    select_file = 0
+    
+    ls_dump = args.info_file
+    file_size = {}
+    if ls_dump:
+        if not os.path.isfile(ls_dump):
+            logger.error(f'file list not exist: {ls_dump}')
+            sys.exit(1)
+        flist, file_size = parse_ls_dump(ls_dump)
+        if flist is None:
+            logger.info(f'invalid file list file: {ls_dump}')
+        select_file = 1
+    
+    elif len(fls_raw) == 1 and os.path.isdir(fls_raw[0]):
         # this is a folder
-        pwtmp = fls_raw[0]
+        pwtmp = os.path.abspath(fls_raw[0])
         flist = os.popen(f'find -L {pwtmp} -type f ').read().split('\n')
+        select_file = 1
     else:
         flist = fls_raw
     
     res = []
     for fn in flist:
         ext = fn.replace('.gz', '').rsplit('.', 1)[-1]
-        if ext in ft:
+        if (select_file and ext in ft) or not select_file:
             res.append(fn)
-    
-    
-    return res
+        
+    return res, file_size
 
 
 
@@ -1120,6 +1353,7 @@ if __name__ == "__main__":
     skip_download = args.skip_download
     force_upload = args.force_upload
     force_download = args.forcedown
+    force_clear = args.force_clear
     no_upload = args.noupload
     profile = args.profile
     clearlog_flag = args.clear
@@ -1179,9 +1413,9 @@ if __name__ == "__main__":
         # e.g. /a/b/c/d/1.fastq.gz   if layer = 0, will include no parent folder
         # if layer = 1, will upload to remote_pw/d/1.fastq.gz
         
-        local_files = get_local_files(args)
+        local_files, local_file_size = get_local_files(args, ft)
         logger.info(f'local files n = {len(local_files)}')
-        logger.info('\n'.join(local_files))
+        # logger.info('\n' + '\n'.join(local_files)+ '\n\n')
         
         pw = os.getcwd()
         os.makedirs('log', exist_ok=True)
@@ -1206,15 +1440,19 @@ if __name__ == "__main__":
         d_exist, sub_folders = get_remote_file_list(pw, dest, remote_pw)
         file_status = {'uploaded': [], 'need_to_upload': [], 'size_not_match': []}
 
+        logger.info(d_exist)
         for fn in local_files:
             fn_pure = os.path.basename(fn)
             if fn_pure not in d_exist:
                 file_status['need_to_upload'].append(fn)
-            elif d_exist[fn_pure][1] == os.path.getsize(fn):
-                file_status['uploaded'].append(fn)
             else:
-                file_status['need_to_upload'].append(fn)
-                file_status['size_not_match'].append(fn)
+                size = local_file_size.get(fn) or os.path.getsize(fn)
+                logger.info(f'{fn}: {size}')
+                if d_exist[fn_pure][1] == size:
+                    file_status['uploaded'].append(fn)
+                else:
+                    file_status['need_to_upload'].append(fn)
+                    file_status['size_not_match'].append(fn)
         size_not_match = file_status['size_not_match']
         fn_not_match = 'remote_size_not_match.txt'
         if len(size_not_match) > 0:
@@ -1226,8 +1464,6 @@ if __name__ == "__main__":
                 os.unlink(fn_not_match)
             except:
                 pass
-
-
 
         if len(file_status['uploaded']) > 0:
             logger.info(colored(f'\nthe following files has been uploaded:\n\t' + '\n\t'.join(file_status['uploaded']), 'green'))
@@ -1243,8 +1479,11 @@ if __name__ == "__main__":
 
         scripts = []
         for fn in file_status['need_to_upload']:
+            fn_remote = get_fn_remote(fn, local_pw_layers, fn_remote=None)
             fn_pure = os.path.basename(fn)
-            fn_script = build_script_single(dest, remote_pw, fn, simple=True, need_upload=True, local_pw_layers=local_pw_layers)
+            fn_script = build_script_single(dest, remote_pw, fn, simple=True, need_upload=True, fn_remote=fn_remote, local_file_size=local_file_size)
+            print(f'{fn_pure}\tremote:{fn_remote}')
+            
             if fn_script is None:
                 logger.warning(f'fail to build script for {fn_pure}')
                 continue
@@ -1254,7 +1493,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     if clearlog_flag:
-        sys.exit(clearlog())
+        sys.exit(clearlog(force_clear))
 
     # get pw
     pw_raw = args.pw or [os.getcwd()]
@@ -1329,7 +1568,7 @@ if __name__ == "__main__":
                 if len(ft) == 1:
                     line += f'\t{n_file}'
                 else:
-                    line += '\n        {ift}\t{n_file}'
+                    line += f'\n        {ift}\t{n_file}'
             print(line)
 
 
