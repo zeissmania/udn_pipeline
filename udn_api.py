@@ -864,6 +864,9 @@ default:
     out_info.write('rel_to_proband\tfn\trename\tsample_list\turl\tudn\tseq_type\tsize\tbuild\tmd5\turl_s3\tupload_type\tdownload_type\tremote_pw\n')
 
     check_dup = {}
+    
+    url_count = {'total': {'na': 0, 'ok': 0, 'unknown': 0}}
+    
     for rel_to_proband, irel in res.items():
         if not irel.get('files'):
             continue
@@ -890,6 +893,17 @@ default:
 
             logger.debug(f'{fn}\t{url}')
             
+            url_count.setdefault(ext, {'na': 0, 'ok': 0, 'unkown': []})
+            if url.lower() == 'na':
+                url_count[ext]['na'] += 1
+                url_count['total']['na'] += 1
+                
+            elif url.startswith('https://'):
+                url_count[ext]['ok'] += 1
+                url_count['total']['ok'] += 1
+            else:
+                url_count[ext]['unkown'].append(url)
+                url_count['total']['unkown'] += 1
 
             if newname_prefix and re.match(r'.+\.vcf', fn.lower()) and not re.match(r'(cnv|joint)', fn.lower()):
                 # 971146-UDN131930-P_971147-UDN771313-M_reheadered.joint.repeats.merged.vcf.gz
@@ -924,6 +938,14 @@ default:
 
             out_info.write(f'{rel_to_proband}\t{fn}\t{newname}\t{newname_base}\t{url}\t{udn}\t{seq_type}\t{size}\t{build}\t{md5}\t{url_s3}\n')
             out_md5.write(f'{md5}  {fn}\n')
+
+    for k in list(url_count):
+        if k == 'total':
+            continue
+        if len(url_count[k]['unkown']) == 0:
+            del url_count[k]['unkown']
+
+    logger.info('\n' + json.dumps(url_count, indent=3))
 
     try:
         out_cnv.close()
@@ -1335,7 +1357,6 @@ if __name__ == "__main__":
 
 
         pw_case = f'{root}/{udn_raw}'
-        os.chdir(pw_case)
         logger.info(f'now running {pw_case}')
 
         try:
@@ -1346,6 +1367,7 @@ if __name__ == "__main__":
             os.makedirs(f'{pw_case}/intermed', exist_ok=True)
         except:
             pass
+        os.chdir(pw_case)
 
         fn_udn_api_pkl = f'{root}/{udn_raw}/intermed/{udn}.udn_api_query.pkl'
 
