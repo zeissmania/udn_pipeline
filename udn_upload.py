@@ -721,9 +721,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
 
             fn_script = f'{pw}/shell/{fn}.download_upload.emedgene.sh'
             n_desired += 1
-            if v['url'].lower() == 'na':
-                invalid_url.append(fn)
-                continue
+
             if v['uploaded']:
                 logger.info(colored(f'file already uploaded: {fn}', 'green'))
                 n_uploaded += 1
@@ -731,7 +729,10 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                 if not force_download:
                     # n_downloaded += 1
                     continue
-
+            if v['url'].lower() == 'na':
+                invalid_url.append(fn)
+                continue
+            
             if not v['downloaded']:
                 if not v['uploaded']:
                     if not no_upload:
@@ -929,7 +930,7 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
         if download_type == 'dropbox':
             download_cmd = f'dbxcli get "$url"  "{fn_local}" > {pw}/log/download.{fn}.log 2>&1'
         elif download_type == 'wget':
-            download_cmd = f'wget "$url" -c -O "{fn_local}" > {pw}/log/download.{fn}.log 2>&1'
+            download_cmd = f'wget -c -O "{fn_local}" "$url" > {pw}/log/download.{fn}.log 2>&1'
 
 
 
@@ -1212,6 +1213,8 @@ def clearlog(force=False):
     pw_list = os.popen(f'ls -d *UDN*/ vudp*/ VUDP*/ 2>/dev/null|sort|uniq').read().strip().split('\n')
     pw_list = [_[:-1] for _ in pw_list if _.strip()]
     n_pw = len(pw_list)
+    
+    logger.info(pw_list)
     
     if len(pw_list) == 0:
         info_file = glob.glob(f'UDN*.yaml')
