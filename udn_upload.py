@@ -44,7 +44,7 @@ ps.add_argument('local_files', help="""local files list, for simple mode only"""
 ps.add_argument('-dest', help="""the destinition for the uploading, valid = dropbox/db, emedgene/em/ed""", choices=['emedgene', 'em', 'ed', 'dropbox', 'db'], nargs='?', default='emedgene')
 ps.add_argument('-info_file', '-info', '-fn', help="""the file containing the amazon download link, usually like download.info.UDN945671.txt""", nargs='?', default=None)
 ps.add_argument('-simple', help="""simple mode, for uploading local file to dropbox/emedgene only. no info file needed, just set the -remote  -dest, and put all the local file path as the positional arugments""", action='store_true')
-ps.add_argument('-local_pw_layers', '-local_depth', '-d', '-localn', help="the local folder structure to keep, start from lower to upper. eg. a/b/c/1.txt  if set as 1, will keep c/1.txt, default = 0", type=int, default=0)
+ps.add_argument('-local_pw_layers', '-local_depth', '-d', '-localn', help="the local folder structure to keep, start from lower to upper. eg. a/b/c/1.txt  if set as 1, will keep c/1.txt, default = 0, if set as 2, will keep b/c/1.txt", type=int, default=0)
 ps.add_argument('-remote', '-r', '-remote_pw', dest='remote_pw', help="""the remote path, if not exist, would create one. start from the root path, donot include the leading and ending slash. dropbox is like UDN12345/proband_UDN12345  for emedgene is like UDN12345, if the remote folder is not in the root path, include all the path from root, e.g. cases_202107/34_269_AA_UDN616750""", default=None, nargs='?')
 ps.add_argument('-remote_base', '-r_base', '-rbase', '-rb', help="remote path base, default is from the root of the remote folder")
 ps.add_argument('-ft', help="""the file type to upload, could be multiple types sep by space, such as fastq, fq, vcf, bam, default = fastq, if upload all files in the info file, use all""", nargs='*')
@@ -169,10 +169,9 @@ def green(s):
 
 
 def getlogger():
-    import sys
     import logging
     class CustomFormatter(logging.Formatter):
-    
+
         colors = {
             'black': '\u001b[30;20m',
             'red': '\u001b[31;20m',
@@ -193,12 +192,12 @@ def getlogger():
             logging.ERROR: colors['bold_red'],
             logging.CRITICAL: colors['bold_red'],
         }
-    
+
         def format(self, record):
             format_str = "%(asctime)s  %(levelname)-6s %(funcName)-20s  line: %(lineno)-5s  %(message)s"
             reset = "\u001b[0m"
             log_fmt = None
-            
+            record.msg = str(record.msg)
             if '@' in record.msg[:10]:
                 try:
                     icolor, tmp = record.msg.split('@', 1)
@@ -214,21 +213,21 @@ def getlogger():
                 record.msg = log_fmt + record.msg + reset
             formatter = logging.Formatter(format_str, datefmt='%Y-%m-%d %H:%M:%S')
             return formatter.format(record)
-    
+
     prefix = 'udn_upload'
     fn_log = f'{prefix}.log'
-    
+
     fmt = logging.Formatter('%(asctime)s  %(levelname)-6s %(funcName)-20s  line: %(lineno)-5s  %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
-    
+
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(CustomFormatter())
     console.setLevel('INFO')
-    
+
     fh_file = logging.FileHandler(fn_log, mode='w', encoding='utf8')
-    
+
     fh_file.setLevel('DEBUG')
     fh_file.setFormatter(fmt)
-    
+
     try:
         logger = logging.getLogger(__file__)
     except:
@@ -236,8 +235,8 @@ def getlogger():
     logger.setLevel('DEBUG')
     logger.addHandler(console)
     logger.addHandler(fh_file)
-    return logger
 
+    return logger
 
 def build_remote_subfolder(name, dest):
     if demo:
@@ -845,19 +844,22 @@ def refine_remote_pw(remote_pw):
         return remote_pw
 
 def get_fn_remote(fn_local, local_pw_layers=0, fn_remote=None):
-    fn = os.path.basename(fn_local)
-    fn_remote = fn_remote or fn
     
+    fn_remote = fn_remote or fn_local
+    fn_remote = os.path.basename(fn_remote)
+    # logger.info(fn_remote)
+
     if local_pw_layers:
-        tmp = fn_local.split('/')
+        tmp = fn_local.split('/')[:-1]
         try:
-            pw_remote_addition = tmp[-local_pw_layers - 1]
+            pw_remote_addition = '/'.join(tmp[-local_pw_layers:])
         except:
             pass
         else:
             
-            if not fn_remote.startswith(pw_remote_addition):
+            if not fn_remote or not fn_remote.startswith(pw_remote_addition):
                 fn_remote = f'{pw_remote_addition}/{fn_remote}'
+        # logger.info(pw_remote_addition)
 
     return fn_remote
 
@@ -1313,7 +1315,6 @@ def get_local_files(args, ft):
     if len(fls_raw) == 0:
         fls_raw = [os.path.abspath('.')]
     select_file = 0
-    
     ls_dump = args.info_file
     file_size = {}
     if ls_dump:
@@ -1324,13 +1325,17 @@ def get_local_files(args, ft):
         if flist is None:
             logger.info(f'invalid file list file: {ls_dump}')
         select_file = 1
-    
     elif len(fls_raw) == 1 and os.path.isdir(fls_raw[0]):
         # this is a folder
         pwtmp = os.path.abspath(fls_raw[0])
         flist = os.popen(f'find -L {pwtmp} -type f ').read().split('\n')
         select_file = 1
+    elif len(fls_raw) == 1 and not os.path.exists(fls_raw[0]):
+        logger.error(f'file not exist: {fls_raw[0]}')
+        sys.exit(1)
     else:
+        logger.info(f'you directly specified the filelist')
+        logger.info(fls_raw)
         flist = fls_raw
     
     res = []
@@ -1485,7 +1490,7 @@ if __name__ == "__main__":
             fn_remote = get_fn_remote(fn, local_pw_layers, fn_remote=None)
             fn_pure = os.path.basename(fn)
             fn_script = build_script_single(dest, remote_pw, fn, simple=True, need_upload=True, fn_remote=fn_remote, local_file_size=local_file_size)
-            print(f'{fn_pure}\tremote:{fn_remote}')
+            print(f'{fn_pure}\tremote:  {remote_pw}/{fn_remote}')
             
             if fn_script is None:
                 logger.warning(f'fail to build script for {fn_pure}')
