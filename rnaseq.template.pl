@@ -62,7 +62,7 @@ my $def = {
   #comparison definition, comparison name points to array of group name defined in groups.
   #for each comparison, only two group names allowed while the first group will be used as control.
   pairs => {
-    "case_vs_ctrl" => [ "case", "ctrl" ]
+    "case_vs_ctrl" => [ "ctrl", "case" ]
   },
 };
 
