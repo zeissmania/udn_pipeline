@@ -119,8 +119,8 @@ def get_json(action=None, payload=None, url=None, header=None):
     payload = payload or {}
     r = requests.get(url, headers=headers, data=payload)
     if r.status_code != 200:
-        if "sequencing/files" not in action:
-            logger.error(f'action=  {action} - {r.json()}')
+        if "sequencing/files" not in action and "applications/" not in action:
+            logger.warning(f'\taction=  {action} - {r.json()}')
         return 0
     try:
         return r.json()
@@ -185,7 +185,7 @@ def parse_seq_files(info, rel_to_proband):
     reports = []
     files = []
     seqtype_map = {'transcriptome': 'rnaseq'}
-    seqtype_exp = {'rnaseq', 'genome'}
+    seqtype_exp = {'rnaseq', 'genome', 'exome'}
     udn = info['udnId']
     
     unknown_seqtype = {}
@@ -386,6 +386,8 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
         res['rel_to_proband_short'] = relation['shortName']
 
     res['reports'], res['files'] = parse_seq_files(sequence_info, rel_to_proband)
+    
+    logger.info(f'rb@{rel_to_proband}')
 
     # add the download link
     uploaded_date_ready = 0
@@ -427,9 +429,7 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
 
     
     if skipped_due_to_seq_type:
-        logger.info(f'files skipped due to seq type not match')
-        logger.info(f'g@expected = {valid_seq_type}')
-        logger.info(f'g@skipped = {skipped_due_to_seq_type}')
+        logger.info(f'g@skipped seq_type: {skipped_due_to_seq_type}')
 
     logger.info(f'g@kept file seq type = {seq_type_kept}')
 
@@ -610,14 +610,17 @@ def get_logger(prefix=None, level='INFO'):
             'red': '\u001b[31;20m',
             'r': '\u001b[31;20m',
             'bold_red': '\u001b[31;1m',
+            'rb': '\u001b[31;1m',
             'green': '\u001b[32;20m',
             'g': '\u001b[32;20m',
             'gb': '\u001b[32;1m',
             'yellow': '\u001b[33;20m',
             'blue': '\u001b[34;20m',
             'b': '\u001b[34;20m',
+            'bb': '\u001b[34;1m',
             'purple': '\u001b[35;1m',
             'p': '\u001b[35;1m',
+            'pb': '\u001b[35;1m',
             'grey': '\u001b[38;20m',
         }
         FORMATS = {
@@ -1123,37 +1126,32 @@ def upload_files(nodename, pw_accre_data, pw_accre_scratch, udn_raw, rename=Fals
         os.system(f"""sftp {nodename} <<< $'rename {pw_accre_data}/{udn_raw_old} {pw_accre_data}/{udn_raw};rename {pw_accre_scratch}/{udn_raw_old} {pw_accre_scratch}/{udn_raw};'
         """)
     # upload files
+
+    fls = []
+    cmds = []
+    if not upload_only:
+        fls.append(f'mkdir {pw_accre_data}/{udn_raw}/')
+    fls.append(f'mkdir {pw_accre_scratch}/{udn_raw}/')
+    for ifl in upload_file_list:
+        if not upload_only:
+            fls.append(f'put {ifl} {pw_accre_data}/{udn_raw}/')
+        fls.append(f'put {ifl} {pw_accre_scratch}/{udn_raw}/')
+    
+    
     if initial:
         logger.info(f'initial uploading to ACCRE: {udn_raw}')
-        fls = []
-        for ifl in upload_file_list:
-            fls.append(f'put {ifl} {pw_accre_scratch}/{udn_raw}/')
-        fls = '\\n'.join(fls)
         sftp_cmd = ''
         if not upload_only:
-            sftp_cmd += f"""mkdir {pw_accre_data}/{udn_raw}/origin/\\nput -r * {pw_accre_data}/{udn_raw}/"""
+            fls.append(f"""mkdir {pw_accre_data}/{udn_raw}/origin/""")
+            fls.append(f'put -r origin/* {pw_accre_data}/{udn_raw}/')
 
-        sftp_cmd += f"mkdir {pw_accre_scratch}/{udn_raw}/\\n{fls}"
+        cmds.append('touch {initial_upload_flag}')
 
-        cmd = f"sftp {nodename} <<< $'{sftp_cmd}' 2>/dev/null >&2;touch {initial_upload_flag}"
-
-        os.system(cmd)
-    else:
-        fls = []  # file name can't contain space
-        if not upload_only:
-            fls.append(f'mkdir {pw_accre_data}/{udn_raw}/')
-        fls.append(f'mkdir {pw_accre_scratch}/{udn_raw}/')
-
-        for ifl in upload_file_list:
-            if not upload_only:
-                fls.append(f'put {ifl} {pw_accre_data}/{udn_raw}/')
-
-            fls.append(f'put {ifl} {pw_accre_scratch}/{udn_raw}/')
-        fls = '\\n'.join(fls)
-        cmd = f"""sftp {nodename} <<< $'{fls}' >/dev/null 2>/dev/null"""
-        logger.info(f'update {upload_file_list} to  {nodename}: {udn_raw},  {pw_accre_data}/{udn_raw}/, {pw_accre_scratch}/{udn_raw}/')
-        # logger.info(f'command = {cmd}')
-        os.system(cmd)
+    fls = '\n'.join(fls)
+    cmd = f"""sftp {nodename} <<< $'{fls}' >/dev/null 2>/dev/null\n""" + '\n'.join(cmds)
+    
+    logger.info(f'update {upload_file_list} to  {nodename}: {udn_raw},  {pw_accre_data}/{udn_raw}/, {pw_accre_scratch}/{udn_raw}/')
+    os.system(cmd)
 
 
 def parse_phillips_map_file(fn):
