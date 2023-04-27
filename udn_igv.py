@@ -77,15 +77,17 @@ class IGV():
 
 
                 fn = a[header_idx['fn']]
+                ext = fn.rsplit('.', 1)[-1]
+                if ext not in {'bam', 'bai'}:
+                    continue
                 url = a[header_idx['url']]
                 if url.lower() == 'na':
-                    logger.warning(f'bam URL is not available, please renew the URL first: {rel}')
+                    logger.warning(f'bam URL is not available, please renew the URL first: {rel} - {fn}')
                     continue
 
-                ext = fn.rsplit('.', 1)[-1]
+                
                 lb = fn.replace('.bai', '')
-                if ext not in set(['bam', 'bai']):
-                    continue
+
                 if fn.find('repeats') > -1:
                     logger.warning(f'file skipped: {fn}')
                     continue

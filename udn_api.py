@@ -119,7 +119,8 @@ def get_json(action=None, payload=None, url=None, header=None):
     payload = payload or {}
     r = requests.get(url, headers=headers, data=payload)
     if r.status_code != 200:
-        logger.error(f'action=  {action} - {r.json()}')
+        if "sequencing/files" not in action:
+            logger.error(f'action=  {action} - {r.json()}')
         return 0
     try:
         return r.json()
@@ -183,7 +184,11 @@ def download_report(reports):
 def parse_seq_files(info, rel_to_proband):
     reports = []
     files = []
+    seqtype_map = {'transcriptome': 'rnaseq'}
+    seqtype_exp = {'rnaseq', 'genome'}
     udn = info['udnId']
+    
+    unknown_seqtype = {}
 
     for i in info['requests']:
         for i1 in i['reports']:
@@ -196,6 +201,18 @@ def parse_seq_files(info, rel_to_proband):
                 continue
             reports.append((rep_id, rep_name))
 
+        try:
+            seq_type_default = i['requestType']['name'].lower()
+            seq_type_default = seqtype_map.get(seq_type_default) or seq_type_default
+        except:
+            seq_type_default = 'NA'
+        try:
+            seq_id_default = i['id']
+        except:
+            seq_id_default = 'NA'
+
+        
+        
         for ifl in i['files']:
             ires = {}
             try:
@@ -228,12 +245,25 @@ def parse_seq_files(info, rel_to_proband):
                     except:
                         ires[k2] = 'NA'
 
+            if ires['seq_id'] == 'NA':
+                ires['seq_id'] = seq_id_default
+            if ires['seq_type'] == 'NA':
+                ires['seq_type'] = seq_type_default
+            else:
+                ires['seq_type'] = ires['seq_type'].lower()
+            seqtype = ires['seq_type']
+            if seqtype not in seqtype_exp:
+                unknown_seqtype.setdefault(seqtype, 0)
+                unknown_seqtype[seqtype] += 1
+
             if ires['fn'] == 'NA':
                 logger.error(f'invalid file info: \n{ifl}')
                 sys.exit(1)
 
             files.append(ires)
 
+    if len(unknown_seqtype) > 0:
+        logger.warning(f'unkown seq type: {unknown_seqtype}')
 
     return reports, files
 
@@ -302,6 +332,10 @@ def get_download_link(udn, fl_info, get_aws_ft, gzip_only=None, force_update=Fal
             return link
         except:
             logger.warning(f'fail to get download link json: fn = {fn}, file_id = {file_id}')
+            try:
+                print(download_json)
+            except:
+                pass
             raise
             return 1
 
@@ -329,6 +363,11 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
     # get the basic info
     basic_info = get_json(f'participants/{udn}')
     sequence_info = get_json(f'participants/{udn}/sequencing')
+    
+    if debug:
+        with open(f'{udn}.seq_info.json', 'w') as o:
+            json.dump(sequence_info, o, indent=3)
+    
     is_proband = False
 
     get_report = True if 'report' in get_aws_ft else False
@@ -353,6 +392,7 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
     res['seq_uploaded'] = 'NA'
     
     skipped_due_to_seq_type = {}
+    seq_type_kept = {}
 
     for ifl in res['files']:
         if uploaded_date_ready == 0:
@@ -368,8 +408,12 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
             skipped_due_to_seq_type[seq_type] += 1
             continue
 
-
         ifn = ifl['fn']
+        ext, gz = get_file_extension(ifn)
+        seq_type_kept.setdefault(seq_type, {}).setdefault(ext, 0)
+        seq_type_kept[seq_type][ext] += 1
+
+
         download_link = get_download_link(udn, ifl, get_aws_ft, gzip_only=None)
         if download_link == 0:
             logger.info(colored(f'\tamazon link still valid: {ifl["fn"]}', 'green'))
@@ -386,6 +430,8 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
         logger.info(f'files skipped due to seq type not match')
         logger.info(f'g@expected = {valid_seq_type}')
         logger.info(f'g@skipped = {skipped_due_to_seq_type}')
+
+    logger.info(f'g@kept file seq type = {seq_type_kept}')
 
     if get_report:
         download_report(res['reports'])
@@ -542,7 +588,8 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
         with open(fn_udn_api_pkl, 'wb') as out:
             pickle.dump(res_all, out)
         try:
-            parse_api_res(res_all, udn_raw=udn_raw, valid_family=valid_family, sv_caller=sv_caller, newname_prefix=newname_prefix)
+            # (res, renew_amazon_link=False, )
+            parse_api_res(res_all, update_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family, sv_caller=sv_caller, newname_prefix=newname_prefix, gzip_only=gzip_only, )
         except:
             logger.error(f'fail to parse the result dict, try again')
             raise
@@ -715,17 +762,20 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
     # update the URL
     if renew_amazon_link:
         skipped_due_to_seq_type = {}
+        seq_type_kept = {}
         for irel, v1 in res.items():
             iudn = v1['simpleid']
             for ifl in v1['files']:
-                
-                seq_type = ifl['seq_type']
+                seq_type = ifl['seq_type'].lower()
                 
                 if valid_seq_type and seq_type not in valid_seq_type:
                     skipped_due_to_seq_type.setdefault(seq_type, 0)
                     skipped_due_to_seq_type[seq_type] += 1
                     continue
                 
+                ext, gz = get_file_extension(ifl['fn'])
+                seq_type_kept.setdefault(seq_type, {}).setdefault(ext, 0)
+                seq_type_kept[seq_type][ext] += 1
                 
                 download_link = get_download_link(iudn, ifl, get_aws_ft=update_aws_ft, gzip_only=gzip_only)
 
@@ -741,9 +791,8 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
 
         if skipped_due_to_seq_type:
             logger.info(f'files skipped due to seq type not match')
-            logger.info(f'g@expected = {valid_seq_type}')
             logger.info(f'g@skipped = {skipped_due_to_seq_type}')
-            
+        logger.info(f'g@kept file seq type = {seq_type_kept}')
     # report for proband
     proband = res['Proband']
     udn = proband['simpleid']
@@ -1026,7 +1075,7 @@ default:
     out_md5.close()
     out_info.close()
 
-    if 'bam' in update_aws_ft or 'all' in update_aws_ft:
+    if 'bam' in update_aws_ft:
         logger.info('building IGV script')
         udn_igv.main('.', udn, logger)
 
@@ -1172,9 +1221,11 @@ if __name__ == "__main__":
     ps.add_argument('-nodename', '-node', '-remote', help="remote node name, default is va", choices=['va', 'pc'])
     ps.add_argument('-rename', '-newname', help="rename the case name to this, only valid for vcf file, number should match with prj number", nargs='*')
     ps.add_argument('-phillips', '-philips', '-phil', help="run the tasks for Phillips, need to rename the case. argument = filename for UDN-case number map")
+    ps.add_argument('-debug', '-d', help="""debug mode, dump the intermediate json files""", action='store_true')
 
 
     args = ps.parse_args()
+    debug = args.debug
     case_prefix = ''
     pw_accre_scratch_suffix = ''
     fn_phillips = args.phillips
@@ -1273,7 +1324,9 @@ if __name__ == "__main__":
                 err = 0
         if err:
             sys.exit(1)
-
+    else:
+        update_aws_ft = {'all',}
+    logger.info(f'update_aws_ft = {update_aws_ft}')
 
     passcode = getpass('Input the passcode for the encrypted credential file: ')
     if not fn_cred:
