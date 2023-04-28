@@ -119,7 +119,8 @@ def get_json(action=None, payload=None, url=None, header=None):
     payload = payload or {}
     r = requests.get(url, headers=headers, data=payload)
     if r.status_code != 200:
-        logger.error(f'action=  {action} - {r.json()}')
+        if "sequencing/files" not in action and "applications/" not in action:
+            logger.warning(f'\taction=  {action} - {r.json()}')
         return 0
     try:
         return r.json()
@@ -183,7 +184,11 @@ def download_report(reports):
 def parse_seq_files(info, rel_to_proband):
     reports = []
     files = []
+    seqtype_map = {'transcriptome': 'rnaseq'}
+    seqtype_exp = {'rnaseq', 'genome', 'exome'}
     udn = info['udnId']
+    
+    unknown_seqtype = {}
 
     for i in info['requests']:
         for i1 in i['reports']:
@@ -196,6 +201,18 @@ def parse_seq_files(info, rel_to_proband):
                 continue
             reports.append((rep_id, rep_name))
 
+        try:
+            seq_type_default = i['requestType']['name'].lower()
+            seq_type_default = seqtype_map.get(seq_type_default) or seq_type_default
+        except:
+            seq_type_default = 'NA'
+        try:
+            seq_id_default = i['id']
+        except:
+            seq_id_default = 'NA'
+
+        
+        
         for ifl in i['files']:
             ires = {}
             try:
@@ -228,12 +245,25 @@ def parse_seq_files(info, rel_to_proband):
                     except:
                         ires[k2] = 'NA'
 
+            if ires['seq_id'] == 'NA':
+                ires['seq_id'] = seq_id_default
+            if ires['seq_type'] == 'NA':
+                ires['seq_type'] = seq_type_default
+            else:
+                ires['seq_type'] = ires['seq_type'].lower()
+            seqtype = ires['seq_type']
+            if seqtype not in seqtype_exp:
+                unknown_seqtype.setdefault(seqtype, 0)
+                unknown_seqtype[seqtype] += 1
+
             if ires['fn'] == 'NA':
                 logger.error(f'invalid file info: \n{ifl}')
                 sys.exit(1)
 
             files.append(ires)
 
+    if len(unknown_seqtype) > 0:
+        logger.warning(f'unkown seq type: {unknown_seqtype}')
 
     return reports, files
 
@@ -265,7 +295,7 @@ def get_download_link(udn, fl_info, get_aws_ft, gzip_only=None, force_update=Fal
         logger.warning(f'file skipped due to gzip file only: {fn}')
         return 2
 
-    if ext not in get_aws_ft:
+    if 'all' not in get_aws_ft and ext not in get_aws_ft:
         logger.debug(f'skip update amazon link due to file type limit: {fn} ext={ext}, valid ft={get_aws_ft}')
         return 2
 
@@ -302,6 +332,10 @@ def get_download_link(udn, fl_info, get_aws_ft, gzip_only=None, force_update=Fal
             return link
         except:
             logger.warning(f'fail to get download link json: fn = {fn}, file_id = {file_id}')
+            try:
+                print(download_json)
+            except:
+                pass
             raise
             return 1
 
@@ -329,6 +363,11 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
     # get the basic info
     basic_info = get_json(f'participants/{udn}')
     sequence_info = get_json(f'participants/{udn}/sequencing')
+    
+    if debug:
+        with open(f'{udn}.seq_info.json', 'w') as o:
+            json.dump(sequence_info, o, indent=3)
+    
     is_proband = False
 
     get_report = True if 'report' in get_aws_ft else False
@@ -347,10 +386,15 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
         res['rel_to_proband_short'] = relation['shortName']
 
     res['reports'], res['files'] = parse_seq_files(sequence_info, rel_to_proband)
+    
+    logger.info(f'rb@{rel_to_proband}')
 
     # add the download link
     uploaded_date_ready = 0
     res['seq_uploaded'] = 'NA'
+    
+    skipped_due_to_seq_type = {}
+    seq_type_kept = {}
 
     for ifl in res['files']:
         if uploaded_date_ready == 0:
@@ -359,8 +403,19 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
                 if tmp != 'NA':
                     uploaded_date_ready = 1
                     res['seq_uploaded'] = tmp
+        seq_type = ifl['seq_type'].lower()
+        
+        if valid_seq_type and seq_type not in valid_seq_type:
+            skipped_due_to_seq_type.setdefault(seq_type, 0)
+            skipped_due_to_seq_type[seq_type] += 1
+            continue
 
         ifn = ifl['fn']
+        ext, gz = get_file_extension(ifn)
+        seq_type_kept.setdefault(seq_type, {}).setdefault(ext, 0)
+        seq_type_kept[seq_type][ext] += 1
+
+
         download_link = get_download_link(udn, ifl, get_aws_ft, gzip_only=None)
         if download_link == 0:
             logger.info(colored(f'\tamazon link still valid: {ifl["fn"]}', 'green'))
@@ -371,6 +426,12 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
         else:
             logger.info(green(f'\turl updated: {ifn}'))
             ifl['download'] = download_link
+
+    
+    if skipped_due_to_seq_type:
+        logger.info(f'g@skipped seq_type: {skipped_due_to_seq_type}')
+
+    logger.info(f'g@kept file seq type = {seq_type_kept}')
 
     if get_report:
         download_report(res['reports'])
@@ -527,7 +588,8 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
         with open(fn_udn_api_pkl, 'wb') as out:
             pickle.dump(res_all, out)
         try:
-            parse_api_res(res_all, udn_raw=udn_raw, valid_family=valid_family, sv_caller=sv_caller, newname_prefix=newname_prefix)
+            # (res, renew_amazon_link=False, )
+            parse_api_res(res_all, update_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family, sv_caller=sv_caller, newname_prefix=newname_prefix, gzip_only=gzip_only, )
         except:
             logger.error(f'fail to parse the result dict, try again')
             raise
@@ -539,28 +601,75 @@ def get_logger(prefix=None, level='INFO'):
     prefix = prefix or 'udn_api_query'
     fn_log = f'{prefix}.log'
     fn_err = f'{prefix}.err'
-
-    fmt = logging.Formatter(
-        '%(asctime)s  %(levelname)-9s   %(funcName)-10s   line: %(lineno)-5s   %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S')
+    import sys
+    import logging
+    class CustomFormatter(logging.Formatter):
+    
+        colors = {
+            'black': '\u001b[30;20m',
+            'red': '\u001b[31;20m',
+            'r': '\u001b[31;20m',
+            'bold_red': '\u001b[31;1m',
+            'rb': '\u001b[31;1m',
+            'green': '\u001b[32;20m',
+            'g': '\u001b[32;20m',
+            'gb': '\u001b[32;1m',
+            'yellow': '\u001b[33;20m',
+            'blue': '\u001b[34;20m',
+            'b': '\u001b[34;20m',
+            'bb': '\u001b[34;1m',
+            'purple': '\u001b[35;1m',
+            'p': '\u001b[35;1m',
+            'pb': '\u001b[35;1m',
+            'grey': '\u001b[38;20m',
+        }
+        FORMATS = {
+            logging.WARNING: colors['purple'],
+            logging.ERROR: colors['bold_red'],
+            logging.CRITICAL: colors['bold_red'],
+        }
+    
+        def format(self, record):
+            format_str = "%(asctime)s  %(levelname)-6s %(funcName)-20s  line: %(lineno)-5s  %(message)s"
+            reset = "\u001b[0m"
+            log_fmt = None
+            
+            record.msg = str(record.msg)
+            if '@' in record.msg[:10]:
+                try:
+                    icolor, tmp = record.msg.split('@', 1)
+                    log_fmt = self.colors.get(icolor)
+                    if log_fmt:
+                        record.msg = tmp
+                except:
+                    raise
+                    pass
+            else:
+                log_fmt = self.FORMATS.get(record.levelno)
+            if log_fmt:
+                record.msg = log_fmt + record.msg + reset
+            formatter = logging.Formatter(format_str, datefmt='%Y-%m-%d %H:%M:%S')
+            return formatter.format(record)
+    
+    
+    fmt = logging.Formatter('%(asctime)s  %(levelname)-6s %(funcName)-20s  line: %(lineno)-5s  %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    
     console = logging.StreamHandler(sys.stdout)
-    console.setFormatter(fmt)
-    console.setLevel(level)
-
-    fh_file = logging.FileHandler(fn_log, mode='a', encoding='utf8')
-    fh_err = logging.FileHandler(fn_err, mode='a', encoding='utf8')
-
+    console.setFormatter(CustomFormatter())
+    console.setLevel('INFO')
+    
+    fh_file = logging.FileHandler(fn_log, mode='w', encoding='utf8')
+    
     fh_file.setLevel('DEBUG')
     fh_file.setFormatter(fmt)
-
-    fh_err.setLevel('ERROR')
-    fh_err.setFormatter(fmt)
-
-    logger = logging.getLogger(prefix)
+    
+    try:
+        logger = logging.getLogger(__file__)
+    except:
+        logger = logging.getLogger('terminal')
     logger.setLevel('DEBUG')
     logger.addHandler(console)
     logger.addHandler(fh_file)
-    # logger.addHandler(fh_err)
     return logger
 
 
@@ -631,7 +740,7 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
     """
     if not isinstance(gzip_only, set):
         gzip_only = set()
-    update_aws_ft = set([ft_convert[_] for _ in update_aws_ft]) if update_aws_ft else set(['fastq', 'cnv'])
+    update_aws_ft = set([ft_convert.get(_) or _ for _ in update_aws_ft]) if update_aws_ft else set(['fastq', 'cnv'])
 
 
     logger.info(green(f'file type to update url = {update_aws_ft}'))
@@ -655,10 +764,22 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
 
     # update the URL
     if renew_amazon_link:
+        skipped_due_to_seq_type = {}
+        seq_type_kept = {}
         for irel, v1 in res.items():
             iudn = v1['simpleid']
-
             for ifl in v1['files']:
+                seq_type = ifl['seq_type'].lower()
+                
+                if valid_seq_type and seq_type not in valid_seq_type:
+                    skipped_due_to_seq_type.setdefault(seq_type, 0)
+                    skipped_due_to_seq_type[seq_type] += 1
+                    continue
+                
+                ext, gz = get_file_extension(ifl['fn'])
+                seq_type_kept.setdefault(seq_type, {}).setdefault(ext, 0)
+                seq_type_kept[seq_type][ext] += 1
+                
                 download_link = get_download_link(iudn, ifl, get_aws_ft=update_aws_ft, gzip_only=gzip_only)
 
                 if download_link == 0:
@@ -671,12 +792,14 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
                     logger.info(green(f'\turl updated: {ifl["fn"]}'))
                     ifl['download'] = download_link
 
+        if skipped_due_to_seq_type:
+            logger.info(f'files skipped due to seq type not match')
+            logger.info(f'g@skipped = {skipped_due_to_seq_type}')
+        logger.info(f'g@kept file seq type = {seq_type_kept}')
     # report for proband
     proband = res['Proband']
     udn = proband['simpleid']
     hpo = proband['symp']
-
-
 
     fn_pdf = f'basic_info.{udn}.pdf'
     fn_md = f'basic_info.{udn}.md'
@@ -794,7 +917,7 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
     female = '\n  '.join([f'female{n+1}: {str(_)}' for n, _ in enumerate(cfg_info['female'])])
     other = '\n  '.join([f'other{n+1}: {str(_)}' for n, _ in enumerate(cfg_info['other'])])
 
-    logger.info(cfg_info)
+    logger.info(f'config info = {cfg_info}')
 
     cfg = f"""prj: {udn}  # the project name
 path:
@@ -834,7 +957,7 @@ default:
     out_info = open(f'download.info.{udn}.txt', 'w')
     out_md5 = open(f'download.{udn}.md5', 'w')
 
-    if 'cnv' in update_aws_ft:
+    if 'cnv' in update_aws_ft or 'all' in update_aws_ft:
         fn_cnv_sh = f'intermed/download.cnv.{udn}.sh'
         out_cnv = open(fn_cnv_sh, 'w')
         out_cnv.write('missing=0\n\n')
@@ -887,7 +1010,7 @@ default:
             ext, gz = get_file_extension(fn)
             # logger.info(f'{fn}, {ext}, {gz}')
 
-            if ext not in update_aws_ft:
+            if 'all' not in update_aws_ft and  ext not in update_aws_ft:
                 # logger.info(f'skipped due to not target file type: {ext}')
                 continue
 
@@ -923,7 +1046,7 @@ default:
                         newname = f'{newname_base}_{n_prev + 1}'
 
 
-            if re.match(r'.+\.cnv\.vcf(\.gz)?$', fn) and 'cnv' in update_aws_ft:
+            if re.match(r'.+\.cnv\.vcf(\.gz)?$', fn) and ('cnv' in update_aws_ft or 'all' in update_aws_ft):
                 if  fn.find('joint') < 0:
                     logger.info(green(f'seq_id:{seq_id}\t{fn}:\tfile_id:{file_id}'))
                     if not os.path.exists(f'origin{fn}'):
@@ -1003,37 +1126,32 @@ def upload_files(nodename, pw_accre_data, pw_accre_scratch, udn_raw, rename=Fals
         os.system(f"""sftp {nodename} <<< $'rename {pw_accre_data}/{udn_raw_old} {pw_accre_data}/{udn_raw};rename {pw_accre_scratch}/{udn_raw_old} {pw_accre_scratch}/{udn_raw};'
         """)
     # upload files
+
+    fls = []
+    cmds = []
+    if not upload_only:
+        fls.append(f'mkdir {pw_accre_data}/{udn_raw}/')
+    fls.append(f'mkdir {pw_accre_scratch}/{udn_raw}/')
+    for ifl in upload_file_list:
+        if not upload_only:
+            fls.append(f'put {ifl} {pw_accre_data}/{udn_raw}/')
+        fls.append(f'put {ifl} {pw_accre_scratch}/{udn_raw}/')
+    
+    
     if initial:
         logger.info(f'initial uploading to ACCRE: {udn_raw}')
-        fls = []
-        for ifl in upload_file_list:
-            fls.append(f'put {ifl} {pw_accre_scratch}/{udn_raw}/')
-        fls = '\\n'.join(fls)
         sftp_cmd = ''
         if not upload_only:
-            sftp_cmd += f"""mkdir {pw_accre_data}/{udn_raw}/origin/\\nput -r * {pw_accre_data}/{udn_raw}/"""
+            fls.append(f"""mkdir {pw_accre_data}/{udn_raw}/origin/""")
+            fls.append(f'put -r origin/* {pw_accre_data}/{udn_raw}/')
 
-        sftp_cmd += f"mkdir {pw_accre_scratch}/{udn_raw}/\\n{fls}"
+        cmds.append('touch {initial_upload_flag}')
 
-        cmd = f"sftp {nodename} <<< $'{sftp_cmd}' 2>/dev/null >&2;touch {initial_upload_flag}"
-
-        os.system(cmd)
-    else:
-        fls = []  # file name can't contain space
-        if not upload_only:
-            fls.append(f'mkdir {pw_accre_data}/{udn_raw}/')
-        fls.append(f'mkdir {pw_accre_scratch}/{udn_raw}/')
-
-        for ifl in upload_file_list:
-            if not upload_only:
-                fls.append(f'put {ifl} {pw_accre_data}/{udn_raw}/')
-
-            fls.append(f'put {ifl} {pw_accre_scratch}/{udn_raw}/')
-        fls = '\\n'.join(fls)
-        cmd = f"""sftp {nodename} <<< $'{fls}' >/dev/null 2>/dev/null"""
-        logger.info(f'update {upload_file_list} to  {nodename}: {udn_raw},  {pw_accre_data}/{udn_raw}/, {pw_accre_scratch}/{udn_raw}/')
-        # logger.info(f'command = {cmd}')
-        os.system(cmd)
+    fls = '\n'.join(fls)
+    cmd = f"""sftp {nodename} <<< $'{fls}' >/dev/null 2>/dev/null\n""" + '\n'.join(cmds)
+    
+    logger.info(f'update {upload_file_list} to  {nodename}: {udn_raw},  {pw_accre_data}/{udn_raw}/, {pw_accre_scratch}/{udn_raw}/')
+    os.system(cmd)
 
 
 def parse_phillips_map_file(fn):
@@ -1087,6 +1205,7 @@ if __name__ == "__main__":
     ps.add_argument('-url', '-urlonly', '-ckfls', help='get the files URL only (for each family member) and quit', action='store_true'),
     ps.add_argument('-demo', help="""don't resolve the aws download URL""", action='store_true')
     ps.add_argument('-ft', help="""could be multiple, if specified, would only update the amazon URL for these file types, if gzip only, add the .gz suffix. e.g. vcf.gz  would not match .vcf$""", nargs='*', default=None)
+    ps.add_argument('-seq_type', '-st', help="""sequence type to resolve download link, valid = genome, rnaseq, reanalysis(re), if not specified, will ignore the sequence type filtering""", choices=['genome', 'rnaseq', 're', 'reanalysis'], nargs='*')
     ps.add_argument('-renew', '-new', '-update', help="""flag, update the amazon shared link. default is not renew""", action='store_true')
     ps.add_argument('-lite', help="""flag, donot download the cnv files and the bayler report""", action='store_true')
     ps.add_argument('-noupload', '-noup', help="""don't upload the files to ACCRE""", action='store_true')
@@ -1100,9 +1219,11 @@ if __name__ == "__main__":
     ps.add_argument('-nodename', '-node', '-remote', help="remote node name, default is va", choices=['va', 'pc'])
     ps.add_argument('-rename', '-newname', help="rename the case name to this, only valid for vcf file, number should match with prj number", nargs='*')
     ps.add_argument('-phillips', '-philips', '-phil', help="run the tasks for Phillips, need to rename the case. argument = filename for UDN-case number map")
+    ps.add_argument('-debug', '-d', help="""debug mode, dump the intermediate json files""", action='store_true')
 
 
     args = ps.parse_args()
+    debug = args.debug
     case_prefix = ''
     pw_accre_scratch_suffix = ''
     fn_phillips = args.phillips
@@ -1117,6 +1238,7 @@ if __name__ == "__main__":
         case_prefix = fn_phillips.rsplit('/', 1)[-1].rsplit('.', 1)[0].replace('_rerun', '') + '_'
 
     print(args)
+    logger = get_logger(level=args.v)
 
     force = args.force_rerun
     udn_list = args.udn or [os.getcwd().rsplit('/')[-1]]
@@ -1129,6 +1251,11 @@ if __name__ == "__main__":
     force_upload = args.force_upload
     sv_caller = args.sv_caller
 
+    valid_seq_type = args.seq_type
+    if valid_seq_type:
+        valid_seq_type = {{'re': 'reanalysis'}.get(_) or _ for _ in valid_seq_type}
+    
+        logger.info(f'g@valid seq type = {valid_seq_type}')
 
 
     save_rel_table = args.reltable
@@ -1137,16 +1264,17 @@ if __name__ == "__main__":
         root = args.pw or '.'
         if root.lower() in ['.', 'pwd']:
             root = os.getcwd()
-
-        if root.find('/udn/cases/done/') > -1:
+        if args.pw:
+            pass
+        elif root.find('/udn/cases/done/') > -1:
             root = root.rsplit('/done/', 1)[0] + '/done'
         elif root.find('/udn/cases/') > -1:
             root = root.rsplit('/udn/cases/', 1)[0] + '/udn/cases'
         os.chdir(root)
+        logger.info(f'g@root path = {root}')
     else:
         logger.info('platform= {platform}')
         root = os.getcwd()
-    logger = get_logger(level=args.v)
 
     pw_script = os.path.realpath(__file__).rsplit('/', 1)[0]
     lite = args.lite
@@ -1179,9 +1307,10 @@ if __name__ == "__main__":
 
     if ft_input is None:
         update_aws_ft = ['fastq']
-    else:
+    elif 'all' not in ft_input:
         err = 0
         ft_input = [_ for _ in ft_input if _.strip()]
+        
         for i in ft_input:
             ext = i.replace('.gz', '')
             if i[-2:] == 'gz':
@@ -1193,7 +1322,9 @@ if __name__ == "__main__":
                 err = 0
         if err:
             sys.exit(1)
-
+    else:
+        update_aws_ft = {'all',}
+    logger.info(f'update_aws_ft = {update_aws_ft}')
 
     passcode = getpass('Input the passcode for the encrypted credential file: ')
     if not fn_cred:
