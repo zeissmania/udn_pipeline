@@ -984,7 +984,7 @@ default:
         p_trailing = '_' + p_trailing if p_trailing else ''
         remote_pw = m[1] + p_trailing
 
-    out_info.write('rel_to_proband\tfn\trename\tsample_list\turl\tudn\tseq_type\tsize\tbuild\tmd5\turl_s3\tupload_type\tdownload_type\tremote_pw\n')
+    out_info.write('rel_to_proband\tfn\trename\tsample_list\turl\tudn\tseq_type\tsize\tbuild\tmd5\tupload_type\tdownload_type\tremote_pw\turl_s3\n')
 
     check_dup = {}
     
@@ -1058,8 +1058,7 @@ default:
                 else:
                     logger.info(f'joint.cnv found:{fn} - skip')
 
-
-            out_info.write(f'{rel_to_proband}\t{fn}\t{newname}\t{newname_base}\t{url}\t{udn}\t{seq_type}\t{size}\t{build}\t{md5}\t{url_s3}\n')
+            out_info.write(f'{rel_to_proband}\t{fn}\t{newname}\t{newname_base}\t{url}\t{udn}\t{seq_type}\t{size}\t{build}\t{md5}\t\t\t\t{url_s3}\n')
             out_md5.write(f'{md5}  {fn}\n')
 
     for k in list(url_count):
