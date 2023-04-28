@@ -41,7 +41,7 @@ import argparse as arg
 from argparse import RawTextHelpFormatter
 ps = arg.ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
 ps.add_argument('local_files', help="""local files list, for simple mode only""", nargs='*')
-ps.add_argument('-dest', help="""the destinition for the uploading, valid = dropbox/db, emedgene/em/ed""", choices=['emedgene', 'em', 'ed', 'dropbox', 'db'], nargs='?', default='emedgene')
+ps.add_argument('-dest', help="""the destinition for the uploading, valid = dropbox/db, emedgene/em/ed, r/rdrive""", choices=['emedgene', 'em', 'ed', 'dropbox', 'db', 'rdrive', 'r'], nargs='?', default='emedgene')
 ps.add_argument('-info_file', '-info', '-fn', help="""the file containing the amazon download link, usually like download.info.UDN945671.txt""", nargs='?', default=None)
 ps.add_argument('-simple', help="""simple mode, for uploading local file to dropbox/emedgene only. no info file needed, just set the -remote  -dest, and put all the local file path as the positional arugments""", action='store_true')
 ps.add_argument('-local_pw_layers', '-local_depth', '-d', '-localn', help="the local folder structure to keep, start from lower to upper. eg. a/b/c/1.txt  if set as 1, will keep c/1.txt, default = 0, if set as 2, will keep b/c/1.txt", type=int, default=0)
@@ -63,6 +63,7 @@ ps.add_argument('-remote_flat', '-no_remote_sub_folder', '-flat', help="""don't 
 ps.add_argument('-force_upload', '-forceup', '-fu', help="""force upload the file to server, even the file size match with remote""", action='store_true')
 ps.add_argument('-forcedown', '-fd',  help="""force download the file even if the file already uploaded. but if the local file already exist, will skip""", action='store_true')
 ps.add_argument('-clear', '-rmlog', help="""clear the log files for upload and download""", action='store_true')
+ps.add_argument('-i', help="""ignore the files with url as NA""", action='store_true')
 
 args = ps.parse_args()
 
@@ -71,6 +72,7 @@ ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'gvcf', 'fasta': 'fasta', 
 ft_convert.update({_: _ for _ in ft_convert.values()})
 
 file_ct = {}
+invalid_url_all = set()
 
 # ps.add_argument('-prj', help="""project name for this run, if not set, would use the UDN infered from info file or current folder name""")
 
@@ -249,6 +251,9 @@ def build_remote_subfolder(name, dest):
         logger.info(f'building_subfolder Vanderbilt/upload/{name}/')
         # os.system(f'{dock} aws s3api put-object --profile {profile} --bucket emg-auto-samples --key Vanderbilt/upload/{name}/ >>{dest}.create_folder.log 2>{dest}.create_folder.log')
         os.system(f'{dock} aws s3api put-object --bucket emg-auto-samples --key "Vanderbilt/upload/{name}/" >>{dest}.create_folder.log 2>{dest}.create_folder.log')
+    elif dest == 'rdrive':
+        logger.info(f'\tbuilding subfolder {name}')
+        os.system(f'{dock} smbclient "//i10file.vumc.org/ped/"   -A /home/chenh19/cred/smbclient.conf -c \'mkdir "{name}" \' ')
 
 def get_file_extension(fn):
 
@@ -262,6 +267,52 @@ def get_file_extension(fn):
         logger.warning(f'unclear file type: {fn}')
         return None, None
 
+def parse_smb(fn, remote_pw):
+    res = {}
+    d_exist = {}
+    sub_folders = set()
+    #   .                                   D        0  Mon Feb  4 10:04:18 2019
+    #   ..                                  D        0  Thu Apr 27 12:58:22 2023
+    #   UDN525928_WB                        D        0  Fri Nov 16 20:08:26 2018
+    #   UDN525928_FB                        D        0  Fri Nov 16 19:58:31 2018
+    #   .DS_Store                           A    10244  Thu Apr 27 12:57:36 2023
+
+    # \GEN\UDN\RNAseq Data\Baylor_Blood\UDN525928_02\UDN525928_WB
+    #   .                                   D        0  Fri Nov 16 20:08:26 2018
+    #   ..                                  D        0  Mon Feb  4 10:04:18 2019
+    #   LTG037_S8_L001_R1_001.bam           A 7340450542  Fri Nov 16 20:07:03 2018
+    #   LTG037_S8_L001_R1_001.bam.bai       A  3981720  Fri Nov 16 20:07:06 2018
+
+    # \GEN\UDN\RNAseq Data\Baylor_Blood\UDN525928_02\UDN525928_FB
+    #   .                                   D        0  Fri Nov 16 19:58:31 2018
+    #   ..                                  D        0  Mon Feb  4 10:04:18 2019
+    #   LTG038_S3_L001_R1_001.bam.bai       A  3463032  Fri Nov 16 19:52:12 2018
+    #   LTG038_S3_L001_R1_001.bam           A 7569750225  Fri Nov 16 19:52:10 2018
+    pw = ''
+    with open(fn) as f:
+        for i in f:
+            i = re.sub(r'\s+', ' ', i.strip())
+            a = i.rsplit(' ')
+            if i.startswith('\\GEN'):
+                pw = i.strip().replace('\\', '/') + '/'
+                folder = pw.replace(remote_pw, '')
+                folder = re.sub(r'^/', '', folder)
+                folder = re.sub(r'/$', '', folder)
+                sub_folders.add(folder)
+                continue
+            
+            if len(a) != 8 or a[0] in {'.', '..'} or a[1] == 'D':
+                continue
+            fn, size = a[0], a[2]
+            try:
+                size = int(size)
+            except:
+                continue
+            fn_full = f'{pw}{fn}'
+            d_exist[fn] = [fn_full, size]
+            
+
+    return d_exist, sub_folders
 
 def get_remote_file_list(pw, dest, remote_pw):
     """
@@ -277,16 +328,25 @@ def get_remote_file_list(pw, dest, remote_pw):
         os.system(f'{dock} dbxcli ls -R "/{remote_pw}" -l > {fn_exist}')
     elif dest == 'emedgene':
         os.system(f'{dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}/" --recursive > {fn_exist}')
+    elif dest == 'rdrive':
+        cmd = f'{dock} smbclient "//i10file.vumc.org/ped/"   -A /home/chenh19/cred/smbclient.conf -D "{remote_pw}" <<< $\'recurse on\\nls\' 2>/dev/null > {fn_exist}'
+        # logger.info(cmd)
+        os.system(cmd)
 
     d_exist = {}
     sub_folders = set()
     if dest == 'dropbox':
-
-    # Revision                        Size    Last modified Path
-    # -                               -       -             /CG2UDN/For Emedgene Upload
-    # 015be260c9d805e000000022be8dc00 9.5 KiB 1 day ago     /CG2UDN/cg2udn.key.xlsx
-    # 015be3846dafbcf000000022be8dc00 1.1 MiB 8 hours ago   /CG2UDN/Family VU097/Mom/20-097-002902_VUC2000652_D1_N1_LP200615017_UDI0067_HP200028_PL200021_SEQ_2006170017.292.final.vcf.gz
-
+        # 5d66a231cc9838df7c751@@719714@@1 year ago@@/VUDP005/Proband Raw Files/Files.zip
+        # 5d66a231cc9848df7c751@@14467565985@@1 year ago@@/VUDP005/Proband Raw Files/2021-145-142-PGnome-TrioDiag_S212_L001_R2_001_701E.fastq.gz
+        # 5d66a231cc9858df7c751@@13632995037@@1 year ago@@/VUDP005/Proband Raw Files/2021-145-142-PGnome-TrioDiag_S212_L002_R1_001_701E.fastq.gz
+        # 5d66a231cc9868df7c751@@9126032@@1 year ago@@/VUDP005/Proband Raw Files/2021-145-142-PGnome-TrioDiag_markdup.bam.bai
+        # 5d66a231cc9878df7c751@@7313019@@1 year ago@@/VUDP005/Proband Raw Files/2021-145-142-PGnome-TrioDiag.vcf
+        # 5d66a231cc9888df7c751@@13677703607@@1 year ago@@/VUDP005/Proband Raw Files/2021-145-142-PGnome-TrioDiag_S212_L001_R1_001_701E.fastq.gz
+        # 5d66a231cc9898df7c751@@13597294972@@1 year ago@@/VUDP005/Proband Raw Files/2021-145-142-PGnome-TrioDiag_S212_L003_R1_001_701E.fastq.gz
+        # 5d66a231cc98a8df7c751@@14469268993@@1 year ago@@/VUDP005/Proband Raw Files/2021-145-142-PGnome-TrioDiag_S212_L002_R2_001_701E.fastq.gz
+        # 5d66a231cc98b8df7c751@@14008431602@@1 year ago@@/VUDP005/Proband Raw Files/2021-145-142-PGnome-TrioDiag_S212_L004_R1_001_701E.fastq.gz
+        # 5d66a231cc98c8df7c751@@11716344@@1 year ago@@/VUDP005/Proband Raw Files/2021-145-142-PGnome-TrioDiag.bed
+        # 5d66a231cc98d8df7c751@@14727930576@@1 year ago@@/VUDP005/Proband Raw Files/2021-145-142-PGnome-TrioDiag_S212_L004_R2_001_701E.fastq.gz
         with open(fn_exist) as fp:
             fp.readline()
             for i in fp:
@@ -302,16 +362,16 @@ def get_remote_file_list(pw, dest, remote_pw):
                     folder = re.sub(r'/$', '', folder)
                     sub_folders.add(folder)
     elif dest == 'emedgene':
-    # 2021-02-22 15:45:30          0 Vanderbilt/upload/UDN782882_261_DP/Father_UDN098366/
-    # 2021-02-22 18:43:14 44042338086 Vanderbilt/upload/UDN782882_261_DP/Father_UDN098366/939022-UDN098366-D_R1.fastq.gz
-    # 2021-02-22 18:48:16 48156982037 Vanderbilt/upload/UDN782882_261_DP/Father_UDN098366/939022-UDN098366-D_R2.fastq.gz
-    # 2021-02-22 15:45:29          0 Vanderbilt/upload/UDN782882_261_DP/Mother_UDN954693/
-    # 2021-02-22 18:25:53 43856874123 Vanderbilt/upload/UDN782882_261_DP/Mother_UDN954693/939020-UDN954693-M_R1.fastq.gz
-    # 2021-02-22 18:53:31 47591653919 Vanderbilt/upload/UDN782882_261_DP/Mother_UDN954693/939020-UDN954693-M_R2.fastq.gz
-    # 2021-02-22 15:45:32          0 Vanderbilt/upload/UDN782882_261_DP/Proband_UDN782882/
-    # 2021-02-22 19:10:52 43542249072 Vanderbilt/upload/UDN782882_261_DP/Proband_UDN782882/939019-UDN782882-P_R1.fastq.gz
-    # 2021-02-22 19:49:40 47567355208 Vanderbilt/upload/UDN782882_261_DP/Proband_UDN782882/939019-UDN782882-P_R2.fastq.gz
-    # 2021-02-22 15:46:55       1829 Vanderbilt/upload/UDN782882_261_DP/UDN782882_all_files.md5
+        # 2021-02-22 15:45:30          0 Vanderbilt/upload/UDN782882_261_DP/Father_UDN098366/
+        # 2021-02-22 18:43:14 44042338086 Vanderbilt/upload/UDN782882_261_DP/Father_UDN098366/939022-UDN098366-D_R1.fastq.gz
+        # 2021-02-22 18:48:16 48156982037 Vanderbilt/upload/UDN782882_261_DP/Father_UDN098366/939022-UDN098366-D_R2.fastq.gz
+        # 2021-02-22 15:45:29          0 Vanderbilt/upload/UDN782882_261_DP/Mother_UDN954693/
+        # 2021-02-22 18:25:53 43856874123 Vanderbilt/upload/UDN782882_261_DP/Mother_UDN954693/939020-UDN954693-M_R1.fastq.gz
+        # 2021-02-22 18:53:31 47591653919 Vanderbilt/upload/UDN782882_261_DP/Mother_UDN954693/939020-UDN954693-M_R2.fastq.gz
+        # 2021-02-22 15:45:32          0 Vanderbilt/upload/UDN782882_261_DP/Proband_UDN782882/
+        # 2021-02-22 19:10:52 43542249072 Vanderbilt/upload/UDN782882_261_DP/Proband_UDN782882/939019-UDN782882-P_R1.fastq.gz
+        # 2021-02-22 19:49:40 47567355208 Vanderbilt/upload/UDN782882_261_DP/Proband_UDN782882/939019-UDN782882-P_R2.fastq.gz
+        # 2021-02-22 15:46:55       1829 Vanderbilt/upload/UDN782882_261_DP/UDN782882_all_files.md5
         with open(fn_exist) as fp:
             for i in fp:
                 i = i.strip()
@@ -333,6 +393,8 @@ def get_remote_file_list(pw, dest, remote_pw):
 
                 if fn:
                     d_exist[fn] = [a[-1], file_size]
+    elif dest == 'rdrive':
+        d_exist, sub_folders = parse_smb(fn_exist, remote_pw)
 
     return d_exist, sub_folders
 
@@ -362,7 +424,7 @@ def get_local_md5(fn):
     except:
         return None
 
-def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, updated_version_only=True, script_list=None, no_upload=False, remote_flat=False):
+def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, updated_version_only=True, script_list=None, no_upload=False, remote_flat=False, invalid_url_all=None):
     """
     the info file is like
     rel_to_proband\tfn\turl\tudn\tseq_type\tsize\tbuild\tmd5\turl_s3\tdate_upload\tremote_pw\n
@@ -398,8 +460,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
         pass
 
     logger.info(f'remote_pw_in={remote_pw_in}')
-    remote_pw_in = refine_remote_pw(remote_pw_in)
-
+    remote_pw_in = refine_remote_pw(remote_pw_in, dest)
 
     logger.info(f'remote_pw afer refine={remote_pw_in}')
     try:
@@ -407,6 +468,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
     except:
         d_exist, sub_folders = get_remote_file_list(pw, dest, remote_pw_in)
         d_exist_all[remote_pw_in] = (d_exist, sub_folders)
+
 
     # build script for md5 file
     fn_md5 = glob.glob(f'{pw}/download.*.md5')
@@ -423,19 +485,18 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
     # logger.info(exp_md5)
     if not no_upload:
             fn_new = fn_md5.rsplit('/', 1)[-1].replace('download.', '')
-            
-            
 
             if fn_new in d_exist:
                 logger.info(f'{fn_md5} already uploaded')
             else:
                 # build the script
                 # logger.info(f'upload md5 file')
-                fnscript = build_script_single(dest, remote_pw_in, fn_md5, fn_remote=fn_new, pw=pw, need_upload=True)
+                fnscript = build_script_single(dest, remote_pw_in, fn_md5, url_var=fn_md5,fn_remote=fn_new, pw=pw, need_upload=True)
                 if fnscript:
                     script_list['needup'].append(fnscript)
 
     logger.info('start parsing')
+    remote_sub_pw_map = {}
     with open(info_file) as fp:
         header = fp.readline()
         a = [_.strip() for _ in header.split('\t')]
@@ -462,7 +523,9 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                 logger.error(f'idx = {idx}')
                 raise
             reltmp = rel or 'NA'
-
+            
+            if ignore_na_url and url == 'NA':
+                continue
 
             download_type = 'wget'
             try:
@@ -477,21 +540,23 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                 logger.error(f'invalid download type: {download_type}, valid = wget or dropbox')
                 fatal = 1
 
-            upload_type = 'emedgene'
+            upload_type = None
             try:
                 tmp = a[idx['upload_type']].strip()
                 if tmp:
                     upload_type = tmp
             except:
                 pass
+            
+            if upload_type is None:
+                upload_type = dest
 
-            if upload_type not in {'emedgene', 'dropbox'}:
+            if upload_type not in {'emedgene', 'dropbox', 'rdrive'}:
                 logger.error(f'invalid upload_type: {upload_type}, valid = emedgene or dropbox')
                 fatal = 1
 
             if fatal:
                 sys.exit(1)
-
 
             # get the remote_pw
             try:
@@ -502,7 +567,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                         return 1
                     remote_pw = remote_pw_in
                 else:
-                    remote_pw = refine_remote_pw(remote_pw)
+                    remote_pw = refine_remote_pw(remote_pw, dest)
             except:
                 if not remote_pw_in:
                     logger.error('must specify the remote_pw, in info file or by parameter, exit..')
@@ -517,12 +582,9 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
             except:
                 d_exist, sub_folders = get_remote_file_list(pw, dest, remote_pw)
                 d_exist_all[remote_pw] = (d_exist, sub_folders)
-
             # get the ext
-            if 'all' not in ft:
-                ext, gz = get_file_extension(fn)
-            else:
-                ext, gz = None, None
+            ext, gz = get_file_extension(fn)
+                
             if 'all' not in ft and ext not in ft:
                 logger.debug(f'file skipped due to file type not selected: {ext}  - {fn}')
                 continue
@@ -594,8 +656,8 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                 file_md5_local = get_local_md5(fn_download)
                 
                 md5_ok = 0
-                if file_md5_exp is None:
-                    logger.warning(f'expected md5 not found for {fn_pure}')
+                if file_md5_exp is None or file_md5_exp == 'NA':
+                    logger.debug(f'expected md5 not found for {fn_pure}')
                     md5_ok = 1
                 elif file_md5_local is None:
                     logger.warning(red(f'fail to get local md5 for {fn_download}'))
@@ -603,7 +665,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                 elif file_md5_exp == file_md5_local:
                     md5_ok = 1
                 else:
-                    logger.warning(red(f'md5 not match for {fn_download}'))
+                    logger.warning(red(f'md5 not match for {fn_download}, exp = {file_md5_exp}, local = {file_md5_local}'))
                 
                 if size_local == 0:
                     os.unlink(fn_download)
@@ -634,8 +696,16 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                     uploaded = 0
 
 
-            remote_pw_final = f'{remote_pw}' if remote_flat else f'{remote_pw}/{name}'
-            remote_pw_final = re.sub(r'/$', '', remote_pw_final)
+            remote_sub_pw = f'{remote_pw}' if remote_flat else f'{remote_pw}/{name}'
+            
+            if fn in d_exist:
+                remote_sub_pw_exist = d_exist[fn][0].replace(fn, '')
+                remote_sub_pw_exist = re.sub(r'\/+$', '', remote_sub_pw_exist)
+                remote_sub_pw_map[remote_sub_pw] = remote_sub_pw_exist
+            
+            remote_pw_final = remote_sub_pw_map.get(remote_sub_pw) or remote_sub_pw
+
+            remote_pw_final = re.sub(r'/+$', '', remote_pw_final)
 
             if not force_download:
                 downloaded = downloaded
@@ -646,15 +716,13 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
             except:
                 d[remote_pw] = {fn: v}
 
-    # check if all files have been uploaded
-    # for remote_pw, v in d.items():
-    #     remote_pw_plain = re.sub(r'\W+', '_', remote_pw)
-    #     all_uploaded = 1 if all([_['uploaded'] for _ in v.values()]) else 0
-
     # logger.debug(d)
     sub_folders_exist = set()
+    
+    
     for remote_pw, v in d_exist_all.items():
         i = set([f'{remote_pw}/{name}' for name in v[1]])
+        sub_folders_exist.add(remote_pw)
         sub_folders_exist |= i
 
     logger.debug(f'remote existing subfolders = {sub_folders_exist}')
@@ -665,7 +733,8 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
         for v2 in v1.values():
             sub_folders_exp.add(v2['remote'])
 
-    logger.debug(f'subfolder exp = {sub_folders_exp}')
+    logger.info(f'subfolder exp = {sub_folders_exp}')
+    logger.info(f'subfolder existed = {sub_folders_exist}')
 
     sub_folder_to_build = sub_folders_exp - sub_folders_exist
     if not demo and not no_upload:
@@ -746,6 +815,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
     n_need_upload = len(need_upload)
     logger.info(f'total files = {n_desired}, need_to_upload={n_need_upload}, already exist in server = {n_uploaded}, already downloaded = {n_downloaded}')
 
+    invalid_url_all |= set(invalid_url)
     n_invalid_url = len(invalid_url)
     n_need_download = n_desired - n_downloaded - n_uploaded
     if n_need_upload > 0 or n_invalid_url > 0 or n_need_download > 0:
@@ -757,7 +827,8 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
             print(red(f'{n_need_upload}/{n_desired} files need to be uploaded'))
         print('\t' + '\n\t'.join(need_upload))
         if n_invalid_url > 0:
-            print(f'ERROR: {n_invalid_url} files with NA url:\n\t' + '\n\t'.join(invalid_url))
+            logger.info(f'\nERROR: {n_invalid_url} files with NA url')
+            logger.debug('\n\t'.join(invalid_url))
     else:
         print('\n', '*' * 50)
         print(colored('Done, all files already uploaded', 'green', attrs=['bold']))
@@ -768,7 +839,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
     return d, ct, script_list
 
 
-def refine_remote_pw(remote_pw):
+def refine_remote_pw(remote_pw, dest):
     if asis:
         return remote_pw
 
@@ -783,8 +854,12 @@ def refine_remote_pw(remote_pw):
 
     # get the remote folder list
     fn_all_folder = 'all_folders.txt'
-    if not os.path.exists(fn_all_folder):
+    if dest == "emedgene":
         os.system(f'{dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_base_dir}" > {fn_all_folder} ')
+    elif dest == 'rdrive':
+        cmd = f'{dock} smbclient "//i10file.vumc.org/ped/"  -A /home/chenh19/cred/smbclient.conf -D "{remote_base_dir}" -c "ls" 2>/dev/null > {fn_all_folder}'
+        os.system(cmd)
+
     all_remote_folders = {}
     pattern = re.compile(r'.*(UDN\d+)(.*|$)')
     n = 0
@@ -792,7 +867,12 @@ def refine_remote_pw(remote_pw):
     skip_words = ['Trio']  # if the path name contains these words, would not be considered as existed path
 
     for i in open(fn_all_folder):
-        i = i.rsplit(' ', 1)[-1].strip()
+        if dest == 'rdrive':
+            # UDN525928_02     D        0  Mon Feb  4 10:04:18 2019
+            i = i.strip().split(' ', 1)[0].strip()
+        else:
+            # PRE UDN616750_AA/
+            i = i.strip().rsplit(' ', 1)[-1].strip()
         n += 1
         i = re.sub('/$', '', i)
         skip = 0
@@ -809,16 +889,16 @@ def refine_remote_pw(remote_pw):
         all_remote_folders[m.group(1)] = f'{remote_base_dir}{i}'
 
     if n == 0:
-        logger.error(f'folder not exist: emg-auto-samples/Vanderbilt/upload/{remote_base_dir}')
-        sys.exit(1)
+        logger.warning(f'base folder not exist: {remote_base_dir}')
+        # sys.exit(1)
 
+    # logger.info(all_remote_folders)
+    
     remote_pw = re.sub('^/', '', remote_pw)
     remote_pw = re.sub('upload_?', '', remote_pw, flags=re.I)
     remote_pw = re.sub(r'^\d+_', '', remote_pw, 1)
     m = re.match(r'(.*_)?(UDN\d+)(_.*)?', remote_pw)
-    if not m:
-        return remote_pw
-    else:
+    if m:
         m = m.groups()
         udn_tmp = m[1]
         if udn_tmp in all_remote_folders:
@@ -841,7 +921,8 @@ def refine_remote_pw(remote_pw):
         p_trailing = '_'.join([_ for _ in (p1, p2) if _])
         p_trailing = '_' + p_trailing if p_trailing else ''
         remote_pw = m[1] + p_trailing
-        return remote_pw
+    
+    return f'{remote_base_dir}{remote_pw}'
 
 def get_fn_remote(fn_local, local_pw_layers=0, fn_remote=None):
     
@@ -875,7 +956,8 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
     local_file_size = local_file_size or {}
 
     fn_remote = fn_remote or fn
-    
+    if not os.path.exists(fn_local):
+        return None
 
     fn_script = f'{pw}/shell/{fn}.download_upload.{dest}.sh'
     fn_status = f'{pw}/log/status.{fn}.txt'
@@ -900,6 +982,7 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
         cmd_check_md5 = ''
 
     else:
+        size_exp = size_exp or 'na'
         cmd_check_md5 = f"""# check md5sum
     if [[ ! -f {pw}/log/{fn}.md5 ]];then
     md5sum  {fn_local} >{pw}/log/{fn}.md5 2>{pw}/log/{fn}.md5.log
@@ -908,7 +991,7 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
     md5_exp=$(grep -h "{fn}" {pw}/download.UDN*.md5 2>/dev/null|head -1|cut -d " " -f1)
     md5_local=$(head -1 {pw}/log/{fn}.md5|cut -d " " -f1)
 
-    if [[ -z $md5_exp ]];then
+    if [[ -z $md5_exp || "$md5_exp" == "NA" ]];then
     echo "expected md5 not found : {fn}" >> {fn_status}
     echo 0
     elif [[ "$md5_exp" == "$md5_local" ]];then
@@ -921,7 +1004,6 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
     echo $(date): "ERROR, md5 not match! {fn_local}; exp=@${{md5_exp}}@  local=@${{md5_local}}@"  >> /fs0/members/chenh19/tmp/upload/error.md5_not_match.files.txt
     fi
     """
-
 
     with open(fn_script, 'w') as out:
         rm_cmd = ''
@@ -951,22 +1033,17 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
         echo 1
         return
         fi
-
         {cmd_check_md5}
     }}
     """)
         # check remote
         fn_pure = os.path.basename(fn_remote)
-        if dest == 'emedgene':
-            cmd.append(f"""
-    checkremote(){{
+        check_remote_logic = f"""
         local_size=$(stat -c "%s" {fn_local} 2>/dev/null)
         fnlog="{fn_status}"
-        # determine need to upload or not
-        remote_file_size=$({dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_remote}"|grep "{fn_pure}$" | tr -s " "|cut -d " " -f 3)
+
         size_exp={size_exp}
         echo local_size=$local_size , remote size = $remote_file_size exp size = $size_exp >> $fnlog
-
 
         if [[ -z $remote_file_size ]];then
             # local file not exist
@@ -1021,10 +1098,18 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
             echo -e "unkown situation! \\n local=$local_size\\n remote=$remote_file_size \\n exp = $size_exp" >>  $fnlog
             exit 1
         fi
+        """
+        
+        
+        if dest == 'emedgene':
+            cmd.append(f"""
+    checkremote(){{
+        remote_file_size=$({dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_remote}"|grep "{fn_pure}$" | tr -s " "|cut -d " " -f 3)
+        {check_remote_logic}
 
     }}
     """)
-        else:
+        elif dest == 'dropbox':
             # there is no way for dropbox to get byte file size
             cmd.append(f"""
     checkremote(){{
@@ -1037,6 +1122,13 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
     }}
 
     """)
+        elif dest == 'rdrive':
+            cmd.append(f"""
+    checkremote(){{
+        remote_file_size=$({dock} smbclient "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf" -D "{remote_pw}/" <<< $'recurse on\\nls'|grep "{fn_remote}"|head -1|tr -s " "|cut -d ' ' -f 4)
+        {check_remote_logic}
+    }}
+            """)
         cmd.append(f"""
     postupload(){{
         mv {pw}/shell/{fn}.download_upload.{dest}.sh \\
@@ -1059,7 +1151,6 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
         if not no_upload and not force_download:
             cmd.append(f"""
     upload_status=$(checkremote)
-
     if [[ $upload_status = "already_uploaded" ]];then
         postupload
         exit 0
@@ -1097,6 +1188,8 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
             upload_cmd = f'{dock} dbxcli put "{fn_local}" "/{remote_pw}/{fn_remote}" > {pw}/log/upload.{dest}.{fn}.log 2>&1'
         elif dest == 'emedgene':
             upload_cmd = f'{dock} aws s3 cp ""{fn_local}"" "s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_remote}" > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log'
+        elif dest == 'rdrive':
+            upload_cmd = f"""{dock} smbclient "//i10file.vumc.org/ped/"   -A /home/chenh19/cred/smbclient.conf"  <<< $'put "{fn_local}" "{remote_pw}/{fn_remote}" ' """
 
         if not no_upload and need_upload:
             cmd.append(f"""
@@ -1125,6 +1218,7 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
         """)
         print('\n'.join(cmd), file=out)
     os.chmod(fn_script, 0o755)
+    
     return fn_script
 
 def build_script(pw, d, info_file, no_upload=False):
@@ -1205,7 +1299,7 @@ def main(pw, script_list, info_file=None, remote_pw_in=None, updated_version_onl
     for i in ['shell', 'shell_done', 'download', 'log']:
         os.makedirs(f'{pw}/{i}', exist_ok=True)
     # parse the info file
-    d, ct, script_list = parse_info_file(pw, info_file, remote_pw_in=remote_pw_in, ft=ft, updated_version_only=updated_version_only, script_list=script_list, no_upload=no_upload, remote_flat=remote_flat)
+    d, ct, script_list = parse_info_file(pw, info_file, remote_pw_in=remote_pw_in, ft=ft, updated_version_only=updated_version_only, script_list=script_list, no_upload=no_upload, remote_flat=remote_flat, invalid_url_all=invalid_url_all)
     if not lite:
         build_script(pw, d, info_file, no_upload=no_upload)
     return ct, script_list
@@ -1366,6 +1460,7 @@ if __name__ == "__main__":
     profile = args.profile
     clearlog_flag = args.clear
     demo = args.demo
+    ignore_na_url = args.i
 
     asis = args.asis  # use the remote_pw in the cmd line input, do not do the re-format
     rm = args.rm
@@ -1382,7 +1477,7 @@ if __name__ == "__main__":
         dock = 'singularity exec -B /fs0 /data/cqs/chenh19/dock/centos.sif '
 
 
-    convert1 = {'dropbox': 'dropbox', 'db': 'dropbox', 'emedgene': 'emedgene', 'em': 'emedgene', 'ed':'emedgene'}
+    convert1 = {'dropbox': 'dropbox', 'db': 'dropbox', 'emedgene': 'emedgene', 'em': 'emedgene', 'ed':'emedgene', 'rdrive': 'rdrive', 'r': 'rdrive'}
     convert2 = {'emedgene': 'emedgene', 'em': 'emedgene', 'ed':'emedgene', 'pacbio': 'pacbio', 'pac': 'pacbio'}
     dest = convert1[args.dest]
     profile = convert2[profile]
@@ -1548,6 +1643,8 @@ if __name__ == "__main__":
 
         remote_base_prefix = f'{remote_base}/' if remote_base else ''
         remote_pw_in = remote_pw or f'{remote_base_prefix}{pw_core}'
+        
+        remote_pw_in = remote_pw_in.replace('\\', '/')
         ct_prj, script_list = main(ipw, script_list, remote_pw_in=remote_pw_in, updated_version_only=updated_version_only, no_upload=no_upload, remote_flat=remote_flat)
 
         for k in ct:
@@ -1569,14 +1666,15 @@ if __name__ == "__main__":
     for udn, v1 in file_ct.items():
         print(udn)
         for rel, v2 in v1.items():
-
-            line = f'    {rel}'
+            line = f'    {rel}\n        ft\tvalid\tna_url'
             for ift, v3 in v2.items():
-                n_file = len(v3)
-                if len(ft) == 1:
-                    line += f'\t{n_file}'
-                else:
-                    line += f'\n        {ift}\t{n_file}'
+                n_valid_url = n_invalid_url = 0
+                for ifn in v3:
+                    if ifn in invalid_url_all:
+                        n_invalid_url += 1
+                    else:
+                        n_valid_url += 1
+                line += f'\n        {ift}\t{n_valid_url}\t{n_invalid_url}'
             print(line)
 
 
