@@ -72,7 +72,6 @@ ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'gvcf', 'fasta': 'fasta', 
 ft_convert.update({_: _ for _ in ft_convert.values()})
 
 file_ct = {}
-invalid_url_all = set()
 
 # ps.add_argument('-prj', help="""project name for this run, if not set, would use the UDN infered from info file or current folder name""")
 
@@ -146,6 +145,7 @@ def colored(text, color=None, on_color=None, attrs=None):
                 list(range(30, 38))
                 ))
             )
+    COLORS['purple'] = 35
 
 
     RESET = '\u001b[0m'
@@ -165,9 +165,9 @@ def colored(text, color=None, on_color=None, attrs=None):
     return text
 
 def red(s):
-    return colored(s, 'red', attrs=['bold'])
+    return colored(str(s), 'red', attrs=['bold'])
 def green(s):
-    return colored(s, 'green', attrs=['bold'])
+    return colored(str(s), 'green', attrs=['bold'])
 
 
 def getlogger():
@@ -241,9 +241,9 @@ def getlogger():
     return logger
 
 def build_remote_subfolder(name, dest):
-    if demo:
-        logger.info(f'demo mode, skip building remote subfolder')
-        return 0
+    # if demo:
+    #     logger.info(f'demo mode, skip building remote subfolder')
+    #     return 0
     if dest == 'dropbox':
         logger.info(f'\tcreating subfolder: {name}')
         os.system(f'{dock} dbxcli mkdir "{name}/" >>{dest}.create_folder.log 2>{dest}.create_folder.log')
@@ -253,7 +253,9 @@ def build_remote_subfolder(name, dest):
         os.system(f'{dock} aws s3api put-object --bucket emg-auto-samples --key "Vanderbilt/upload/{name}/" >>{dest}.create_folder.log 2>{dest}.create_folder.log')
     elif dest == 'rdrive':
         logger.info(f'\tbuilding subfolder {name}')
-        os.system(f'{dock} smbclient "//i10file.vumc.org/ped/"   -A /home/chenh19/cred/smbclient.conf -c \'mkdir "{name}" \' ')
+        cmd = f'{dock} smbclient "//i10file.vumc.org/ped/"   -A /home/chenh19/cred/smbclient.conf -c \'mkdir "{name}" \' '
+        # logger.info(cmd)
+        os.system(cmd)
 
 def get_file_extension(fn):
 
@@ -355,7 +357,6 @@ def get_remote_file_list(pw, dest, remote_pw):
                 fn = a[-1].rsplit('/', 1)[-1]
 
                 d_exist[fn] = [a[-1], 0]
-
                 if i[0] == '-':
                     folder = a[-1].replace(remote_pw, '')
                     folder = re.sub(r'^/', '', folder)
@@ -406,8 +407,11 @@ def parse_md5(fn):
     with open(fn) as f:
         for i in f:
             i = re.split(r'\s+', i.strip())
+            
             try:
-                res[i[1]] = i[0]
+                md5_v = i[0]
+                if md5_v != 'NA':
+                    res[i[1]] = i[0]
             except:
                 pass
     
@@ -424,7 +428,7 @@ def get_local_md5(fn):
     except:
         return None
 
-def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, updated_version_only=True, script_list=None, no_upload=False, remote_flat=False, invalid_url_all=None):
+def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, updated_version_only=True, script_list=None, no_upload=False, remote_flat=False):
     """
     the info file is like
     rel_to_proband\tfn\turl\tudn\tseq_type\tsize\tbuild\tmd5\turl_s3\tdate_upload\tremote_pw\n
@@ -458,7 +462,8 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
         os.unlink(fn_all_folder)
     except:
         pass
-
+    
+    remote_pw_in = remote_pw_in.replace('\\', '/')
     logger.info(f'remote_pw_in={remote_pw_in}')
     remote_pw_in = refine_remote_pw(remote_pw_in, dest)
 
@@ -482,18 +487,18 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
     
         exp_md5 = parse_md5(fn_md5)
 
-    # logger.info(exp_md5)
-    if not no_upload:
-            fn_new = fn_md5.rsplit('/', 1)[-1].replace('download.', '')
+    # # logger.info(exp_md5)
+    # if not no_upload and len(exp_md5) > 0:
+    #         fn_new = fn_md5.rsplit('/', 1)[-1].replace('download.', '')
 
-            if fn_new in d_exist:
-                logger.info(f'{fn_md5} already uploaded')
-            else:
-                # build the script
-                # logger.info(f'upload md5 file')
-                fnscript = build_script_single(dest, remote_pw_in, fn_md5, url_var=fn_md5,fn_remote=fn_new, pw=pw, need_upload=True)
-                if fnscript:
-                    script_list['needup'].append(fnscript)
+    #         if fn_new in d_exist:
+    #             logger.info(f'{fn_md5} already uploaded')
+    #         else:
+    #             # build the script
+    #             # logger.info(f'upload md5 file')
+    #             fnscript = build_script_single(dest, remote_pw_in, fn_md5, url_var=fn_md5,fn_remote=fn_new, pw=pw, need_upload=True)
+    #             if fnscript:
+    #                 script_list['needup'].append(fnscript)
 
     logger.info('start parsing')
     remote_sub_pw_map = {}
@@ -575,6 +580,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                 remote_pw = remote_pw_in
 
             # remote_base_pw.add(remote_pw)
+            remote_pw = remote_pw.replace('\\', '/')
 
 
             try:
@@ -652,7 +658,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
             if os.path.exists(fn_download):
                 size_local = os.path.getsize(fn_download)
                 fn_pure = os.path.basename(fn_download)
-                file_md5_exp = exp_md5.get(fn_pure)
+                file_md5_exp = exp_md5.get(fn_pure) or 'NA'
                 file_md5_local = get_local_md5(fn_download)
                 
                 md5_ok = 0
@@ -718,25 +724,23 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
 
     # logger.debug(d)
     sub_folders_exist = set()
-    
-    
+        
     for remote_pw, v in d_exist_all.items():
         i = set([f'{remote_pw}/{name}' for name in v[1]])
-        sub_folders_exist.add(remote_pw)
+        if len(v[0]) > 0 or len(v[1]) > 0:
+            sub_folders_exist.add(remote_pw)
         sub_folders_exist |= i
 
-    logger.debug(f'remote existing subfolders = {sub_folders_exist}')
-
-
     sub_folders_exp = set()
-    for v1 in d.values():
+    for k1, v1 in d.items():
+        sub_folders_exp.add(k1)
         for v2 in v1.values():
             sub_folders_exp.add(v2['remote'])
 
     logger.info(f'subfolder exp = {sub_folders_exp}')
     logger.info(f'subfolder existed = {sub_folders_exist}')
 
-    sub_folder_to_build = sub_folders_exp - sub_folders_exist
+    sub_folder_to_build = sorted(sub_folders_exp - sub_folders_exist)
     if not demo and not no_upload:
         for i in sub_folder_to_build:
             build_remote_subfolder(i, dest=upload_type)
@@ -745,12 +749,14 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
     else:
         logger.info(f'all remote subfolder are ready')
 
+
     # check the status
     n_downloaded = 0
     n_uploaded = 0
     n_desired = 0
     need_upload = []
-    invalid_url = []
+    
+    # ok = uploaded
 
     # check for the updated tag
     updated_tag = set()
@@ -778,6 +784,10 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                 logger.warning(f'{len1} files have updated version, both version would be updated:\t{excluded_file_str}')
     else:
         excluded_file = set()
+        
+        
+    
+    file_status = {'ok': [], 'downloaded': [], 'raw': [], 'invalid_url': []}
 
     for _ in list(d):
         v1 = d[_]
@@ -787,18 +797,22 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                 continue
             v = v1[fn]
 
-            fn_script = f'{pw}/shell/{fn}.download_upload.emedgene.sh'
+            fn_script = f'{pw}/shell/{fn}.download_upload.{dest}.sh'
             n_desired += 1
 
             if v['uploaded']:
                 logger.info(colored(f'file already uploaded: {fn}', 'green'))
                 n_uploaded += 1
+                file_status['ok'].append(fn)
 
                 if not force_download:
                     # n_downloaded += 1
                     continue
+                
+                
+                
             if v['url'].lower() == 'na':
-                invalid_url.append(fn)
+                file_status['invalid_url'].append(fn)
                 continue
             
             if not v['downloaded']:
@@ -806,16 +820,19 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                     if not no_upload:
                         need_upload.append(fn)
                     script_list['needdown'].append(fn_script)
+                    file_status['raw'].append(fn)
             else:
                 n_downloaded += 1
+                file_status['downloaded'].append(fn)
                 if not no_upload:
                     need_upload.append(fn)
                     script_list['needup'].append(fn_script)
 
+
     n_need_upload = len(need_upload)
     logger.info(f'total files = {n_desired}, need_to_upload={n_need_upload}, already exist in server = {n_uploaded}, already downloaded = {n_downloaded}')
 
-    invalid_url_all |= set(invalid_url)
+    invalid_url = file_status['invalid_url']
     n_invalid_url = len(invalid_url)
     n_need_download = n_desired - n_downloaded - n_uploaded
     if n_need_upload > 0 or n_invalid_url > 0 or n_need_download > 0:
@@ -836,7 +853,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
 
     ct = {'total': n_desired, 'downloaded': n_downloaded, 'uploaded': n_uploaded, 'need_to_upload': n_need_upload}
 
-    return d, ct, script_list
+    return d, ct, script_list, file_status
 
 
 def refine_remote_pw(remote_pw, dest):
@@ -857,7 +874,7 @@ def refine_remote_pw(remote_pw, dest):
     if dest == "emedgene":
         os.system(f'{dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_base_dir}" > {fn_all_folder} ')
     elif dest == 'rdrive':
-        cmd = f'{dock} smbclient "//i10file.vumc.org/ped/"  -A /home/chenh19/cred/smbclient.conf -D "{remote_base_dir}" -c "ls" 2>/dev/null > {fn_all_folder}'
+        cmd = f'{dock} smbclient "//i10file.vumc.org/ped/"  -A "/home/chenh19/cred/smbclient.conf" -D "{remote_base_dir}" -c "ls" 2>/dev/null > {fn_all_folder}'
         os.system(cmd)
 
     all_remote_folders = {}
@@ -952,12 +969,12 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
 
     fn = os.path.basename(fn_local)
     pw = pw or os.getcwd()
-    
+        
     local_file_size = local_file_size or {}
 
     fn_remote = fn_remote or fn
-    if not os.path.exists(fn_local):
-        return None
+    # if not os.path.exists(fn_local):
+    #     return None
 
     fn_script = f'{pw}/shell/{fn}.download_upload.{dest}.sh'
     fn_status = f'{pw}/log/status.{fn}.txt'
@@ -984,11 +1001,13 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
     else:
         size_exp = size_exp or 'na'
         cmd_check_md5 = f"""# check md5sum
-    if [[ ! -f {pw}/log/{fn}.md5 ]];then
+
+    md5_exp=$(grep -E -m1 "{fn}($|[^.])" {pw}/download.UDN*.md5 2>/dev/null|cut -d " " -f1)
+    
+    if [[ ! -f {pw}/log/{fn}.md5 && -n "$md5_exp" && "$md5_exp" != "NA" ]];then
     md5sum  {fn_local} >{pw}/log/{fn}.md5 2>{pw}/log/{fn}.md5.log
     fi
 
-    md5_exp=$(grep -h "{fn}" {pw}/download.UDN*.md5 2>/dev/null|head -1|cut -d " " -f1)
     md5_local=$(head -1 {pw}/log/{fn}.md5|cut -d " " -f1)
 
     if [[ -z $md5_exp || "$md5_exp" == "NA" ]];then
@@ -1104,7 +1123,7 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
         if dest == 'emedgene':
             cmd.append(f"""
     checkremote(){{
-        remote_file_size=$({dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_remote}"|grep "{fn_pure}$" | tr -s " "|cut -d " " -f 3)
+        remote_file_size=$({dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_remote}"|grep -E -m1 "{fn_pure}$" | tr -s " "|cut -d " " -f 3)
         {check_remote_logic}
 
     }}
@@ -1113,7 +1132,7 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
             # there is no way for dropbox to get byte file size
             cmd.append(f"""
     checkremote(){{
-        file_exist_from_remote=$({dock} dbxcli ls -l "/{remote_pw}/"|grep "{fn_remote}")
+        file_exist_from_remote=$({dock} dbxcli ls -l "/{remote_pw}/"|grep -E -m1 "{fn_remote}($|[^.])")
         if [[ ! -z "$file_exist_from_remote" ]];then
             echo alrady_uploaded
         else
@@ -1125,7 +1144,7 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
         elif dest == 'rdrive':
             cmd.append(f"""
     checkremote(){{
-        remote_file_size=$({dock} smbclient "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf" -D "{remote_pw}/" <<< $'recurse on\\nls'|grep "{fn_remote}"|head -1|tr -s " "|cut -d ' ' -f 4)
+        remote_file_size=$({dock} smbclient "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf" -D "{remote_pw}/" <<< $'recurse on\\nls'|grep -E -m1 "{fn_remote}($|[^.])"|head -1|tr -s " "|cut -d ' ' -f 4)
         {check_remote_logic}
     }}
             """)
@@ -1148,6 +1167,8 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
     download_status=$(checklocal)
 
     """)
+    
+        # upload_status
         if not no_upload and not force_download:
             cmd.append(f"""
     upload_status=$(checkremote)
@@ -1155,8 +1176,9 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
         postupload
         exit 0
     fi
-
     """)
+        else:
+            logger.info(f'g@{no_upload=}, {force_download=}')
         cmd.append(f"""
 
     if [[ $download_status -eq 1 ]];then
@@ -1189,7 +1211,7 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
         elif dest == 'emedgene':
             upload_cmd = f'{dock} aws s3 cp ""{fn_local}"" "s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_remote}" > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log'
         elif dest == 'rdrive':
-            upload_cmd = f"""{dock} smbclient "//i10file.vumc.org/ped/"   -A /home/chenh19/cred/smbclient.conf"  <<< $'put "{fn_local}" "{remote_pw}/{fn_remote}" ' """
+            upload_cmd = f"""{dock} smbclient "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf"  <<< $'put "{fn_local}" "{remote_pw}/{fn_remote}" ' """
 
         if not no_upload and need_upload:
             cmd.append(f"""
@@ -1218,7 +1240,6 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
         """)
         print('\n'.join(cmd), file=out)
     os.chmod(fn_script, 0o755)
-    
     return fn_script
 
 def build_script(pw, d, info_file, no_upload=False):
@@ -1252,6 +1273,7 @@ def build_script(pw, d, info_file, no_upload=False):
             url_var = f"""url=$(awk -F "\\t" '$2=="{fn}" {{print ${idx_url} }}' {info_file})"""
             fn_script = build_script_single(dest, remote_pw, fn_download, url_var, simple=False, fn_deid=fn_deid, sample_list=sample_list, pw=pw, download_type=download_type, size_exp=size_exp, need_upload=need_upload)
             if fn_script is None:
+                # logger.info(f'{dest=}, {remote_pw=}, {fn_download=}, {fn_deid=}, {pw=}, {download_type=}, {size_exp=}, {need_upload=}')
                 logger.warning(f'fail to build script for {fn}')
 
 
@@ -1299,10 +1321,10 @@ def main(pw, script_list, info_file=None, remote_pw_in=None, updated_version_onl
     for i in ['shell', 'shell_done', 'download', 'log']:
         os.makedirs(f'{pw}/{i}', exist_ok=True)
     # parse the info file
-    d, ct, script_list = parse_info_file(pw, info_file, remote_pw_in=remote_pw_in, ft=ft, updated_version_only=updated_version_only, script_list=script_list, no_upload=no_upload, remote_flat=remote_flat, invalid_url_all=invalid_url_all)
+    d, ct, script_list, file_status = parse_info_file(pw, info_file, remote_pw_in=remote_pw_in, ft=ft, updated_version_only=updated_version_only, script_list=script_list, no_upload=no_upload, remote_flat=remote_flat)
     if not lite:
         build_script(pw, d, info_file, no_upload=no_upload)
-    return ct, script_list
+    return ct, script_list, file_status
 
 def clearlog(force=False):
     # get folder list
@@ -1543,14 +1565,14 @@ if __name__ == "__main__":
         d_exist, sub_folders = get_remote_file_list(pw, dest, remote_pw)
         file_status = {'uploaded': [], 'need_to_upload': [], 'size_not_match': []}
 
-        logger.info(d_exist)
+        # logger.info(d_exist)
         for fn in local_files:
             fn_pure = os.path.basename(fn)
             if fn_pure not in d_exist:
                 file_status['need_to_upload'].append(fn)
             else:
                 size = local_file_size.get(fn) or os.path.getsize(fn)
-                logger.info(f'{fn}: {size}')
+                # logger.info(f'{fn}: {size}')
                 if d_exist[fn_pure][1] == size:
                     file_status['uploaded'].append(fn)
                 else:
@@ -1567,9 +1589,11 @@ if __name__ == "__main__":
                 os.unlink(fn_not_match)
             except:
                 pass
-
-        if len(file_status['uploaded']) > 0:
-            logger.info(colored(f'\nthe following files has been uploaded:\n\t' + '\n\t'.join(file_status['uploaded']), 'green'))
+        ntmp = len(file_status['uploaded'])
+        if ntmp > 0:
+            logger.info(f'g@{ntmp} files has been uploaded')
+        #     # logger.info(colored(f'\nthe following files has been uploaded:\n\t' + '\n\t'.join(file_status['uploaded']), 'green'))
+        #     logger.info(colored(f'\nthe following files has been uploaded:\n\t' + '\n\t'.join(file_status['uploaded']), 'green'))
 
         if len(file_status['need_to_upload']) == 0:
             print(colored('All done', 'green'))
@@ -1629,6 +1653,7 @@ if __name__ == "__main__":
 
     ct = {'total': 0, 'downloaded': 0, 'uploaded': 0, 'need_to_upload': 0}
     script_list = {'needup': [], 'needdown': []}
+    file_status_all = {}
 
     for ipw in pw:
         ipw = re.sub(r'/$', '', ipw)
@@ -1645,7 +1670,10 @@ if __name__ == "__main__":
         remote_pw_in = remote_pw or f'{remote_base_prefix}{pw_core}'
         
         remote_pw_in = remote_pw_in.replace('\\', '/')
-        ct_prj, script_list = main(ipw, script_list, remote_pw_in=remote_pw_in, updated_version_only=updated_version_only, no_upload=no_upload, remote_flat=remote_flat)
+        ct_prj, script_list, file_stat = main(ipw, script_list, remote_pw_in=remote_pw_in, updated_version_only=updated_version_only, no_upload=no_upload, remote_flat=remote_flat)
+        
+        for istat, v in file_stat.items():
+            file_status_all.setdefault(istat, set()).update(set(v))
 
         for k in ct:
             ct[k] += ct_prj[k]
@@ -1653,9 +1681,7 @@ if __name__ == "__main__":
         # ct = {'total': n_desired, 'downloaded': n_downloaded, 'uploaded': n_uploaded, 'need_to_upload': n_need_upload}
 
     print('\n' + '#' * 50)
-
     print(json.dumps(ct, indent=4))
-
 
     # build the script list
     n_needup = len(script_list['needup'])
@@ -1665,20 +1691,28 @@ if __name__ == "__main__":
 
     for udn, v1 in file_ct.items():
         print(udn)
+        
         for rel, v2 in v1.items():
-            line = f'    {rel}\n        ft\tvalid\tna_url'
+            line = f'    {rel}\n        ft,ok,down,raw,na_url'.replace(',', '\t')
             for ift, v3 in v2.items():
-                n_valid_url = n_invalid_url = 0
+                n_invalid_url = n_ok = n_downloaded = n_raw = 0
                 for ifn in v3:
-                    if ifn in invalid_url_all:
+                    if ifn in file_status_all['invalid_url']:
                         n_invalid_url += 1
-                    else:
-                        n_valid_url += 1
-                line += f'\n        {ift}\t{n_valid_url}\t{n_invalid_url}'
+                    elif ifn in file_status_all['ok']:
+                        n_ok += 1
+                    elif ifn in file_status_all['downloaded']:
+                        n_downloaded += 1
+                    elif ifn in file_status_all['raw']:
+                        n_raw += 1
+
+                n_ok = green(n_ok) if n_ok > 0 else 0
+                n_downloaded = green(n_downloaded) if n_downloaded > 0 else 0
+                n_raw = red(n_raw) if n_raw > 0 else green(0)
+                n_invalid_url = red(n_invalid_url) if n_invalid_url > 0 else green(0)
+                
+                line += f'\n        {ift}\t{n_ok}\t{n_downloaded}\t{n_raw}\t{n_invalid_url}'
             print(line)
-
-
-    # print(json.dumps(file_ct, indent=4))
 
     with open(f'script_list.txt', 'w') as o:
         for k in ['needup', 'needdown']:
