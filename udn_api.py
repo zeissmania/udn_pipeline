@@ -142,7 +142,7 @@ def get_file_extension(fn):
         except:
             return m.group(1), m.group(2)
     else:
-        logger.info(f'unclear file type: {fn}')
+        logger.debug(f'unclear file type: {fn}')
         return None, None
 
 # print(get_file_extension('1165326-UDN844742-P_reheadered.cnv.vcf.gz'))
@@ -396,6 +396,7 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
     skipped_due_to_seq_type = {}
     seq_type_kept = {}
 
+    file_dedup = set()
     for ifl in res['files']:
         if uploaded_date_ready == 0:
             if ifl['fn'].find('fastq') > -1:
@@ -411,6 +412,11 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
             continue
 
         ifn = ifl['fn']
+        if ifn not in file_dedup:
+            dup_flag = ''
+            file_dedup.add(ifn)
+        else:
+            dup_flag = ' (dup)'
         ext, gz = get_file_extension(ifn)
         seq_type_kept.setdefault(seq_type, {}).setdefault(ext, 0)
         seq_type_kept[seq_type][ext] += 1
@@ -418,16 +424,15 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
 
         download_link = get_download_link(udn, ifl, get_aws_ft, gzip_only=None)
         if download_link == 0:
-            logger.info(colored(f'\tamazon link still valid: {ifl["fn"]}', 'green'))
+            logger.info(colored(f'\tamazon link still valid: {ifn}{dup_flag}', 'green'))
         elif download_link == 1:
-            logger.info(colored(f'\tfail to get amazon link {ifl["fn"]}', 'red'))
+            logger.info(colored(f'\tfail to get amazon link {ifn}{dup_flag}', 'red'))
         elif download_link == 2:
             continue
         else:
-            logger.info(green(f'\turl updated: {ifn}'))
+            logger.info(green(f'\turl updated: {ifn}{dup_flag}'))
             ifl['download'] = download_link
 
-    
     if skipped_due_to_seq_type:
         logger.info(f'g@skipped seq_type: {skipped_due_to_seq_type}')
 
@@ -984,16 +989,21 @@ default:
         p_trailing = '_' + p_trailing if p_trailing else ''
         remote_pw = m[1] + p_trailing
 
-    out_info.write('rel_to_proband\tfn\trename\tsample_list\turl\tudn\tseq_type\tsize\tbuild\tmd5\turl_s3\tupload_type\tdownload_type\tremote_pw\n')
+    out_info.write('rel_to_proband\tfn\trename\tsample_list\turl\tudn\tseqid\tseq_type\tsize\tbuild\tmd5\tupload_type\tdownload_type\tremote_pw\turl_s3\n')
 
     check_dup = {}
     
     url_count = {'total': {'na': 0, 'ok': 0, 'unknown': 0}}
     
+    info_lines = []
     for rel_to_proband, irel in res.items():
         if not irel.get('files'):
             continue
         udn = irel['simpleid']
+        
+        file_dedup = set()
+        dup_fls = []
+        
         for ifl in irel['files']:
             url = ifl['download']
             fn = ifl['fn']
@@ -1006,6 +1016,7 @@ default:
             md5 = ifl['md5']
             newname = ''
             newname_base = ''
+            
 
             ext, gz = get_file_extension(fn)
             # logger.info(f'{fn}, {ext}, {gz}')
@@ -1015,6 +1026,11 @@ default:
                 continue
 
             logger.debug(f'{fn}\t{url}')
+            
+            if fn not in file_dedup:
+                file_dedup.add(fn)
+            else:
+                dup_fls.append(fn)
             
             url_count.setdefault(ext, {'na': 0, 'ok': 0, 'unkown': []})
             if url.lower() == 'na':
@@ -1058,9 +1074,49 @@ default:
                 else:
                     logger.info(f'joint.cnv found:{fn} - skip')
 
+            # 'rel_to_proband\tfn\trename\tsample_list\turl\tudn\tseqid\tseq_type\tsize\tbuild\tmd5\tupload_type\tdownload_type\tremote_pw\turl_s3\n'
+            info_lines.append([rel_to_proband, fn, newname, newname_base, url, udn, seq_id, seq_type, size, build, md5, '', '', '', url_s3])
 
-            out_info.write(f'{rel_to_proband}\t{fn}\t{newname}\t{newname_base}\t{url}\t{udn}\t{seq_type}\t{size}\t{build}\t{md5}\t{url_s3}\n')
             out_md5.write(f'{md5}  {fn}\n')
+
+        if len(dup_fls) > 0:
+            logger.warning(f'{rel_to_proband}: the following files are duplicate ({len(dup_fls)})\n\t' + '\n\t'.join(dup_fls))
+            
+    
+    info_lines = sorted(info_lines, key=lambda _: (_[6], _[0], _[7]))
+    # dedup file
+    dedup = {}  # key = fn, v = (idx, seq_id, size)
+    dup = []  # ele = idx
+    for idx, line in enumerate(info_lines):
+        fn, seq_id, size = line[1], int(line[6]), int(line[8])
+        if fn not in dedup:
+            dedup[fn] = [idx, seq_id, size]
+        else:
+            idx_prev, seq_id_prev, size_prev = dedup[fn]
+            if seq_id_prev < seq_id:
+                if size_prev == size:
+                    dup.append(idx_prev)
+                    dedup[fn] = [idx, seq_id, size]
+                else:
+                    logger.warning(f'dup file found, and size does not match: {fn} - seq_id = {seq_id_prev}:{seq_id}, size = {size_prev}:{size}')
+            elif seq_id_prev > seq_id:
+                if size_prev == size:
+                    dup.append(idx)
+                else:
+                    logger.warning(f'dup file found, and size does not match: {fn} - seq_id = {seq_id_prev}:{seq_id}, size = {size_prev}:{size}')
+            
+    if len(dup) > 0:
+        logger.warning(f'now removing {len(dup)} from the info files')
+        n_old = len(info_lines)
+        dup = set(dup)
+        info_lines = [_ for idx, _ in enumerate(info_lines) if idx not in dup]
+        n_new = len(info_lines)
+        logger.warning(f'before and after dedup n = {n_old} / {n_new} , gap = {n_old - n_new}')
+    
+    
+    info_lines = ['\t'.join(map(str, _)) for _ in info_lines]
+    print('\n'.join(info_lines), file=out_info)
+    # out_info.write(f'{rel_to_proband}\t{fn}\t{newname}\t{newname_base}\t{url}\t{udn}\t{seq_id}\t{seq_type}\t{size}\t{build}\t{md5}\t\t\t\t{url_s3}\n')
 
     for k in list(url_count):
         if k == 'total':
@@ -1068,7 +1124,7 @@ default:
         if len(url_count[k]['unkown']) == 0:
             del url_count[k]['unkown']
 
-    logger.info('\n' + json.dumps(url_count, indent=3))
+    # logger.info('\n' + json.dumps(url_count, indent=3))
 
     try:
         out_cnv.close()
