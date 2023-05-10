@@ -430,6 +430,8 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
 
 
         download_link = get_download_link(udn, ifl, get_aws_ft, gzip_only=None)
+        
+
         if download_link == 0:
             logger.info(colored(f'\tamazon link still valid: {ifn}{dup_flag}', 'green'))
         elif download_link == 1:
@@ -439,7 +441,9 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
         else:
             logger.info(green(f'\turl updated: {ifn}{dup_flag}'))
             ifl['download'] = download_link
-
+            with open(f'{udn}.downloadlink.backup.tsv', 'a') as o:
+                print(f'{rel_to_proband}\t{udn}\t{ifn}\t{download_link}', file=o)
+            
     if skipped_due_to_seq_type:
         logger.info(f'g@skipped seq_type: {skipped_due_to_seq_type}')
 
@@ -810,6 +814,9 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
                 else:
                     logger.info(green(f'\turl updated: {ifl["fn"]}'))
                     ifl['download'] = download_link
+                    
+                    with open(f'{udn}.downloadlink.backup.tsv', 'a') as o:
+                        print(f'{irel}\t{iudn}\t{ifl}\t{download_link}', file=o)
 
         if skipped_due_to_seq_type:
             logger.info(f'files skipped due to seq type not match')
@@ -1215,7 +1222,7 @@ def upload_files(nodename, pw_accre_data, pw_accre_scratch, udn_raw, rename=Fals
             fls.append(f"""mkdir {pw_accre_data}/{udn_raw}/origin/""")
             fls.append(f'put -r origin/* {pw_accre_data}/{udn_raw}/')
 
-        cmds.append('touch {initial_upload_flag}')
+        cmds.append(f'touch {initial_upload_flag}')
 
     fls = '\n'.join(fls)
     cmd = f"""sftp {nodename} <<< $'{fls}' >/dev/null 2>/dev/null\n""" + '\n'.join(cmds)
