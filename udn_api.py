@@ -348,7 +348,7 @@ def green(msg):
 
 
 
-def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=None,  udn_proband=None, gzip_only=None, sv_caller='dragen', newname_prefix=None):
+def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=None,  udn_proband=None, gzip_only=None, sv_caller='dragen', newname_prefix=None, rel_specified=None):
     """
     res_all,  when running specific relative, use this dict to accumulate among the family member
     gzip only, a set, if the ext is found in this set, then, the file must be gziped to get involved. e.g. if vcf in gzip_only, then,  the file named .vcf$ would not be included
@@ -375,14 +375,21 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
 
 
     relation = basic_info['relation']
+    
+    if rel_specified is None:
+        if relation is None:
+            rel_to_proband = 'Proband'
+        else:
+            logger.error(f'relation to proband must be specified when running recursive run, exit')
+            sys.exit(1)
+    else:
+        rel_to_proband = rel_specified
+    
+    res['rel_to_proband'] = rel_to_proband
     if relation is None:
-        rel_to_proband = 'Proband'
-        res['rel_to_proband'] = rel_to_proband
         res['rel_to_proband_short'] = 'P'
         is_proband = True
     else:
-        rel_to_proband = relation['name']
-        res['rel_to_proband'] = rel_to_proband
         res['rel_to_proband_short'] = relation['shortName']
 
     res['reports'], res['files'] = parse_seq_files(sequence_info, rel_to_proband)
@@ -466,6 +473,8 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
         res_family = []
         baylor_candidate = []
         res_pheno = []
+        
+        rel_count = {}
         for i in family_members['familyMembers']:
             try:
                 name = f'{i["nameFirst"]} {i["nameLast"]}'
@@ -481,7 +490,12 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
                 rel_full = i['relation']['name']
             except:
                 rel_full = 'NA'
-
+            
+            prev_sn = rel_count.setdefault(rel_full, 0)
+            current_sn = prev_sn + 1
+            rel_count[rel_full] = current_sn
+            if current_sn > 1:
+                rel_full = f'{rel_full}_{current_sn}'
 
             try:
                 fam_udn = i['udnId']
@@ -490,8 +504,8 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
 
             ires = [rel_full, name, fam_udn]
 
-
-            res_all = get_all_info(fam_udn, res_all=res_all, get_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family,  udn_proband=udn, gzip_only=gzip_only, sv_caller=sv_caller, newname_prefix=newname_prefix)
+            res_all = get_all_info(fam_udn, res_all=res_all, get_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family,  udn_proband=udn, gzip_only=gzip_only, sv_caller=sv_caller, newname_prefix=newname_prefix, rel_specified=rel_full)
+            
             res_family_member = res_all[rel_full]
             try:
                 ires.append(res_family_member['gender'])
