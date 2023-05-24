@@ -815,7 +815,7 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
                     logger.info(green(f'\turl updated: {ifl["fn"]}'))
                     ifl['download'] = download_link
                     
-                    with open(f'{udn}.downloadlink.backup.tsv', 'a') as o:
+                    with open(f'{iudn}.downloadlink.backup.tsv', 'a') as o:
                         print(f'{irel}\t{iudn}\t{ifl}\t{download_link}', file=o)
 
         if skipped_due_to_seq_type:
