@@ -465,9 +465,13 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
     
     remote_pw_in = remote_pw_in.replace('\\', '/')
     logger.info(f'remote_pw_in={remote_pw_in}')
+    remote_pw_in_old = remote_pw_in
     remote_pw_in = refine_remote_pw(remote_pw_in, dest)
 
-    logger.info(f'remote_pw afer refine={remote_pw_in}')
+    if remote_pw_in != remote_pw_in_old:
+        logger.warning(f'r@remote_pw changed after refine, current={remote_pw_in}, prev = {remote_pw_in_old}')
+    else:
+        logger.info(f'g@remote_pw unchanged: {remote_pw_in}')
     try:
         d_exist, sub_folders = d_exist_all[remote_pw_in]
     except:
@@ -747,7 +751,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
     if len(sub_folder_to_build) > 0:
         logger.info(f'demo build remote subfolder {sub_folder_to_build}')
     else:
-        logger.info(f'all remote subfolder are ready')
+        logger.info(f'g@all remote subfolder are ready')
 
 
     # check the status
@@ -886,7 +890,7 @@ def refine_remote_pw(remote_pw, dest):
     for i in open(fn_all_folder):
         if dest == 'rdrive':
             # UDN525928_02     D        0  Mon Feb  4 10:04:18 2019
-            i = i.strip().split(' ', 1)[0].strip()
+            i = re.split(r'\s+D\s+', i.strip())[0].strip()
         else:
             # PRE UDN616750_AA/
             i = i.strip().rsplit(' ', 1)[-1].strip()
@@ -905,32 +909,34 @@ def refine_remote_pw(remote_pw, dest):
             continue
         all_remote_folders[m.group(1)] = f'{remote_base_dir}{i}'
 
+
     if n == 0:
         logger.warning(f'base folder not exist: {remote_base_dir}')
         # sys.exit(1)
 
-    # logger.info(all_remote_folders)
     
     remote_pw = re.sub('^/', '', remote_pw)
     remote_pw = re.sub('upload_?', '', remote_pw, flags=re.I)
-    remote_pw = re.sub(r'^\d+_', '', remote_pw, 1)
-    m = re.match(r'(.*_)?(UDN\d+)(_.*)?', remote_pw)
+    # remote_pw = re.sub(r'^\d+_', '', remote_pw, 1)
+    m = re.match(r'(.*)?\s*(UDN\d+)\s*(.*)?', remote_pw)
+
+    
     if m:
         m = m.groups()
         udn_tmp = m[1]
         if udn_tmp in all_remote_folders:
             remote_pw = all_remote_folders[udn_tmp]
-            logger.info(f'remote folder already exist: {remote_pw}')
+            logger.info(f'g@remote folder already exist: {remote_pw}')
             return remote_pw
 
         if m[0] is not None:
-            p1 = re.sub('^_*', '', m[0])
+            p1 = re.sub('^_*', '', m[0].strip())
             p1 = re.sub('_*$', '', p1)
         else:
             p1 = None
 
         if m[2] is not None:
-            p2 = re.sub('^_*', '', m[2])
+            p2 = re.sub('^_*', '', m[2].strip())
             p2 = re.sub('_*$', '', p2)
         else:
             p2 = None
@@ -1625,7 +1631,6 @@ if __name__ == "__main__":
     # get pw
     pw_raw = args.pw or [os.getcwd()]
     pw = []
-
     for ipw in pw_raw:
         tmp = ipw.rsplit('/', 1)[-1]
         info_file = glob.glob(f'{ipw}/download.info*.txt')
@@ -1639,6 +1644,10 @@ if __name__ == "__main__":
                     pw.append(isub)
         else:
             pw.append(ipw)
+
+    if args.pw:
+        logger.info(f'input pw = {args.pw}')
+        logger.info(f'parsed pw = {pw}')
 
     if len(pw) > 1 and remote_pw:
         logger.error('multiple local path found, but only 1 remote_pw specified, try specify one at each or specify remote_base, then use auto assigned name')

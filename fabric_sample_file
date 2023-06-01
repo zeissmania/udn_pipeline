@@ -8,10 +8,56 @@ import os, sys, re
 import logging
 from termcolor import colored
 
+import sys
+import logging
+class CustomFormatter(logging.Formatter):
 
-fmt = logging.Formatter('%(asctime)s  %(levelname)-6s %(funcName)-20s  line: %(lineno)-5s  %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    colors = {
+        'black': '\u001b[30;20m',
+        'red': '\u001b[31;20m',
+        'r': '\u001b[31;20m',
+        'bold_red': '\u001b[31;1m',
+        'rb': '\u001b[31;1m',
+        'green': '\u001b[32;20m',
+        'g': '\u001b[32;20m',
+        'gb': '\u001b[32;1m',
+        'yellow': '\u001b[33;20m',
+        'blue': '\u001b[34;20m',
+        'b': '\u001b[34;20m',
+        'purple': '\u001b[35;1m',
+        'p': '\u001b[35;1m',
+        'grey': '\u001b[38;20m',
+    }
+    FORMATS = {
+        logging.WARNING: colors['purple'],
+        logging.ERROR: colors['bold_red'],
+        logging.CRITICAL: colors['bold_red'],
+    }
+
+    def format(self, record):
+        format_str = "%(asctime)s  %(levelname)-6s %(funcName)-20s  line: %(lineno)-5s  %(message)s"
+        reset = "\u001b[0m"
+        log_fmt = None
+        
+        record.msg = str(record.msg)
+        if '@' in record.msg[:10]:
+            try:
+                icolor, tmp = record.msg.split('@', 1)
+                log_fmt = self.colors.get(icolor)
+                if log_fmt:
+                    record.msg = tmp
+            except:
+                raise
+                pass
+        else:
+            log_fmt = self.FORMATS.get(record.levelno)
+        if log_fmt:
+            record.msg = log_fmt + record.msg + reset
+        formatter = logging.Formatter(format_str, datefmt='%Y-%m-%d %H:%M:%S')
+        return formatter.format(record)
+
 console = logging.StreamHandler(sys.stdout)
-console.setFormatter(fmt)
+console.setFormatter(CustomFormatter())
 console.setLevel('INFO')
 try:
     logger = logging.getLogger(__file__)
@@ -19,6 +65,100 @@ except:
     logger = logging.getLogger('terminal')
 logger.setLevel('DEBUG')
 logger.addHandler(console)
+
+def colored(text, color=None, on_color=None, attrs=None):
+    # Copyright (c) 2008-2011 Volvox Development Team
+    #
+    # Permission is hereby granted, free of charge, to any person obtaining a copy
+    # of this software and associated documentation files (the "Software"), to deal
+    # in the Software without restriction, including without limitation the rights
+    # to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    # copies of the Software, and to permit persons to whom the Software is
+    # furnished to do so, subject to the following conditions:
+    #
+    # The above copyright notice and this permission notice shall be included in
+    # all copies or substantial portions of the Software.
+    #
+    # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    # IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    # FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    # AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+    # THE SOFTWARE.
+    #
+    # Author: Konstantin Lepa <konstantin.lepa@gmail.com>
+
+    ATTRIBUTES = dict(
+            list(zip([
+                'bold',
+                'dark',
+                '',
+                'underline',
+                'blink',
+                '',
+                'reverse',
+                'concealed'
+                ],
+                list(range(1, 9))
+                ))
+            )
+    del ATTRIBUTES['']
+
+
+    HIGHLIGHTS = dict(
+            list(zip([
+                'on_grey',
+                'on_red',
+                'on_green',
+                'on_yellow',
+                'on_blue',
+                'on_magenta',
+                'on_cyan',
+                'on_white'
+                ],
+                list(range(40, 48))
+                ))
+            )
+
+
+    COLORS = dict(
+            list(zip([
+                'grey',
+                'red',
+                'green',
+                'yellow',
+                'blue',
+                'magenta',
+                'cyan',
+                'white',
+                ],
+                list(range(30, 38))
+                ))
+            )
+
+
+    RESET = '\u001b[0m'
+    if os.getenv('ANSI_COLORS_DISABLED') is None:
+        fmt_str = '\u001b[%dm%s'
+        if color is not None:
+            text = fmt_str % (COLORS[color], text)
+
+        if on_color is not None:
+            text = fmt_str % (HIGHLIGHTS[on_color], text)
+
+        if attrs is not None:
+            for attr in attrs:
+                text = fmt_str % (ATTRIBUTES[attr], text)
+
+        text += RESET
+    return text
+
+def red(s):
+    return colored(s, 'red', attrs=['bold'])
+def green(s):
+    return colored(s, 'green', attrs=['bold'])
+
 
 def rename_fq(fn, relation_map, case_prefix, kw_dedup, d_sam_sn):
     fn_pure = os.path.basename(fn)
@@ -90,7 +230,7 @@ def build_sample_sheet(case, res, fabric_prj, report_type, assay_type, job_type,
     fn_sample_sheet = f'{case}_samplesheet.csv'
     with open(fn_sample_sheet, 'w') as o:
         print(f"""[Header],,,,,,,
-{case} (Case Name),,,,,,,
+{case}(Case Name),,,,,,,
 [Reads],,,,,,,
 ,,,,,,,
 [Settings],,,,,,,
@@ -125,19 +265,24 @@ def parse_relation_map(relation_map):
         sys.exit(1)
     return res
 
+def get_fqlist(pwdata):
+    tmp = os.popen(f'find -L {pwdata} -type f -iname "*.fastq.gz"').read().strip().split('\n')
+    return tmp
+
 if __name__ == "__main__":
 
+    warning_str = red("don't modify if not sure ")
     import argparse as arg
     from argparse import RawTextHelpFormatter
     ps = arg.ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
-    ps.add_argument("case",  help="case / project prefix, must specify")
-    ps.add_argument("fq", help="fastq file list", nargs='+')
+    ps.add_argument("case",  help="case / project prefix, usually the case name, must specify")
+    ps.add_argument("fq", help="fastq file list, or the folder containing the fastq files, e.g. download/", nargs='+')
     ps.add_argument("-map", '-m',  help="name map, will try to use this map to add the Proband, Father or mother str, format is like : 005628:Proband", nargs='*')
-    ps.add_argument('-report_type', "-rep",  help="report type, default=solo", choices=['solo', 'trio'], default='solo')
-    ps.add_argument("-job_type", '-j',  help="job type, usually secondary_haplotyper", default="secondary_haplotyper")
-    ps.add_argument("-assay_type", '-aid',  help="pre-built secondary analysis assay UID, default=1237381", default="1237381")
-    ps.add_argument("-test_id", '-tid',  help="pre-built test pipeline UID, default=1237385", default="1237385")
-    ps.add_argument("-fabric_prj", '-fabprj',  help="fabric genomic project name, usually always UDP samples", default="UDP samples")
+    ps.add_argument('-report_type', "-rep",  help=warning_str + "report type, default=solo", choices=['solo', 'trio'], default='solo')
+    ps.add_argument("-job_type", '-j',  help=warning_str + "job type, usually secondary_haplotyper", default="secondary_haplotyper")
+    ps.add_argument("-assay_type", '-aid',  help=warning_str + "pre-built secondary analysis assay UID, default=1237381", default="1237381")
+    ps.add_argument("-test_id", '-tid',  help=warning_str + "pre-built test pipeline UID, default=1237385", default="1237385")
+    ps.add_argument("-fabric_prj", '-fabprj',  help=warning_str + "fabric genomic project name, usually always UDP samples", default="UDP samples")
 
 
     args = ps.parse_args()
@@ -152,12 +297,20 @@ if __name__ == "__main__":
     test_id = args.test_id
     fabric_prj = args.fabric_prj
 
+    if len(fqlist) == 1 and os.path.isdir(fqlist[0]):
+        fqlist = get_fqlist(fqlist[0])
+
+
+    if len(fqlist) == 0:
+        logger.error(f'no fqlist specified')
+
     pw_fq = 'fabric_data'
     os.makedirs(pw_fq, exist_ok=True)
 
     relation_map = parse_relation_map(relation_map)
 
-
+    logger.info(relation_map)
+    
     invalid = []
     res = set()
     kw_dedup = {}
