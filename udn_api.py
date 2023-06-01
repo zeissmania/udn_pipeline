@@ -41,7 +41,9 @@ from bs4 import BeautifulSoup as bs
 base_url = 'https://gateway.undiagnosed.hms.harvard.edu/api/2.0'
 platform = sys.platform.lower()
 
-ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'gvcf', 'fq': 'fastq', 'vcf': 'vcf', 'bz2': 'bz2', 'txt': 'txt', 'bed': 'bed', 'xls': 'xls', 'xlsx': 'xlsx', 'wig': 'wig'}
+ft_convert = {
+    'bai': 'bam', 
+    'cnv.vcf': 'cnv', 'gvcf': 'vcf', 'fq': 'fastq', 'vcf': 'vcf', 'bz2': 'bz2', 'txt': 'txt', 'bed': 'bed', 'xls': 'xls', 'xlsx': 'xlsx', 'wig': 'wig'}
 ft_convert.update({_: _ for _ in ft_convert.values()})
 
 class Credential():
@@ -135,7 +137,7 @@ def dump_json(obj, fn):
 
 def get_file_extension(fn):
     # m = re.match(r'.*?\.(bam|bai|cnv|fastq|fq|gvcf|vcf)\b(\.gz)?', fn.lower())
-    m = re.match(r'.*?\.([a-z]+(?:.vcf)?)(\.gz)?$', fn.lower().replace('.tbi', ''))
+    m = re.match(r'.*?\.([a-z]+(?:\.g?vcf)?)(\.gz)?$', fn.lower().replace('.tbi', ''))
     if m:
         try:
             return ft_convert[m.group(1)], m.group(2)
@@ -320,6 +322,8 @@ def get_download_link(udn, fl_info, get_aws_ft, gzip_only=None, force_update=Fal
             file_id = fl_info['file_id']
         except:
             logger.error(f'file id not found: info = \n{fl_info}')
+            return 1
+            
         try:
             download_json = get_json(f'participants/{udn}/sequencing/files/{file_id}')
             if download_json == 0:
@@ -329,6 +333,9 @@ def get_download_link(udn, fl_info, get_aws_ft, gzip_only=None, force_update=Fal
             if link is None:
                 logger.warning(f'downloadlink is not available in json: {fn}, {download_json}')
                 return 1
+            with open(f'downloadlink.txt', 'a') as o:
+                print(f'{file_id}\t{fn}\t{link}', file=o)
+                
             return link
         except:
             logger.warning(f'fail to get download link json: fn = {fn}, file_id = {file_id}')
@@ -336,7 +343,7 @@ def get_download_link(udn, fl_info, get_aws_ft, gzip_only=None, force_update=Fal
                 print(download_json)
             except:
                 pass
-            raise
+            # raise
             return 1
 
 
@@ -759,7 +766,6 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
     .fastq.gz
     .cnv.vcf.gz
 
-    un-used = .vcf.gz, .joint.vcf,  .gvcf.gz,
     """
     if not isinstance(gzip_only, set):
         gzip_only = set()
@@ -815,7 +821,7 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
                     logger.info(green(f'\turl updated: {ifl["fn"]}'))
                     ifl['download'] = download_link
                     
-                    with open(f'{udn}.downloadlink.backup.tsv', 'a') as o:
+                    with open(f'{iudn}.downloadlink.backup.tsv', 'a') as o:
                         print(f'{irel}\t{iudn}\t{ifl}\t{download_link}', file=o)
 
         if skipped_due_to_seq_type:
@@ -1396,7 +1402,7 @@ if __name__ == "__main__":
                 update_aws_ft.add(ft_convert[ext])
             except:
                 logger.error(f'invalid filetype: {i}')
-                err = 0
+                err = 1
         if err:
             sys.exit(1)
     else:
@@ -1577,7 +1583,11 @@ if __name__ == "__main__":
             pass
         os.chdir(pw_case)
 
-        fn_udn_api_pkl = f'{root}/{udn_raw}/intermed/{udn}.udn_api_query.pkl'
+        fn_udn_api_pkl = f'{pw_case}/intermed/{udn}.udn_api_query.pkl'
+        fn_downloadlink_backup = f'{pw_case}/downloadlink.txt'
+        with open(fn_downloadlink_backup, 'a') as o:
+            now = datetime.today().strftime('%Y/%m%d %H:%M:%S')
+            print(f'\n\n\n***  {now}   ***\n', file=o)
 
         if os.path.exists(fn_udn_api_pkl) and not force:
             logger.info(green('\tdirectly load API query result from pickle file'))
