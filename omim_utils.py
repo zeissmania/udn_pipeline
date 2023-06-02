@@ -427,6 +427,7 @@ def get_driver(driver, logger):
     return driver
 
 def parse_pheno_file(fn):
+    logger 
     if not os.path.exists(fn):
         logger.error(f'pheno file not exist: {fn}')
         return None
