@@ -1,0 +1,42 @@
+#! /usr/bin/env python3
+from omim_utils import omim_query
+from amelie_utils import query_amelie
+from chctool_lite import getlogger
+
+import os, sys, re
+
+logger = getlogger('omim_query')
+
+import argparse as arg
+from argparse import RawTextHelpFormatter
+ps = arg.ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
+ps.add_argument('-prj', help="""prj, default is the UDN ID""")
+args = ps.parse_args()
+
+pw = os.getcwd()
+
+if args.prj:
+    prj = args.prj
+else:
+    m = re.match('.*(UDN\d+)')
+    if m:
+        prj = m.group(1)
+    else:
+        logger.error(f'cannot identify prj name')
+        sys.exit(1)
+
+tmp = f'{pw}/intermediate/{prj}.terms_pure_hpo.txt'
+err = 0
+if not os.path.exists(tmp):
+    logger.error(f'hpo term file not exist: {tmp}')
+    err = 1
+
+tmp = f'{pw}/intermediate/{prj}.genelist'
+if not os.path.exists(tmp):
+    logger.error(f'genelist file not exist: {tmp}')
+    err = 1
+
+if err:
+    sys.exit(1)
+
+d_amelie = query_amelie(pw, prj, logger=logger, force=False)
