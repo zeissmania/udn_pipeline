@@ -480,111 +480,13 @@ def omim_query(gene_list, fn_pheno, logger=None):
     tmp = parse_pheno_file(fn_pheno)
     if not tmp:
         return None
-    pheno_list += tmp
+    l_pheno, l_pheno_raw = tmp
 
 
     # get the gene list with OMIM desease
     d_gene = {}
     n_gene_total = 0
     genes_without_omim_id = set()
-    with open(fn) as fp:
-        header = fp.readline()
-        header = header.strip().split('\t')
-
-        # get the column number for proband cn and last cn of the last family number
-        idx = {}
-        idx['proband'] = header.index('annot_ranking') + 1
-
-        l = ['qual', 'gn', 'omim', 'sv_type', 'sv_len', 'exon_span_tag', 'AMELIE']
-        for _ in l:
-            idx[_] = header.index(_)
-
-        for n, i in enumerate(header):
-            if i.lower().startswith('gn_'):
-                idx['end_idx'] = n
-                break
-        else:
-            idx['end_idx'] = len(header)
-
-        # for n, i in enumerate(header):
-        #     if idx['proband'] == 'na' and i.lower().startswith('proband'):
-        #         idx['proband'] = n
-        #     if idx['end_idx'] == 'na' and i.lower().startswith('gn_'):
-        #         idx['end_idx'] = n
-        try:
-            sum(idx.values())
-            valid_cn = 1
-            cn_header = header[idx['proband']: idx['end_idx']]
-        except:
-            valid_cn = 0
-            logger.error('invalid CN header found: {fn}')
-
-        # logger.info(f'index# : {idx}\nheader={header}')
-
-        header_other_info = ['coord', 'sv_type', 'gain_af_max', 'loss_af_max', 'filter']
-        for _ in header_other_info:
-            idx[_] = header.index(_)
-
-        n_gene_proband_2copy = 0
-        multiple_hit = 0
-        for i in fp:
-            a = i.split('\t')
-            gn = a[idx['gn']].strip()
-            omim_id = a[idx['omim']].strip()
-            sv_type = a[idx['sv_type']]
-            sv_len = a[idx['sv_len']]
-            qual_proband = a[idx['qual']]
-            n_gene_total += 1
-
-            other_info = ['',]
-            for _ in header_other_info:
-                sep = '\t' if len(_) >= 7 else '\t\t'
-                other_info.append(f'{_}:{sep}{a[idx[_]]}')
-            try:
-                amelie_score = float(a[idx['AMELIE']])
-            except:
-                logger.warning(f'wrong amelie score: {a}')
-                amelie_score = -1
-
-            cover_exon_flag = 1 if a[idx['exon_span_tag']].strip() else 0
-            copy_number = ''
-            if valid_cn:
-                copy_number = a[idx['proband'] :idx['end_idx']]
-
-                # if the copy number for proband is 2, then unable to interpret
-                if copy_number[0][:3] == 'oo@':
-                    n_gene_proband_2copy += 1
-                    continue
-
-                # copy_number[0] = f'{copy_number[0]}@{qual_proband}'
-                copy_number = [_.strip() for _ in copy_number if _.strip]
-
-                copy_number = [' = '.join(_) for _ in zip(cn_header, copy_number)] + other_info
-                copy_number = '\n\t\t'.join(copy_number)
-                copy_number = f'SV={sv_type}, svlen={sv_len} @@\n\t\t' + copy_number
-
-            if omim_id:
-                omim_id = str(int(float(omim_id.split(';')[0])))
-            else:
-                omim_id = 'NA'
-                genes_without_omim_id.add(gn)
-
-            if gn not in d_gene:
-                d_gene[gn] = [omim_id, cover_exon_flag, amelie_score, '\n\t' + copy_number]
-            else:
-                d_gene[gn][3] += '\n\t' + copy_number
-                multiple_hit += 1
-
-            d_gene[gn][1] = max(cover_exon_flag, d_gene[gn][1])
-
-
-    logger.info(f'd_gene gene count = {len(d_gene)}, genes with 2 copies = {n_gene_proband_2copy}, multiple_hit={multiple_hit},  expected_total = {len(d_gene) + n_gene_proband_2copy + multiple_hit}, n_gene_total = {n_gene_total}')
-
-    # build the predefined gene list
-
-    # logger.warning(f'POU6F2:{d_gene["POU6F2"]}')
-
-    # fn_gene_description_omim_pkl = f'{pw_code}/omim.gene_description_omim.pkl'
 
     fn_omim_pkl = f'{pw_code}/omim_description.scrapy.pkl'
     # k1 = hgnc_gn, v = [omim_gene_id_, []]
@@ -616,17 +518,12 @@ def omim_query(gene_list, fn_pheno, logger=None):
     logger.info(f'local total gene number with OMIM description={len(omim_gn_total)};  gene without linked omim = {len(non_omim_gn_total)}')
 
     logger.info(fn_omim_pkl)
-    genename_list = set(d_gene)
+    genename_list = set(gene_list)
     gene_with_omim = genename_list & omim_gn_total
     genes_without_linked_pheno = genename_list & non_omim_gn_total
     genes_need_scrapy = genename_list - set(d_gene_comment_scrapy) - genes_without_omim_id
     
-    logger.info(f'gene count in merged.sorted.tsv: total = {n_gene_total}, genes in d_gene = {len(d_gene)}')
     logger.info(f'\n\tgene count in with OMIM description: {len(gene_with_omim)}\n\tgenes without linked pheno = {len(genes_without_linked_pheno)},  \n\tgenes need scrapy OMIM = {len(genes_need_scrapy)}')
-    
-
-
-
 
     logger.warning(l_pheno)
 
@@ -652,13 +549,8 @@ def omim_query(gene_list, fn_pheno, logger=None):
 
     # debug = 1
     n_no_omim = 0
-    for gn, v in d_gene.items():
-        omim_id, cover_exon_flag, amelie_score, copy_number = v
-        if omim_id == 'NA':
-            continue
-        if gn in res:
-            continue  # avoid the duplicate running
-        res[gn] = [[], [], '', cover_exon_flag, amelie_score, copy_number]  # match pheno, partial match pheno, comment, cover_exon_flag, amelie rank
+    for gn in genename_list:
+        res[gn] = [[], [], '']  # match pheno, partial match pheno, comment, 
         comment = []
 
         if gn in omim_gn_total:
@@ -771,19 +663,11 @@ def omim_query(gene_list, fn_pheno, logger=None):
         comment = [refine_comment(_, symbol_to_word) for _ in comment]
         res[gn][2] = '\n'.join(comment)
 
-    # logger.info(f'genes not found in OMIM: {n_no_omim} / {len(d_gene)}')
-
-    # for gn, v1 in res.items():
-    #     # [[], [], '', cover_exon_flag, amelie_score]  # match pheno, partial match pheno, comment, cover_exon_flag, amelie rank
-    #     print(gn, [v1[_] for _ in [0, 1]])
 
     if dump_omim_pkl and len(d_gene_comment_scrapy) > 5000:
         logger.info('dumping OMIM records')
         with open(fn_omim_pkl, 'wb') as o:
             pickle.dump(d_gene_comment_scrapy, o)
-
-    # logger.info(f'OMIM query count={len(res)}')
-
 
     # amelie result
     try:
@@ -801,7 +685,6 @@ def omim_query(gene_list, fn_pheno, logger=None):
                         dedup.add(i[0])
                         amelie_v1_dedup.append(i)
 
-
                 ires.append(f'#### {amelie_pheno} n articles = {len(amelie_v1_dedup)}')
                 for amelie_v2 in amelie_v1_dedup:
                     ires.append('- ' + '\t'.join(amelie_v2[:4]))
@@ -814,27 +697,31 @@ def omim_query(gene_list, fn_pheno, logger=None):
         matched_amelie = {}
 
 
-
     # tally the result
     out_full_match = open(f'{pw}/omim_match_gene.{udn}.md', 'w')
     out_partial_match = open(f'{pw}/omim_partial_match_gene.{udn}.md', 'w')
-    out_all_genes = open(f'{pw}/omim_all_genes.{udn}.md', 'w')
     # test = next(iter(res.items()))
     # logger.info(f'res_entry_len={len(test[1])}')
     # res 0 = matched phenotype, 1=partial matched phenotype, 2 = comment. 3 = exon_flag, 4=amelie score
-    res1 = sorted(res.items(), key=lambda _: (_[1][3], len(_[1][0]), _[1][4]), reverse=True)
-    res2 = sorted(res.items(), key=lambda _: (_[1][3], len(_[1][1]), _[1][4]), reverse=True)
+    
+    res1 = sorted(res.items(), key=lambda _: len(_[1][0]), reverse=True)  # sort by number of matched pheno
+    res2 = sorted(res.items(), key=lambda _: len(_[1][1]), reverse=True) # sort by number of partial matched pheno
+    
+    try:
+        os.makedirs(f'{pw}/intermediate', exist_ok=True)
+    except:
+        pass
 
     with open(f'{pw}/intermediate/omim_match_result.pkl', 'wb') as o:
         pickle.dump(res, o)
 
     n1 = 0
     n2 = 0
-    n3 = 0
+    n3 = 0 #all genes
     gene_match = set()
     
     for gn, v in res.items():
-        match, partial_match, comment, cover_exon_flag, amelie_score, copy_number = v
+        match, partial_match, comment = v
         if comment.strip() == '':
             logger.debug(f'gene with no OMIM description: {gn}')
             continue

@@ -34,7 +34,6 @@ pw_code = os.path.dirname(os.path.realpath(f'{__file__}/..'))
 sys.path.append(pw_code)
 # print(pw_code)
 from udn import udn_utils
-# from udn import amelie_api
 import argparse as arg
 from argparse import RawTextHelpFormatter
 ps = arg.ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)

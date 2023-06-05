@@ -38,7 +38,6 @@ import logging
 import pickle
 pw_code = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(pw_code)
-from . import amelie_api
 from omim_utils import omim_query
 from chctool_lite import getlogger
 
@@ -93,11 +92,6 @@ col_keep_raw_name = ['AnnotSV_ID',
                      ]
 
 
-def line_count(fn):
-    n = 0
-    for _ in open(fn):
-        n += 1
-    return n
 
 
 intermediate_folder = 'intermediate'
