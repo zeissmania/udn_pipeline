@@ -1,6 +1,5 @@
 #! /usr/bin/env python3
 from omim_utils import omim_query
-from amelie_utils import query_amelie
 from chctool_lite import getlogger
 
 import os, sys, re
@@ -18,7 +17,7 @@ pw = os.getcwd()
 if args.prj:
     prj = args.prj
 else:
-    m = re.match('.*(UDN\d+)')
+    m = re.match('.*(UDN\d+)', pw)
     if m:
         prj = m.group(1)
     else:
@@ -35,8 +34,23 @@ tmp = f'{pw}/intermediate/{prj}.genelist'
 if not os.path.exists(tmp):
     logger.error(f'genelist file not exist: {tmp}')
     err = 1
+else:
+    with open(tmp) as f:
+        gene_list = []
+        for i in f:
+            gn = i.split('#', 1)[0].strip().upper()
+            if gn:
+                gene_list.append(gn)
+
+tmp = f'{pw}/pheno.keywords.txt'
+err = 0
+if not os.path.exists(tmp):
+    logger.error(f'pheno keywords file not exist: {tmp}')
+    err = 1
+else:
+    fn_pheno = tmp
 
 if err:
     sys.exit(1)
 
-d_amelie = query_amelie(pw, prj, logger=logger, force=False)
+omim_query(pw, prj, gene_list, fn_pheno, logger=logger)

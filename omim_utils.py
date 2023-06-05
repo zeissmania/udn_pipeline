@@ -1,14 +1,16 @@
 import requests
 import time
+from amelie_utils import query_amelie
 from bs4 import BeautifulSoup as bs
 from selenium.webdriver.support.ui import WebDriverWait as wait
 from chctool_lite import getlogger
-
+import os, sys, re, pickle
 global_flag = {'omim_blocked': 0}
 
 logger_name = 'omim_utils'
 
 pw_code = os.path.dirname(__file__)
+redundant_words = set('and,am,is,in,the,are,to,for,of,a,an,one,two,three,four,at,on,type,activity,increased,decreased,low,level,high'.split(','))
 
 def run_omim_scrapy(gn, gene_id, logger=None, driver=None):
     logger = logger or getlogger(logger_name)
@@ -80,7 +82,7 @@ def get_omim_map(logger=None):
         else:
             return d_omim_map
     if os.path.exists(f'{pw_code}/genemap2.txt'):
-        d_omim_map = {}
+        d_omim_map = {'gn2omim': {}}
         with open(f'{pw_code}/genemap2.txt') as fp:
             for i in fp:
                 if i[0] == '#':
@@ -89,6 +91,10 @@ def get_omim_map(logger=None):
                 a = i.split('\t')
                 gn_id = a[5]
                 pheno = a[12].strip()
+                gn = a[8].strip()
+                if gn:
+                    d_omim_map['gn2omim'] = gn_id
+                
                 if not pheno:
                     d_omim_map[gn_id] = {}
                 else:
@@ -426,8 +432,7 @@ def get_driver(driver, logger):
         driver.save_screenshot('firefox_init.png')
     return driver
 
-def parse_pheno_file(fn):
-    logger 
+def parse_pheno_file(fn, logger):
     if not os.path.exists(fn):
         logger.error(f'pheno file not exist: {fn}')
         return None
@@ -440,7 +445,7 @@ def parse_pheno_file(fn):
     
     
     force_exact_match = {'mental', }  # the words in this set will force exact match
-    with open(fn_pheno) as fp:
+    with open(fn) as fp:
         for i in fp:
             new = i.lower().split('#', 1)[0].strip()
             if not new:  # pure comment line
@@ -462,7 +467,7 @@ def parse_pheno_file(fn):
 
     return l_pheno, l_pheno_raw
     
-def omim_query(gene_list, fn_pheno, logger=None):
+def omim_query(pw, udn, gene_list, fn_pheno, logger=None):
     """
     the input is the genelist  and the phenotype keyword file
     1. build the gene comment dict based on the previous manual input
@@ -477,14 +482,18 @@ def omim_query(gene_list, fn_pheno, logger=None):
     logger = logger or getlogger(logger_name)
     driver=None
 
-    tmp = parse_pheno_file(fn_pheno)
+    tmp = parse_pheno_file(fn_pheno, logger)
     if not tmp:
         return None
     l_pheno, l_pheno_raw = tmp
 
+    d_amelie = query_amelie(pw, udn, logger=logger, force=False)
+
+
+    gn2omimid = get_omim_map(logger)['gn2omim']
+
 
     # get the gene list with OMIM desease
-    d_gene = {}
     n_gene_total = 0
     genes_without_omim_id = set()
 
@@ -496,9 +505,6 @@ def omim_query(gene_list, fn_pheno, logger=None):
 
     dump_omim_pkl = 0
     d_gene_comment_scrapy = {}
-
-    # logger.warning(d_gene['NALCN'])
-    # sys.exit(1)
 
     if os.path.exists(fn_omim_pkl):
         logger.info('load omim info from pickle')
@@ -528,6 +534,7 @@ def omim_query(gene_list, fn_pheno, logger=None):
     logger.warning(l_pheno)
 
 
+
     # refine the l_pheno,
 
     # res , key=gene, value = [0, 0]  first int = count of exact match phenotype, second int = count of partial match phenotype
@@ -555,10 +562,18 @@ def omim_query(gene_list, fn_pheno, logger=None):
 
         if gn in omim_gn_total:
             omim_pheno_list = d_gene_comment_scrapy[gn][1]
-        else:
+        elif gn not in non_omim_gn_total:
             # run the scrapy
             # comment is a dict, key=pheno_id, v=pheno description
-            logger.warning(f'run scrapy: {gn}')
+            # 
+            try:
+                omim_id = gn2omimid[gn]
+            except:
+                logger.warning(f'omim id not found :{gn}')
+                continue
+            else:
+                logger.warning(f'run scrapy: {gn}')
+
             driver, ires = run_omim_scrapy(gn, omim_id, logger, driver=driver)
             if ires:
                 omim_pheno_list = ires[1]
@@ -566,8 +581,11 @@ def omim_query(gene_list, fn_pheno, logger=None):
                 dump_omim_pkl = 1
             else:
                 n_no_omim += 1
-                # logger.info(f'No pheno description found on OMIM: gn={gn}')
+                logger.debug(f'No pheno description found on OMIM: gn={gn}')
                 continue
+        else:
+            continue
+
 
         total_omim = len(omim_pheno_list)
         for sn_omim, iomim_pheno in enumerate(omim_pheno_list):
@@ -700,6 +718,7 @@ def omim_query(gene_list, fn_pheno, logger=None):
     # tally the result
     out_full_match = open(f'{pw}/omim_match_gene.{udn}.md', 'w')
     out_partial_match = open(f'{pw}/omim_partial_match_gene.{udn}.md', 'w')
+    out_all_genes = open(f'{pw}/omim_all_gene.{udn}.md', 'w')
     # test = next(iter(res.items()))
     # logger.info(f'res_entry_len={len(test[1])}')
     # res 0 = matched phenotype, 1=partial matched phenotype, 2 = comment. 3 = exon_flag, 4=amelie score
@@ -721,12 +740,13 @@ def omim_query(gene_list, fn_pheno, logger=None):
     gene_match = set()
     
     for gn, v in res.items():
+        amelie_score = d_amelie.get(gn) or -99
         match, partial_match, comment = v
         if comment.strip() == '':
             logger.debug(f'gene with no OMIM description: {gn}')
             continue
         n3 += 1
-        print(f'## {n3}:\t{gn} : {amelie_score} \tcover_exon={cover_exon_flag}\n{match}\n{partial_match}\n{copy_number}\n\n### main\n\n', file=out_all_genes)  # all genes
+        print(f'## {n3}:\t{gn} : {amelie_score}\n\n### main\n\n', file=out_all_genes)  # all genes
         print(comment, file=out_all_genes)
         print('#' * 50 + '\n\n\n', file=out_all_genes)
 
@@ -737,14 +757,15 @@ def omim_query(gene_list, fn_pheno, logger=None):
     for v in res1:
         gn = v[0]
         amelie_str = matched_amelie.get(gn) or ''
+        amelie_score = d_amelie.get(gn) or -99
 
-        match, partial_match, comment, cover_exon_flag, amelie_score, copy_number = v[1]
+        match, partial_match, comment = v[1]
         partial_match = '\n'.join(partial_match)
         match = '\n'.join(match)
         if len(match) > 0:
             gene_match.add(gn)
             n1 += 1
-            print(f'## {n1}/{total_full_match}:\t{gn} : {amelie_score}\tcover_exon={cover_exon_flag}\n{match}\n{partial_match}\n{copy_number}\n{amelie_str}\n\n### main\n\n', file=out_full_match)
+            print(f'## {n1}/{total_full_match}:\t{gn} : {amelie_score}\n{match}\n{partial_match}\n{amelie_str}\n\n### main\n\n', file=out_full_match)
             print(comment, file=out_full_match)
             print('#' * 50 + '\n\n\n', file=out_full_match)
 
@@ -752,19 +773,13 @@ def omim_query(gene_list, fn_pheno, logger=None):
     not_in_d_gene = []
     for gn in gn_not_included:
         try:
-            omim_id, cover_exon_flag, amelie_score, copy_number = d_gene[gn]
-        except:
-            not_in_d_gene.append(gn)
-            continue
-        
-        try:
             comment = res[gn][2]
         except:
             comment = ''
 
         n1 += 1
         amelie_str = matched_amelie.get(gn) or ''
-        print(f'## {n1}/{total_full_match}:\t{gn} amelie match only\nAmelie score = {amelie_score}\n{copy_number}\n\n{amelie_str}\n\n{comment}', file=out_full_match)
+        print(f'## {n1}/{total_full_match}:\t{gn} amelie match only\nAmelie score = {amelie_score}\n\n{amelie_str}\n\n{comment}', file=out_full_match)
         print('#' * 50 + '\n\n\n', file=out_full_match)
 
     if len(not_in_d_gene) > 0:
@@ -776,11 +791,11 @@ def omim_query(gene_list, fn_pheno, logger=None):
         gn = v[0]
         if gn in gene_match:
             continue
-        match, partial_match, comment, cover_exon_flag, amelie_score, copy_number = v[1]
+        match, partial_match, comment = v[1]
         partial_match = '\n'.join(partial_match)
         if len(partial_match) > 0:
             n2 += 1
-            print(f'## {n2}/{total_partial_match}:\t{gn} : {amelie_score}, exon = {cover_exon_flag}\n{copy_number}\tcover_exon={cover_exon_flag}\n{partial_match}{copy_number}\n\n### main\n\n', file=out_partial_match)
+            print(f'## {n2}/{total_partial_match}:\t{gn} : {amelie_score}\n\n### main\n\n', file=out_partial_match)
             print(comment, file=out_partial_match)
             print('#' * 50 + '\n\n\n', file=out_partial_match)
     out_full_match.close()

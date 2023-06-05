@@ -1,4 +1,5 @@
-from . import amelie_api
+import os, sys
+from amelie_api import main_old
 from chctool_lite import getlogger, line_count
 
 logger_name = 'query_amelie'
@@ -30,7 +31,7 @@ def query_amelie(pw, prj, logger=None, force=False) -> 'build all the amelie res
     if total_genes > 1000:
         logger.warning(f'the gene list for AMELIE is larger than 1000, ({total_genes}), would split the genelist')
         
-    amelie_api.main_old(prj, fn_genelist, fn_hop_pure_id, pheno_for_match=fn_pheno, pw=pw, force=force)
+    main_old(prj, fn_genelist, fn_hop_pure_id, pheno_for_match=fn_pheno, pw=pw, force=force)
     logger.info('amelie done')
     return get_amelie_dict(pw, prj, logger)
 
