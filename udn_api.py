@@ -494,6 +494,7 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
 
         tmp = json.dumps(seq_type_kept, indent=3)
         logger.info(f'g@kept file seq type = \n{tmp}')
+        
         if skipped_due_to_seq_type:
             logger.info(f'g@skipped seq_type: {skipped_due_to_seq_type}')
         
@@ -1158,7 +1159,7 @@ default:
             logger.warning(f'{rel_to_proband}: the following files are duplicate ({len(dup_fls)})\n\t' + '\n\t'.join(dup_fls))
         
         if n_skip_due_to_seqid:
-            logger.warning(f'{n_skip_due_to_seqid} file skipped due to not in seq_id_set {seq_id_set}, files kept = {len(file_dedup)}')
+            logger.warning(f'{rel_to_proband}: {n_skip_due_to_seqid} file skipped due to not in seq_id_set {seq_id_set}, files kept = {len(file_dedup)}')
     
     info_lines = sorted(info_lines, key=lambda _: (_[6], _[0], _[7]))
     # dedup file
