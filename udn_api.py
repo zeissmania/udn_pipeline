@@ -160,7 +160,7 @@ def ts(timestamp):
     try:
         return fromtimestamp(timestamp/1000).strftime('%Y-%m-%d')
     except:
-        return 'NA'
+        return timestamp
 
 def get_age(timestamp):
     try:
@@ -189,8 +189,9 @@ def parse_seq_files(info, rel_to_proband):
     seqtype_map = {'transcriptome': 'rnaseq'}
     seqtype_exp = {'rnaseq', 'genome', 'exome'}
     udn = info['udnId']
+    seq_info = []  # key = seqID, v = all meta data
     
-    unknown_seqtype = {}
+    unknown_seqtype = []
 
     for i in info['requests']:
         for i1 in i['reports']:
@@ -213,7 +214,30 @@ def parse_seq_files(info, rel_to_proband):
         except:
             seq_id_default = 'NA'
 
-        
+        i_seq_info = {}
+        for k, struc in [
+            ['seq_id', ['id']],
+            ['notes', ['notes']],
+            ['lab', ['labName']],
+            ['sampletype', ['sampleType', 'name']],
+            ['udnid', ['localIdentifier']],
+            ['date_received', ['dateReceived']],
+            ['seq_type', ['requestType', 'name']],
+            ['requestedTest', ['requestedTest', 'name']],
+            ]:
+            try:
+                v = i
+                for k1 in struc:
+                    v = v[k1]
+                
+                if k.startswith('date'):
+                    v = ts(v)
+                
+                i_seq_info[k] = v
+            except:
+                i_seq_info[k] = 'NA'
+
+        seq_info.append(i_seq_info)
         
         for ifl in i['files']:
             ires = {}
@@ -267,7 +291,7 @@ def parse_seq_files(info, rel_to_proband):
     if len(unknown_seqtype) > 0:
         logger.warning(f'unkown seq type: {unknown_seqtype}')
 
-    return reports, files
+    return reports, files, seq_info
 
 
 def get_download_link(udn, fl_info, get_aws_ft, gzip_only=None, force_update=False):
@@ -355,7 +379,7 @@ def green(msg):
 
 
 
-def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=None,  udn_proband=None, gzip_only=None, sv_caller='dragen', newname_prefix=None, rel_specified=None):
+def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=None,  udn_proband=None, gzip_only=None, sv_caller='dragen', newname_prefix=None, rel_specified=None, seq_id_set=None):
     """
     res_all,  when running specific relative, use this dict to accumulate among the family member
     gzip only, a set, if the ext is found in this set, then, the file must be gziped to get involved. e.g. if vcf in gzip_only, then,  the file named .vcf$ would not be included
@@ -371,9 +395,8 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
     basic_info = get_json(f'participants/{udn}')
     sequence_info = get_json(f'participants/{udn}/sequencing')
     
-    if debug:
-        with open(f'{udn}.seq_info.json', 'w') as o:
-            json.dump(sequence_info, o, indent=3)
+    with open(f'{udn}.seq_info.json', 'w') as o:
+        json.dump(sequence_info, o, indent=3)
     
     is_proband = False
 
@@ -382,6 +405,7 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
 
 
     relation = basic_info['relation']
+    
     
     if rel_specified is None:
         if relation is None:
@@ -399,7 +423,7 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
     else:
         res['rel_to_proband_short'] = relation['shortName']
 
-    res['reports'], res['files'] = parse_seq_files(sequence_info, rel_to_proband)
+    res['reports'], res['files'], res['seqinfo'] = parse_seq_files(sequence_info, rel_to_proband)
     
     logger.info(f'rb@{rel_to_proband}')
 
@@ -411,6 +435,7 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
     seq_type_kept = {}
 
     file_dedup = set()
+    n_skip_due_to_seqid = 0
     for ifl in res['files']:
         if uploaded_date_ready == 0:
             if ifl['fn'].find('fastq') > -1:
@@ -419,6 +444,12 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
                     uploaded_date_ready = 1
                     res['seq_uploaded'] = tmp
         seq_type = ifl['seq_type'].lower()
+        seq_id = int(ifl['seq_id'])
+        
+        if seq_id_set and seq_id not in seq_id_set:
+            n_skip_due_to_seqid += 1
+            continue
+        
         
         if valid_seq_type and seq_type not in valid_seq_type:
             skipped_due_to_seq_type.setdefault(seq_type, 0)
@@ -432,14 +463,20 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
         else:
             dup_flag = ' (dup)'
         ext, gz = get_file_extension(ifn)
-        seq_type_kept.setdefault(seq_type, {}).setdefault(ext, 0)
-        seq_type_kept[seq_type][ext] += 1
+        seq_type_kept.setdefault(seq_type, {}).setdefault(seq_id, {}).setdefault(ext, 0)
+        seq_type_kept[seq_type][seq_id][ext] += 1
 
 
-        download_link = get_download_link(udn, ifl, get_aws_ft, gzip_only=None)
+        if not demo:
+            download_link = get_download_link(udn, ifl, get_aws_ft, gzip_only=None)
+        else:
+            download_link = 'demo'
         
+        if download_link == 'demo':
+            if ext in get_aws_ft or 'all' in get_aws_ft:
+                logger.info(f'skipped due to demo mode {ifn}')
 
-        if download_link == 0:
+        elif download_link == 0:
             logger.info(colored(f'\tamazon link still valid: {ifn}{dup_flag}', 'green'))
         elif download_link == 1:
             logger.info(colored(f'\tfail to get amazon link {ifn}{dup_flag}', 'red'))
@@ -451,11 +488,17 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
             with open(f'{udn}.downloadlink.backup.tsv', 'a') as o:
                 print(f'{rel_to_proband}\t{udn}\t{ifn}\t{download_link}', file=o)
             
-    if skipped_due_to_seq_type:
-        logger.info(f'g@skipped seq_type: {skipped_due_to_seq_type}')
 
-    logger.info(f'g@kept file seq type = {seq_type_kept}')
+    if len(res['seqinfo']) > 0:
+        logger.info('\n' + json.dumps(res['seqinfo'], indent=3))
 
+        tmp = json.dumps(seq_type_kept, indent=3)
+        logger.info(f'g@kept file seq type = \n{tmp}')
+        if skipped_due_to_seq_type:
+            logger.info(f'g@skipped seq_type: {skipped_due_to_seq_type}')
+        
+        if n_skip_due_to_seqid:
+            logger.warning(f'{n_skip_due_to_seqid} files skipped due to seq_id filtering: {seq_id_set}')
     if get_report:
         download_report(res['reports'])
     # else:
@@ -515,7 +558,7 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
 
             ires = [rel_full, name, fam_udn]
 
-            res_all = get_all_info(fam_udn, res_all=res_all, get_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family,  udn_proband=udn, gzip_only=gzip_only, sv_caller=sv_caller, newname_prefix=newname_prefix, rel_specified=rel_full)
+            res_all = get_all_info(fam_udn, res_all=res_all, get_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family,  udn_proband=udn, gzip_only=gzip_only, sv_caller=sv_caller, newname_prefix=newname_prefix, rel_specified=rel_full, seq_id_set=seq_id_set)
             
             res_family_member = res_all[rel_full]
             try:
@@ -619,7 +662,7 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
             pickle.dump(res_all, out)
         try:
             # (res, renew_amazon_link=False, )
-            parse_api_res(res_all, update_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family, sv_caller=sv_caller, newname_prefix=newname_prefix, gzip_only=gzip_only, )
+            parse_api_res(res_all, update_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family, sv_caller=sv_caller, newname_prefix=newname_prefix, gzip_only=gzip_only)
         except:
             logger.error(f'fail to parse the result dict, try again')
             raise
@@ -1031,18 +1074,23 @@ default:
         file_dedup = set()
         dup_fls = []
         
+        n_skip_due_to_seqid = 0
         for ifl in irel['files']:
             url = ifl['download']
             fn = ifl['fn']
             url_s3 = ifl['url']
             size = ifl['size']
             build = ifl['build']
-            seq_id = ifl['seq_id']
+            seq_id = int(ifl['seq_id'])
             file_id = ifl.get('file_id') or 'NA'
             seq_type = ifl.get('seq_type') or 'NA'
             md5 = ifl['md5']
             newname = ''
             newname_base = ''
+            
+            if seq_id_set and seq_id not in seq_id_set:
+                n_skip_due_to_seqid += 1
+                continue
             
 
             ext, gz = get_file_extension(fn)
@@ -1108,7 +1156,9 @@ default:
 
         if len(dup_fls) > 0:
             logger.warning(f'{rel_to_proband}: the following files are duplicate ({len(dup_fls)})\n\t' + '\n\t'.join(dup_fls))
-            
+        
+        if n_skip_due_to_seqid:
+            logger.warning(f'{n_skip_due_to_seqid} file skipped due to not in seq_id_set {seq_id_set}, files kept = {len(file_dedup)}')
     
     info_lines = sorted(info_lines, key=lambda _: (_[6], _[0], _[7]))
     # dedup file
@@ -1289,6 +1339,7 @@ if __name__ == "__main__":
     ps.add_argument('-demo', help="""don't resolve the aws download URL""", action='store_true')
     ps.add_argument('-ft', help="""could be multiple, if specified, would only update the amazon URL for these file types, if gzip only, add the .gz suffix. e.g. vcf.gz  would not match .vcf$""", nargs='*', default=None)
     ps.add_argument('-seq_type', '-st', help="""sequence type to resolve download link, valid = genome, rnaseq, reanalysis(re), if not specified, will ignore the sequence type filtering""", choices=['genome', 'rnaseq', 're', 'reanalysis'], nargs='*')
+    ps.add_argument('-seq_id_list', '-seqid', help="""only run specific seq id, nargs=*, type=int""", type=int, nargs='*')
     ps.add_argument('-renew', '-new', '-update', help="""flag, update the amazon shared link. default is not renew""", action='store_true')
     ps.add_argument('-lite', help="""flag, donot download the cnv files and the bayler report""", action='store_true')
     ps.add_argument('-noupload', '-noup', help="""don't upload the files to ACCRE""", action='store_true')
@@ -1556,6 +1607,22 @@ if __name__ == "__main__":
     else:
         newname_prefix_l = [None for _ in validated]
 
+    seq_id_set = args.seq_id_list
+    if seq_id_set:
+        seq_id_set_raw = seq_id_set
+        if not isinstance(seq_id_set, (list, dict, set)):
+            seq_id_set = {seq_id_set, }
+        else:
+            seq_id_set = set(seq_id_set)
+        
+        try:
+            seq_id_set = {int(_) for _ in seq_id_set}
+        except:
+            logger.error(f'seq id must be int, input = @{seq_id_set_raw}@')
+            sys.exit(1)
+        
+
+
     for tmp, newname_prefix in zip(validated, newname_prefix_l):
         udn_raw, udn, valid_family = tmp
         rename_remote = False
@@ -1603,7 +1670,7 @@ if __name__ == "__main__":
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
         else:
-            res = get_all_info(udn, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, udn_proband=udn, gzip_only=gzip_only, sv_caller=sv_caller, newname_prefix=newname_prefix)
+            res = get_all_info(udn, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, udn_proband=udn, gzip_only=gzip_only, sv_caller=sv_caller, newname_prefix=newname_prefix, seq_id_set=seq_id_set)
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
 
