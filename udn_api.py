@@ -1337,7 +1337,6 @@ if __name__ == "__main__":
     ps.add_argument('-sv_caller', '-svcaller', '-svsoftware', help="""the software used for sv calling, default=dragen, alt=pacbio""", default='dragen', choices=['pacbio', 'dragen'])
     ps.add_argument('-update_cred', '-uc',  help="""update the credential info""", action='store_true')
     ps.add_argument('-url', '-urlonly', '-ckfls', help='get the files URL only (for each family member) and quit', action='store_true'),
-    ps.add_argument('-demo', help="""don't resolve the aws download URL""", action='store_true')
     ps.add_argument('-ft', help="""could be multiple, if specified, would only update the amazon URL for these file types, if gzip only, add the .gz suffix. e.g. vcf.gz  would not match .vcf$""", nargs='*', default=None)
     ps.add_argument('-seq_type', '-st', help="""sequence type to resolve download link, valid = genome, rnaseq, reanalysis(re), if not specified, will ignore the sequence type filtering""", choices=['genome', 'rnaseq', 're', 'reanalysis'], nargs='*')
     ps.add_argument('-seq_id_list', '-seqid', help="""only run specific seq id, nargs=*, type=int""", type=int, nargs='*')
@@ -1352,9 +1351,11 @@ if __name__ == "__main__":
     ps.add_argument('-reltable', '-rel', help="""force save the relative table, even in the parse_api_result mode""", action='store_true')
     ps.add_argument('-v', '-level', help="""set the logger level, default is info""", default='INFO', choices=['INFO', 'WARN', 'DEBUG', 'ERROR'])
     ps.add_argument('-nodename', '-node', '-remote', help="remote node name, default is va", choices=['va', 'pc'])
-    ps.add_argument('-rename', '-newname', help="rename the case name to this, only valid for vcf file, number should match with prj number", nargs='*')
+    ps.add_argument('-fn_prefix', help="rename the case name to this prefix, only valid for vcf file, number should match with prj number", nargs='*')
+    ps.add_argument('-rename', '-newname', help="if the UDN case already exist, and the raw name does not match, if true, will rename to the new name, otherwise , will use old name", action='store_true')
     ps.add_argument('-phillips', '-philips', '-phil', help="run the tasks for Phillips, need to rename the case. argument = filename for UDN-case number map")
     ps.add_argument('-debug', '-d', help="""debug mode, dump the intermediate json files""", action='store_true')
+    ps.add_argument('-parse_link', '-real',  help="""resolve the aws download URL, default is demo mode""", action='store_true')
 
 
     args = ps.parse_args()
@@ -1368,7 +1369,7 @@ if __name__ == "__main__":
         args.upload_only = True
         args.lite = True
         # args.renew = True
-        args.udn, args.rename = parse_phillips_map_file(fn_phillips)
+        args.udn, args.fn_prefix = parse_phillips_map_file(fn_phillips)
         pw_accre_scratch_suffix = '/upload_for_phillips'
         case_prefix = fn_phillips.rsplit('/', 1)[-1].rsplit('.', 1)[0].replace('_rerun', '') + '_'
 
@@ -1376,8 +1377,9 @@ if __name__ == "__main__":
     logger = get_logger(level=args.v)
 
     force = args.force_rerun
+    rename = args.rename
     udn_list = args.udn or [os.getcwd().rsplit('/')[-1]]
-    newname_prefix_l = args.rename
+    newname_prefix_l = args.fn_prefix
     if newname_prefix_l:
         newname_prefix_l = [re.sub('case[\W_]+', '', _) for _ in newname_prefix_l]
 
@@ -1420,7 +1422,7 @@ if __name__ == "__main__":
     else:
         fn_cred = f'{pw_script}/udn.credential.pkl.encrypt'
 
-    demo = args.demo
+    demo = not args.parse_link
     pw_script = os.path.realpath(__file__).rsplit('/', 1)[0]
     urlonly = args.url
 
@@ -1441,7 +1443,7 @@ if __name__ == "__main__":
     update_aws_ft = set()
 
     if ft_input is None:
-        update_aws_ft = ['fastq']
+        update_aws_ft = ['cnv', 'fastq']
     elif 'all' not in ft_input:
         err = 0
         ft_input = [_ for _ in ft_input if _.strip()]
@@ -1594,9 +1596,9 @@ if __name__ == "__main__":
     # get the current UDN list in current folder
     udn_exist = {}  # key = pure_udn_id, v = folder name
 
-    folders = os.popen(f'ls -d */').read().split('\n')
+    folders = os.popen(f'ls -d {root}/*/').read().split('\n') + os.popen(f'ls -d {root}/done/*/').read().split('\n')
     for i in folders:
-        i = re.sub(r'\/$', '', i).rsplit('/', 1)[-1]
+        i = re.sub(r'\/$', '', i)
         m = re.match(r'.*(UDN\d+)(?:\W|$)', i)
         if m:
             udn_exist[m.group(1).upper()] = i
@@ -1629,14 +1631,22 @@ if __name__ == "__main__":
         rename_remote = False
         udn_raw_old = ''
         if udn in udn_exist:
+            pw_old = udn_exist[udn]
             udn_raw_old = udn_exist[udn].rsplit('/', 1)[-1]
             # print(f'mv {root}/{udn_raw_old} {root}/{udn_raw}')
             if udn_raw != udn_raw_old:
-                logger.warning(f'rename the folder, old = {udn_raw_old} , new = {udn_raw}')
-                os.system(f'mv {root}/{udn_raw_old} {root}/{udn_raw}')
-                rename_remote = True
+                if rename:
+                    tmp = 'rename old folder'
+                    os.system(f'mv {pw_old} {root}/{udn_raw}')
+                    rename_remote = True
+                else:
+                    tmp = 'will use old name'
+                    udn_raw = udn_raw_old
+                    if pw_old != f'{root}/{udn_raw}':
+                        os.system(f'mv {pw_old} {root}/{udn_raw}')
+                logger.warning(f'{udn} already exist old = {pw_old} , new = {udn_raw} {tmp}')
+                
         # logger.info(os.getcwd() + f', rename to {newname_prefix}' if newname_prefix else '')
-
 
         pw_case = f'{root}/{udn_raw}'
         logger.info(f'now running {pw_case}')
