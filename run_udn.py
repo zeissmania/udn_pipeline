@@ -74,11 +74,11 @@ sv_caller = case.sv_caller
 logger = case.logger
 if case.done_phase3 and not force_report:
     # prj.report.xlsx
-    case.omim_query(force_rerun=args.omim)
+    case.omim_query_wrap(force_rerun=args.omim)
     logger.info('Report is ready')
 elif case.done_phase2:
     # prj.selected.genes.txt
-    case.omim_query(force_rerun=args.omim)
+    case.omim_query_wrap(force_rerun=args.omim)
     logger.info('building the report...')
     import udn_report
     udn_report.main(case.prj, case.pw, sv_caller=sv_caller)
@@ -86,7 +86,7 @@ elif case.done_phase2:
 elif case.done_phase1:
     # prj.merged.sortedtsv
     # query the amelie API, build the amelie result files
-    case.omim_query(force_rerun=args.omim)
+    case.omim_query_wrap(force_rerun=args.omim)
     logger.info(f'FINAL STEP:  select the gene list manually, \n\t expected file = {case.pw}/{case.prj}.selected.genes.txt')
 else:
     # filter /extract annotation
@@ -99,8 +99,7 @@ else:
             # logger.info(f'cols ={case.cols}')
             case.anno_filter(sample_id)
             case.anno_extract(sample_id)
-            case.query_amelie(force=False)
-            case.amelie_dict = case.get_amelie_dict()
+            case.query_amelie_wrap(force=False)
             case.family[sample_id]['sv_dict'] = case.group_sv_into_bin(sample_id)
 
         # match SV in proband with family
@@ -111,11 +110,10 @@ else:
         case.annotate(proband_id)
         case.anno_filter(proband_id)
         case.anno_extract(proband_id)
-        case.query_amelie(force=False)
-        case.amelie_dict = case.get_amelie_dict()
+        case.query_amelie_wrap(force=False)
         case.run_proband_sv_match_pacbio()
 
     # run OMIM match
-    case.omim_query()
+    case.omim_query_wrap()
 
     logger.info('Phase 1 done, please select the top 10 gene list')

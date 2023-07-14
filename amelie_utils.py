@@ -1,14 +1,13 @@
 import os, sys
 from amelie_api import main_old
-from chctool_lite import getlogger, line_count
+from chc_tool import getlogger, line_count
 
-logger_name = 'query_amelie'
 intermediate_folder = 'intermediate'
 def query_amelie(pw, prj, logger=None, force=False) -> 'build all the amelie result files':
     """
     run the amelie API
     """
-    logger = logger or getlogger(logger_name)
+    logger = logger or getlogger()
 
     fn = f'{pw}/{prj}.amelie.lite.txt'
 
@@ -41,7 +40,7 @@ def get_amelie_dict(pw, prj, logger=None):
     convert {prj}.amelie.lite.txt(only the final score of gene) to dict
     """
     fn = f'{pw}/{prj}.amelie.lite.txt'
-    logger = logger or getlogger(logger_name)
+    logger = logger or getlogger()
 
     try:
         d_amelie = [_.strip().split('\t') for _ in open(fn)]

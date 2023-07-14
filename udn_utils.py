@@ -39,11 +39,12 @@ import pickle
 pw_code = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(pw_code)
 from omim_utils import omim_query
-from chctool_lite import getlogger
+from amelie_utils import query_amelie
+from chc_tool import getlogger
 
 platform = sys.platform
 
-logger = getlogger('udn_utils')
+logger = getlogger()
 
 redundant_words = set('and,am,is,in,the,are,to,for,of,a,an,one,two,three,four,at,on,type,activity,increased,decreased,low,level,high'.split(','))
 
@@ -134,7 +135,6 @@ class UDN_case():
         self.prj = cfg['prj']
         self.pw = cfg['path'] or os.getcwd()
         self.proband_id = cfg['IDs']['proband_id']
-        logger = getlogger(self.prj, savefile=True)
         self.logger = logger
 
         self.header_prefix = 'coord,note,match_count,mut_type,AMELIE'.split(',')
@@ -142,7 +142,6 @@ class UDN_case():
         # verify the config
         cfg_tested = self.verify_config()
         # logger.info(cfg_tested)
-
 
         self.path = cfg_tested['path']
         self.sv_caller = cfg_tested['sv_caller']
@@ -214,6 +213,12 @@ class UDN_case():
             self.get_annot_col()
         except:
             pass
+
+
+    def query_amelie_wrap(self, force=False):
+        pw = self.pw
+        prj = self.prj
+        self.amelie_dict = query_amelie(pw, prj, logger, force)
 
     def verify_config(self):
         cfg = self._cfg
