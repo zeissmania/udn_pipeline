@@ -71,7 +71,7 @@ args = ps.parse_args()
 
 nobuild = args.nobuild
 
-ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'gvcf', 'fasta': 'fasta', 'fq': 'fastq', 'vcf': 'vcf'}
+ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'gvcf', 'fasta': 'fasta', 'fq': 'fastq', 'vcf': 'vcf',  'crai': 'cram'}
 ft_convert.update({_: _ for _ in ft_convert.values()})
 
 file_ct = {}
@@ -260,7 +260,7 @@ def build_remote_subfolder(name, dest):
 
 def get_file_extension(fn):
 
-    m = re.match(r'.*?\.(bam|bai|cnv|fasta|fastq|fq|gvcf|vcf)\b(\.gz)?', fn.lower())
+    m = re.match(r'.*?\.(bam|bai|cnv|fasta|fastq|fq|gvcf|vcf|cram|crai)\b(\.gz)?', fn.lower())
     if m:
         try:
             return ft_convert[m.group(1)], m.group(2)
@@ -815,7 +815,8 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                 continue
             v = v1[fn]
 
-            fn_script = f'{pw}/shell/{fn}.download_upload.{dest}.sh'
+            fn_refine = re.sub(r'\s+', '_', fn)
+            fn_script = f'{pw}/shell/{fn_refine}.download_upload.{dest}.sh'
             n_desired += 1
 
             if v['uploaded']:
@@ -1002,8 +1003,9 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
     # if not os.path.exists(fn_local):
     #     return None
 
-    fn_script = f'{pw}/shell/{fn}.download_upload.{dest}.sh'
-    fn_status = f'{pw}/log/status.{fn}.txt'
+    fn_refine = re.sub(r'\s+', '_', fn)
+    fn_script = f'{pw}/shell/{fn_refine}.download_upload.{dest}.sh'
+    fn_status = f'{pw}/log/status.{fn_refine}.txt'
 
     if simple == False and (url_var is None):
         logger.error(f'invalid url_var define: {url_var}, file= {fn_local}')
@@ -1031,20 +1033,20 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
     md5_exp=$(grep -E -m1 "{fn}($|[^.])" {pw}/download.UDN*.md5 2>/dev/null|cut -d " " -f1)
     
     if [[ ! -f {pw}/log/{fn}.md5 && -n "$md5_exp" && "$md5_exp" != "NA" ]];then
-    md5sum  {fn_local} >{pw}/log/{fn}.md5 2>{pw}/log/{fn}.md5.log
+    md5sum  "{fn_local}" > "{pw}/log/{fn}.md5" 2> "{pw}/log/{fn}.md5.log"
     fi
 
     md5_local=$(head -1 {pw}/log/{fn}.md5|cut -d " " -f1)
 
     if [[ -z $md5_exp || "$md5_exp" == "NA" ]];then
-    echo "expected md5 not found : {fn}" >> {fn_status}
+    echo "expected md5 not found : {fn}" >> "{fn_status}"
     echo 0
     elif [[ "$md5_exp" == "$md5_local" ]];then
-    echo good, md5 match!  >> {fn_status}
+    echo good, md5 match!  >> "{fn_status}"
     echo 0
     else
     echo 1
-    echo "ERROR  md5 not match! {fn_local}; exp=@${{md5_exp}}@  local=@${{md5_local}}@"  >> {fn_status}
+    echo "ERROR  md5 not match! {fn_local}; exp=@${{md5_exp}}@  local=@${{md5_local}}@"  >> "{fn_status}"
 
     echo $(date): "ERROR, md5 not match! {fn_local}; exp=@${{md5_exp}}@  local=@${{md5_local}}@"  >> /fs0/members/chenh19/tmp/upload/error.md5_not_match.files.txt
     fi
@@ -1074,7 +1076,7 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
 
         # check local file
         if [[ "{size_exp}" -ne "na" ]] & [[ "$local_size" -ne "{size_exp}" ]];then
-        echo local file not match with exp local_size=$local_size,  expected={size_exp}. skip uploading >> {fn_status}
+        echo local file not match with exp local_size=$local_size,  expected={size_exp}. skip uploading >> "{fn_status}"
         echo 1
         return
         fi
@@ -1084,63 +1086,63 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
         # check remote
         fn_pure = os.path.basename(fn_remote)
         check_remote_logic = f"""
-        local_size=$(stat -c "%s" {fn_local} 2>/dev/null)
+        local_size=$(stat -c "%s" "{fn_local}" 2>/dev/null)
         fnlog="{fn_status}"
 
         size_exp={size_exp}
-        echo local_size=$local_size , remote size = $remote_file_size exp size = $size_exp >> $fnlog
+        echo local_size=$local_size , remote size = $remote_file_size exp size = $size_exp >> "$fnlog"
 
         if [[ -z $remote_file_size ]];then
             # local file not exist
             if [[ -z $local_size ]];then
-                echo "not downloaded yet" >> $fnlog
+                echo "not downloaded yet" >> "$fnlog"
                 echo "local_not_ready"
                 return
             fi
 
             # exp size unkown, upload anyway
             if [[ $size_exp == "na" ]];then
-                echo "size_exp not specified, upload anyway : {fn_local}" >>  $fnlog
+                echo "size_exp not specified, upload anyway : {fn_local}" >>  "$fnlog"
                 echo upload
                 return
             fi
 
             if [[ $local_size -eq $size_exp ]];then
-                echo "local size is correct, prepare to upload: {fn_local}" >>  $fnlog
+                echo "local size is correct, prepare to upload: {fn_local}" >>  "$fnlog"
                 echo upload
                 return
             else
-                echo "local size not correct: local=$local_size , exp = $size_exp" >>  $fnlog
+                echo "local size not correct: local=$local_size , exp = $size_exp" >>  "$fnlog"
                 echo "local_not_ready"
                 return
             fi
-            echo -e "unkown situation! \\n local=$local_size\\n remote=$remote_file_size \\n exp = $size_exp" >>  $fnlog
+            echo -e "unkown situation! \\n local=$local_size\\n remote=$remote_file_size \\n exp = $size_exp" >>  "$fnlog"
 
             exit 1
         elif [[ $size_exp == "na" ]];then
             if [[ "$local_size" -eq "$remote_file_size" ]];then
-                echo size check is not specified, remote_file_size=$remote_file_size local_filesize=$local_size >>  $fnlog
+                echo size check is not specified, remote_file_size=$remote_file_size local_filesize=$local_size >>  "$fnlog"
                 echo already_uploaded
                 return
             else
-                echo remote size not correct: remote = $remote_file_size, local = $local_size >>  $fnlog
+                echo remote size not correct: remote = $remote_file_size, local = $local_size >>  "$fnlog"
                 echo upload
                 return
             fi
         elif [[ "$remote_file_size" -eq "{size_exp}" ]];then
-                echo {fn} successfully uploaded to {remote_pw}/  filesize={size_exp} >>  $fnlog
+                echo {fn} successfully uploaded to {remote_pw}/  filesize={size_exp} >>  "$fnlog"
                 echo already_uploaded
                 return
         elif [[ $size_exp -eq $local_size ]];then
-            echo remote size not correct: remote = $remote_file_size, exp = {size_exp} >>  $fnlog
+            echo remote size not correct: remote = $remote_file_size, exp = {size_exp} >>  "$fnlog"
                 echo upload
                 return
         elif [[ $size_exp -ne $local_size ]];then
-            echo {fn} local size not match exp, exp=$size_exp, local=$local_size >>  $fnlog
+            echo {fn} local size not match exp, exp=$size_exp, local=$local_size >>  "$fnlog"
             echo "local_not_ready"
             return
         else
-            echo -e "unkown situation! \\n local=$local_size\\n remote=$remote_file_size \\n exp = $size_exp" >>  $fnlog
+            echo -e "unkown situation! \\n local=$local_size\\n remote=$remote_file_size \\n exp = $size_exp" >>  "$fnlog"
             exit 1
         fi
         """
@@ -1181,16 +1183,17 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
         {check_remote_logic}
     }}
             """)
+        fn_refine = re.sub(r'\s+', '_', fn)
         cmd.append(f"""
     postupload(){{
-        mv {pw}/shell/{fn}.download_upload.{dest}.sh \\
-            {pw}/shell_done/{fn}.download_upload.{dest}.sh
-        fntmp={pw}/log/{fn}.tmplog
+        mv {pw}/shell/{fn_refine}.download_upload.{dest}.sh \\
+            {pw}/shell_done/{fn_refine}.download_upload.{dest}.sh
+        fntmp={pw}/log/{fn_refine}.tmplog
 
-        tail -c 3000 {pw}/log/upload.{dest}.{fn}.log  2>/dev/null|sed 's/\\r/\\n/g' > $fntmp;
-        mv $fntmp {pw}/log/upload.{dest}.{fn}.log
-        tail -n 30 {pw}/log/download.{fn}.log > $fntmp 2>/dev/null;
-        mv $fntmp {pw}/log/download.{fn}.log
+        tail -c 3000 {pw}/log/upload.{dest}.{fn_refine}.log  2>/dev/null|sed 's/\\r/\\n/g' > $fntmp;
+        mv $fntmp {pw}/log/upload.{dest}.{fn_refine}.log
+        tail -n 30 {pw}/log/download.{fn_refine}.log > $fntmp 2>/dev/null;
+        mv $fntmp {pw}/log/download.{fn_refine}.log
 
         {rm_cmd}
 
@@ -1244,7 +1247,10 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
         elif dest == 'emedgene':
             upload_cmd = f'{dock} aws s3 cp ""{fn_local}"" "s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_remote}" > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log'
         elif dest == 'rdrive':
-            upload_cmd = f"""{dock} smbclient "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf"  <<< $'put "{fn_local}" "{remote_pw}/{fn_remote}" ' """
+            # upload_cmd = f"""{dock} smbclient  --socket-options='TCP_NODELAY IPTOS_LOWDELAY SO_KEEPALIVE SO_RCVBUF=16777216 SO_SNDBUF=16777216 SO_RCVTIMEO=120000 SO_SNDTIMEO=120000' "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf"  <<< $'rm "{remote_pw}/{fn_remote}"\ntimeout 120\niosize 16384\nput "{fn_local}" "{remote_pw}/{fn_remote}" ' """
+            
+            fn_pure, ext = fn_remote.rsplit('.', 1)
+            upload_cmd = f"""{dock} smbclient "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf"  <<< $'rm "{remote_pw}/{fn_remote}"\nput "{fn_local}" "{remote_pw}/{fn_remote}" ' """
 
         if not no_upload and need_upload:
             cmd.append(f"""
@@ -1297,10 +1303,10 @@ def build_script(pw, d, info_file, no_upload=False):
             # fn_download_chunk = fn_download.replace('.gz', '')
 
             need_upload = not v['uploaded']
-
-            fn_script = f'{pw}/shell/{fn}.download_upload.{dest}.sh'
+            fn_refine = re.sub(r'\s+', '_', fn)
+            fn_script = f'{pw}/shell/{fn_refine}.download_upload.{dest}.sh'
             if v['uploaded'] and not  args.force and not force_download:
-                os.system(f'mv  {fn_script} {pw}/shell_done/{fn}.download_upload.{dest}.sh 2>/dev/null')
+                os.system(f'mv  {fn_script} {pw}/shell_done/{fn_refine}.download_upload.{dest}.sh 2>/dev/null')
                 continue
 
             if url.lower() == 'na':
@@ -1479,7 +1485,9 @@ def get_local_files(args, ft):
     elif len(fls_raw) == 1 and os.path.isdir(fls_raw[0]):
         # this is a folder
         pwtmp = os.path.abspath(fls_raw[0])
-        flist = os.popen(f'find -L {pwtmp} -type f ').read().split('\n')
+        logger.info(pwtmp)
+        # -maxdepth 1
+        flist = os.popen(f'find -L {pwtmp} -type f').read().split('\n')
         select_file = 1
     elif len(fls_raw) == 1 and not os.path.exists(fls_raw[0]):
         logger.error(f'file not exist: {fls_raw[0]}')
@@ -1489,8 +1497,20 @@ def get_local_files(args, ft):
         logger.info(fls_raw)
         flist = fls_raw
     
+    if 'all' in ft:
+        select_file = 0
+    
     res = []
     for fn in flist:
+        if not fn or fn.endswith('.log'):
+            continue
+        
+        fn_refine = re.sub(r'\s+', '_', fn)
+        if fn_refine != fn:
+            logger.info(f'now renaming {fn}')
+            os.system(f'mv "{fn}" "{fn_refine}" ')
+            fn = fn_refine
+        
         ext = fn.replace('.gz', '').rsplit('.', 1)[-1]
         if (select_file and ext in ft) or not select_file:
             res.append(fn)
@@ -1536,9 +1556,17 @@ if __name__ == "__main__":
     updated_version_only = not args.allversion
 
     if node_name.find('viccbiostat120') > -1:
-        dock = 'singularity exec -B /mnt /mnt/d/dock/centos.sif '
+        tmp = os.popen(f'which smbclient').read().strip()
+        if tmp:
+            dock = ''
+        else:
+            dock = 'singularity exec -B /mnt /mnt/d/dock/centos.sif '
     elif node_name.find('vampire') > -1:
-        dock = 'singularity exec -B /fs0 /data/cqs/chenh19/dock/centos.sif '
+        if 'hanuman' in node_name:
+            bind = '-B /fs0'
+        else:
+            bind = ''
+        dock = f'singularity exec {bind} /data/cqs/chenh19/dock/centos.sif '
 
 
     convert1 = {'dropbox': 'dropbox', 'db': 'dropbox', 'emedgene': 'emedgene', 'em': 'emedgene', 'ed':'emedgene', 'rdrive': 'rdrive', 'r': 'rdrive'}
@@ -1598,11 +1626,13 @@ if __name__ == "__main__":
         if not remote_pw:
             logger.error('you must specify the remote path for uploading')
             sys.exit(1)
-        confirm_dest = input(f'Your are uploading {len(local_files)} files: {local_files_ft_ct} to {dest}, is that correct? (yes/no):\n').lower()
+        
+        if not demo:
+            confirm_dest = input(f'You are uploading {len(local_files)} files: {local_files_ft_ct} to {dest}, is that correct? (yes/no):\n').lower()
 
-        if confirm_dest not in {'yes', 'y'}:
-            logger.error(f'you denied, please specify the correct -dest argument')
-            sys.exit(1)
+            if confirm_dest not in {'yes', 'y'}:
+                logger.error(f'you denied, please specify the correct -dest argument')
+                sys.exit(1)
         
         remote_pw = re.sub(r'\\', '/', remote_pw)
         d_exist, sub_folders = get_remote_file_list(pw, dest, remote_pw)
@@ -1620,17 +1650,19 @@ if __name__ == "__main__":
             else:
                 size = local_file_size.get(fn) or os.path.getsize(fn)
                 # logger.info(f'{fn}: {size}')
-                if d_exist[fn_pure][1] == size:
+                size_remote = d_exist[fn_pure][1]
+                if size_remote == size:
                     file_status['uploaded'].append(fn)
                 else:
                     file_status['need_to_upload'].append(fn)
-                    file_status['size_not_match'].append(fn)
+                    file_status['size_not_match'].append(f'{fn}\tremote={size_remote}, local={size}, ratio remote/local = {size_remote/size:.3f}')
         size_not_match = file_status['size_not_match']
         fn_not_match = 'remote_size_not_match.txt'
         if len(size_not_match) > 0:
             logger.error(colored(f'{len(size_not_match)} files uploaded, but the size not match, please check: {fn_not_match}', 'red'))
             with open(fn_not_match, 'w') as o:
                 print('\n'.join(size_not_match), file=o)
+            print('\n'.join(size_not_match))
         else:
             try:
                 os.unlink(fn_not_match)
