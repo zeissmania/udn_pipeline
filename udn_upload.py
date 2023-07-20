@@ -71,7 +71,7 @@ args = ps.parse_args()
 
 nobuild = args.nobuild
 
-ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'gvcf', 'fasta': 'fasta', 'fq': 'fastq', 'vcf': 'vcf',  'crai': 'cram'}
+ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'gvcf', 'fasta': 'fasta', 'fq': 'fastq', 'vcf': 'vcf',  'crai': 'cram', 'txt': 'txt'}
 ft_convert.update({_: _ for _ in ft_convert.values()})
 
 file_ct = {}
