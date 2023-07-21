@@ -1650,6 +1650,8 @@ if __name__ == "__main__":
 
         pw_case = f'{root}/{udn_raw}'
         logger.info(f'now running {pw_case}')
+        with open(f'{pw_case}/{udn_raw}.txt', 'w') as o:
+            pass
 
         try:
             os.makedirs(f'{pw_case}/origin', exist_ok=True)
