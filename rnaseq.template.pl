@@ -55,15 +55,13 @@ my $def = {
 
   #group definition, group name points to array of sample name defined in files.
   groups => {
-    "case"   => ["proband"],
-    "ctrl" => %ctrl_group_name,
+    "case"   => %case_group_name,
+    %ctrl_str
   },
 
   #comparison definition, comparison name points to array of group name defined in groups.
   #for each comparison, only two group names allowed while the first group will be used as control.
-  pairs => {
-    "case_vs_ctrl" => [ "ctrl", "case" ]
-  },
+  %compare_str
 };
 
 my $config = performRNASeq_gencode_hg19($def, 1);

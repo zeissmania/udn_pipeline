@@ -1280,7 +1280,7 @@ class UDN_case():
 
         # sort the result by amelie score
         sorted_file = f'{pw}/merged.sorted.{prj}.tsv'
-        sorted_excel = f'{pw}/merged.sorted.{prj}..xlsx'
+        sorted_excel = f'{pw}/merged.sorted.{prj}.xlsx'
 
         import pandas as pd
         df = pd.read_csv(merged_table, sep='\t')
@@ -1382,7 +1382,7 @@ class UDN_case():
 
                 s = int(s)
                 e = int(e)
-                bin_ = int(s / 100000)
+                bin_ = int(s / 100000) # 100k
                 coord = f'{chr_}:{s}-{e}'
 
                 # info stores the extra data need to be added to this line
@@ -1456,6 +1456,9 @@ class UDN_case():
                                 matched = [overlap] + isite
                     if matched:
                         # [[overlap, s, e, sv_type, gn, cn]]
+                        len_proband = e - s
+                        overlap_ratio = matched[0] / len_proband
+                        matched[0] = f'{matched[0]} (ratio={overlap_ratio:.3f})'
                         matched = [str(_) for _ in matched]
 
                         # new order = # copy_number, gn, sv_type, s, e, overlap
