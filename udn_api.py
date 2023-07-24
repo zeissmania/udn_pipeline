@@ -1650,8 +1650,6 @@ if __name__ == "__main__":
 
         pw_case = f'{root}/{udn_raw}'
         logger.info(f'now running {pw_case}')
-        with open(f'{pw_case}/{udn_raw}.txt', 'w') as o:
-            pass
 
         try:
             os.makedirs(f'{pw_case}/origin', exist_ok=True)
@@ -1662,6 +1660,10 @@ if __name__ == "__main__":
         except:
             pass
         os.chdir(pw_case)
+
+        with open(f'{pw_case}/{udn_raw}.txt', 'w') as o:
+            pass
+
 
         fn_udn_api_pkl = f'{pw_case}/intermed/{udn}.udn_api_query.pkl'
         fn_downloadlink_backup = f'{pw_case}/downloadlink.txt'
