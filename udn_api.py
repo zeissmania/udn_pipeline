@@ -1089,6 +1089,15 @@ default:
             newname = ''
             newname_base = ''
             
+            fn_prefix = []
+            if seq_type != 'NA':
+                fn_prefix.append(seq_type)
+            
+            fn_prefix += [str(seq_id), fn]
+            
+            fn = '_'.join(fn_prefix)
+            
+            
             if seq_id_set and seq_id not in seq_id_set:
                 n_skip_due_to_seqid += 1
                 continue
