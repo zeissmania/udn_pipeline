@@ -1245,7 +1245,7 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
         if dest == 'dropbox':
             upload_cmd = f'{dock} dbxcli put "{fn_local}" "/{remote_pw}/{fn_remote}" > {pw}/log/upload.{dest}.{fn}.log 2>&1'
         elif dest == 'emedgene':
-            upload_cmd = f'{dock} aws s3 cp ""{fn_local}"" "s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_remote}" > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log'
+            upload_cmd = f'{dock} aws s3 cp "{fn_local}" "s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_remote}" > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log'
         elif dest == 'rdrive':
             # upload_cmd = f"""{dock} smbclient  --socket-options='TCP_NODELAY IPTOS_LOWDELAY SO_KEEPALIVE SO_RCVBUF=16777216 SO_SNDBUF=16777216 SO_RCVTIMEO=120000 SO_SNDTIMEO=120000' "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf"  <<< $'rm "{remote_pw}/{fn_remote}"\ntimeout 120\niosize 16384\nput "{fn_local}" "{remote_pw}/{fn_remote}" ' """
             
