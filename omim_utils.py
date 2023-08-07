@@ -93,13 +93,10 @@ def get_omim_map(logger=None):
                 pheno = a[12].strip()
                 gn = a[8].strip()
                 if gn:
-                    d_omim_map['gn2omim'] = gn_id
-                
-                if not pheno:
-                    d_omim_map[gn_id] = {}
-                else:
+                    d_omim_map['gn2omim'][gn] = gn_id
+                d_omim_map[gn_id] = {}
+                if pheno:
                     pheno = pheno.split(';')
-                    d_omim_map[gn_id] = {}
                     for ipheno in pheno:
                         ipheno = ipheno.replace('Autosomal recessive', 'AR').replace('Autosomal dominant', 'AD').replace('X-linked recessive', 'XLR').replace('X-linked dominant', 'XLD')
                         m = re.match(r".*(?:, )?(\d{6})(?: \(\d+\))", ipheno)
