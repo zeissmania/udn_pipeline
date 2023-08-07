@@ -1060,7 +1060,7 @@ default:
         p_trailing = '_' + p_trailing if p_trailing else ''
         remote_pw = m[1] + p_trailing
 
-    out_info.write('rel_to_proband\tfn\trename\tsample_list\turl\tudn\tseqid\tseq_type\tsize\tbuild\tmd5\tupload_type\tdownload_type\tremote_pw\turl_s3\n')
+    out_info.write('rel_to_proband\tfn\tfile_id\trename\tsample_list\turl\tudn\tseqid\tseq_type\tsize\tbuild\tmd5\tupload_type\tdownload_type\tremote_pw\turl_s3\n')
 
     check_dup = {}
     
@@ -1160,7 +1160,7 @@ default:
                     logger.info(f'joint.cnv found:{fn} - skip')
 
             # 'rel_to_proband\tfn\trename\tsample_list\turl\tudn\tseqid\tseq_type\tsize\tbuild\tmd5\tupload_type\tdownload_type\tremote_pw\turl_s3\n'
-            info_lines.append([rel_to_proband, fn, newname, newname_base, url, udn, seq_id, seq_type, size, build, md5, '', '', '', url_s3])
+            info_lines.append([rel_to_proband, fn, file_id, newname, newname_base, url, udn, seq_id, seq_type, size, build, md5, '', '', '', url_s3])
 
             out_md5.write(f'{md5}  {fn}\n')
 
@@ -1170,12 +1170,12 @@ default:
         if n_skip_due_to_seqid:
             logger.warning(f'{rel_to_proband}: {n_skip_due_to_seqid} file skipped due to not in seq_id_set {seq_id_set}, files kept = {len(file_dedup)}')
     
-    info_lines = sorted(info_lines, key=lambda _: (_[6], _[0], _[7]))
+    info_lines = sorted(info_lines, key=lambda _: (_[7], _[0], _[8]))
     # dedup file
     dedup = {}  # key = fn, v = (idx, seq_id, size)
     dup = []  # ele = idx
     for idx, line in enumerate(info_lines):
-        fn, seq_id, size = line[1], int(line[6]), int(line[8])
+        fn, seq_id, size = line[1], int(line[7]), int(line[9])
         if fn not in dedup:
             dedup[fn] = [idx, seq_id, size]
         else:
