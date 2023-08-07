@@ -45,7 +45,7 @@ my $def = {
   pairend => 1,
 
   #Call variant using GATK pipeline
-  perform_call_variants => 0,
+  perform_call_variants => 1,
   
   #source files, it's a hashmap with key (sample name) points to array of files. For single end data, the array should contains one file only.
 
