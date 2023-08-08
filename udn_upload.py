@@ -253,7 +253,7 @@ def build_remote_subfolder(name, dest):
         # os.system(f'{dock} aws s3api put-object --profile {profile} --bucket emg-auto-samples --key Vanderbilt/upload/{name}/ >>{dest}.create_folder.log 2>{dest}.create_folder.log')
         cmd = f'{dock} aws s3api put-object --bucket emg-auto-samples --key "Vanderbilt/upload/{name}/" >>{dest}.create_folder.log 2>{dest}.create_folder.log'
     elif dest == 'rdrive':
-        cmd = f'{dock} smbclient "//i10file.vumc.org/ped/"   -A /home/chenh19/cred/smbclient.conf -c \'mkdir "{name}" \' '
+        cmd = f'{dock_smb} smbclient "//i10file.vumc.org/ped/"   -A /home/chenh19/cred/smbclient.conf -c \'mkdir "{name}" \' '
         # logger.info(cmd)
     
     return cmd
@@ -332,7 +332,7 @@ def get_remote_file_list(pw, dest, remote_pw):
     elif dest == 'emedgene':
         os.system(f'{dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}/" --recursive > {fn_exist}')
     elif dest == 'rdrive':
-        cmd = f'{dock} smbclient "//i10file.vumc.org/ped/"   -A /home/chenh19/cred/smbclient.conf -D "{remote_pw}" <<< $\'recurse on\\nls\' 2>/dev/null > {fn_exist}'
+        cmd = f'{dock_smb} smbclient "//i10file.vumc.org/ped/"   -A /home/chenh19/cred/smbclient.conf -D "{remote_pw}" <<< $\'recurse on\\nls\' 2>/dev/null > {fn_exist}'
         # logger.info(cmd)
         os.system(cmd)
 
@@ -658,6 +658,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
 
             except:
                 logger.error('rename column not found in header')
+                logger.info('idx = {idx}')
                 raise
             if rename:
                 logger.info(f'fn = {fn}, rename = {rename}, suffix={rename_suffix}')
@@ -893,7 +894,7 @@ def refine_remote_pw(remote_pw, dest):
     if dest == "emedgene":
         os.system(f'{dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_base_dir}" > {fn_all_folder} ')
     elif dest == 'rdrive':
-        cmd = f'{dock} smbclient "//i10file.vumc.org/ped/"  -A "/home/chenh19/cred/smbclient.conf" -D "{remote_base_dir}" -c "ls" 2>/dev/null > {fn_all_folder}'
+        cmd = f'{dock_smb} smbclient "//i10file.vumc.org/ped/"  -A "/home/chenh19/cred/smbclient.conf" -D "{remote_base_dir}" -c "ls" 2>/dev/null > {fn_all_folder}'
         os.system(cmd)
 
     all_remote_folders = {}
@@ -1179,7 +1180,7 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
             
             cmd.append(f"""
     checkremote(){{
-        remote_file_size=$({dock} smbclient "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf" -D "{remote_pw}/" <<< $'recurse on\\nls "{sub_pw}" '|grep -E -m1 "{fn_remote_pure}($|[^.])"|head -1|tr -s " "|cut -d ' ' -f 4)
+        remote_file_size=$({dock_smb} smbclient "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf" -D "{remote_pw}/" <<< $'recurse on\\nls "{sub_pw}" '|grep -E -m1 "{fn_remote_pure}($|[^.])"|head -1|tr -s " "|cut -d ' ' -f 4)
         {check_remote_logic}
     }}
             """)
@@ -1250,7 +1251,7 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
             # upload_cmd = f"""{dock} smbclient  --socket-options='TCP_NODELAY IPTOS_LOWDELAY SO_KEEPALIVE SO_RCVBUF=16777216 SO_SNDBUF=16777216 SO_RCVTIMEO=120000 SO_SNDTIMEO=120000' "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf"  <<< $'rm "{remote_pw}/{fn_remote}"\ntimeout 120\niosize 16384\nput "{fn_local}" "{remote_pw}/{fn_remote}" ' """
             
             fn_pure, ext = fn_remote.rsplit('.', 1)
-            upload_cmd = f"""{dock} smbclient "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf"  <<< $'rm "{remote_pw}/{fn_remote}"\nput "{fn_local}" "{remote_pw}/{fn_remote}" ' """
+            upload_cmd = f"""{dock_smb} smbclient "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf"  <<< $'rm "{remote_pw}/{fn_remote}"\nput "{fn_local}" "{remote_pw}/{fn_remote}" ' """
 
         if not no_upload and need_upload:
             cmd.append(f"""
@@ -1556,11 +1557,13 @@ if __name__ == "__main__":
     updated_version_only = not args.allversion
 
     if node_name.find('viccbiostat120') > -1:
+        dock = 'singularity exec -B /mnt /mnt/d/dock/centos.sif '
         tmp = os.popen(f'which smbclient').read().strip()
         if tmp:
-            dock = ''
+            dock_smb = ''
         else:
-            dock = 'singularity exec -B /mnt /mnt/d/dock/centos.sif '
+            dock_smb = dock
+            
     elif node_name.find('vampire') > -1:
         if 'hanuman' in node_name:
             bind = '-B /fs0'
