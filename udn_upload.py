@@ -658,7 +658,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
 
             except:
                 logger.error('rename column not found in header')
-                logger.info('idx = {idx}')
+                logger.info(f'idx = {idx}')
                 raise
             if rename:
                 logger.info(f'fn = {fn}, rename = {rename}, suffix={rename_suffix}')
