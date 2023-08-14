@@ -42,7 +42,7 @@ base_url = 'https://gateway.undiagnosed.hms.harvard.edu/api/2.0'
 platform = sys.platform.lower()
 
 ft_convert = {
-    'bai': 'bam', 
+    'bai': 'bai', 
     'cnv.vcf': 'cnv', 'gvcf': 'vcf', 'fq': 'fastq', 'vcf': 'vcf', 'bz2': 'bz2', 'txt': 'txt', 'bed': 'bed', 'xls': 'xls', 'xlsx': 'xlsx', 'wig': 'wig'}
 ft_convert.update({_: _ for _ in ft_convert.values()})
 
@@ -1111,6 +1111,7 @@ default:
                 continue
 
             logger.debug(f'{fn}\t{url}')
+            logger.info(fn)
             
             if fn not in file_dedup:
                 file_dedup.add(fn)
@@ -1211,7 +1212,7 @@ default:
         if len(url_count[k]['unkown']) == 0:
             del url_count[k]['unkown']
 
-    # logger.info('\n' + json.dumps(url_count, indent=3))
+    logger.info('\n' + json.dumps(url_count, indent=3))
 
     try:
         out_cnv.close()
