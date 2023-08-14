@@ -296,6 +296,10 @@ def parse_smb(fn, remote_pw):
         for i in f:
             i = re.sub(r'\s+', ' ', i.strip())
             a = i.rsplit(' ')
+            
+            if a[0] == '.':
+                # add the root folder
+                sub_folders.add('')
             if i.startswith('\\GEN'):
                 pw = i.strip().replace('\\', '/') + '/'
                 folder = pw.replace(remote_pw, '')
@@ -303,6 +307,8 @@ def parse_smb(fn, remote_pw):
                 folder = re.sub(r'/$', '', folder)
                 sub_folders.add(folder)
                 continue
+            
+            
             
             if len(a) != 8 or a[0] in {'.', '..'} or a[1] == 'D':
                 continue
@@ -968,20 +974,22 @@ def refine_remote_pw(remote_pw, dest):
     
     return f'{remote_base_dir}{remote_pw}'
 
-def get_fn_remote(fn_local, local_pw_layers=0, fn_remote=None):
+def get_fn_remote(fn_local, dir_local_files, local_pw_layers=0, fn_remote=None):
     
     fn_remote = fn_remote or fn_local
     fn_remote = os.path.basename(fn_remote)
+    
+    dir_local_files = os.path.abspath(dir_local_files)
+    fn_local = os.path.abspath(fn_local)
     # logger.info(fn_remote)
 
     if local_pw_layers:
-        tmp = fn_local.split('/')[:-1]
+        tmp = fn_local.replace(dir_local_files, '').split('/')[:-1]
         try:
             pw_remote_addition = '/'.join(tmp[-local_pw_layers:])
         except:
             pass
         else:
-            
             if not fn_remote or not fn_remote.startswith(pw_remote_addition):
                 fn_remote = f'{pw_remote_addition}/{fn_remote}'
         # logger.info(pw_remote_addition)
@@ -1607,6 +1615,19 @@ if __name__ == "__main__":
         local_pw_layers = args.local_pw_layers  # keep the local parent folder
         # e.g. /a/b/c/d/1.fastq.gz   if layer = 0, will include no parent folder
         # if layer = 1, will upload to remote_pw/d/1.fastq.gz
+        dir_local_files = args.local_files
+        if not dir_local_files:
+            logger.error(f'simple mode, must specify the root folder for the files need to be uploaded')
+            sys.exit(1)
+        
+        
+        
+        if len(dir_local_files) > 1:
+            logger.warning(f'multiple folders specified, will use the first')
+        dir_local_files = dir_local_files[0]
+        if not os.path.isdir(dir_local_files):
+            logger.error('simple mode, first arg should be a folder, : {dir_local_files}')
+            sys.exit(1)
         
         local_files, local_file_size = get_local_files(args, ft)
         logger.info(f'local files n = {len(local_files)}')
@@ -1637,10 +1658,14 @@ if __name__ == "__main__":
         remote_pw = re.sub(r'\\', '/', remote_pw)
         d_exist, sub_folders = get_remote_file_list(pw, dest, remote_pw)
         file_status = {'uploaded': [], 'need_to_upload': [], 'size_not_match': []}
+        
+        sub_folders = {f'{remote_pw}/{_}' if _ else remote_pw for _ in sub_folders}
 
+        # logger.info('\n\t' + '\n\t'.join(sub_folders))
+        
+        
         # logger.info(d_exist)
         for fn in local_files:
-            
             fn_pure = os.path.basename(fn)
             if fn_suffix:
                 fn_pure = add_fn_suffix(fn_pure, fn_suffix)
@@ -1692,7 +1717,7 @@ if __name__ == "__main__":
             fn_remote = add_fn_suffix(fn, fn_suffix)
             
             
-            fn_remote = get_fn_remote(fn, local_pw_layers, fn_remote=fn_remote)
+            fn_remote = get_fn_remote(fn, dir_local_files, local_pw_layers, fn_remote=fn_remote)
             # UDN620340_287/UDN763389_Father/9769-LR-0005_S1_L005_R1_001.fastq.gz 
             # if depth = 0, will be plain file name
             fn_pure = os.path.basename(fn)
@@ -1712,8 +1737,13 @@ if __name__ == "__main__":
                 logger.warning(f'fail to build script for {fn_pure}')
                 continue
             scripts.append(fn_script)
-                
+        
+        # logger.info(remote_pw_list)
+        # logger.info(sub_folders)
+        
         for pwtmp in remote_pw_list:
+            if pwtmp  in sub_folders:
+                continue
             cmd = build_remote_subfolder(pwtmp, dest)
             # if not demo:
             #     logger.info(f'building remote pw: {pwtmp}')
@@ -1723,11 +1753,18 @@ if __name__ == "__main__":
         
         
         fn_script = f'shell/build_pw.sh'
-        with open(fn_script, 'w') as o:
-            print('\n'.join(cmd_build_remote_pw), file=o)
-        
-        if not nobuild:
-            scripts.insert(0, fn_script)
+        if len(cmd_build_remote_pw) > 0:
+            with open(fn_script, 'w') as o:
+                print('\n'.join(cmd_build_remote_pw), file=o)
+            if not nobuild:
+                scripts.insert(0, fn_script)
+        else:
+            try:
+                os.unlink(fn_script)
+            except:
+                pass
+            logger.info(f'g@all remote subfolders already exist: {remote_pw_list}')
+
         
         
         with open(f'script_list.txt', 'w') as o:
