@@ -1760,7 +1760,7 @@ if __name__ == "__main__":
             with open(fn_script, 'w') as o:
                 print('\n'.join(cmd_build_remote_pw), file=o)
             if not nobuild:
-                scripts.insert(0, fn_script)
+                logger.info(f'need to build remote folder: {fn_script}')
         else:
             try:
                 os.unlink(fn_script)
