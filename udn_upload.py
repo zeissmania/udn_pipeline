@@ -675,6 +675,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
             fn_download = f'{pw}/download/{fn}'
 
             downloaded = 0
+            file_status_by_fn[fn] = []
             if os.path.exists(fn_download):
                 size_local = os.path.getsize(fn_download)
                 fn_pure = os.path.basename(fn_download)
@@ -686,22 +687,27 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                     logger.debug(f'expected md5 not found for {fn_pure}')
                     md5_ok = 1
                 elif file_md5_local is None:
-                    logger.warning(red(f'fail to get local md5 for {fn_download}'))
+                    logger.debug(red(f'fail to get local md5 for {fn_download}'))
                     md5_ok = 1
                 elif file_md5_exp == file_md5_local:
                     md5_ok = 1
                 else:
                     logger.warning(red(f'md5 not match for {fn_download}, exp = {file_md5_exp}, local = {file_md5_local}'))
+                    file_status_by_fn[fn].append('md5_not_match')
                 
                 if size_local == 0:
                     os.unlink(fn_download)
                     logger.warning('empty file: {fn_download}')
+                    file_status_by_fn[fn].append('empty_file')
                 elif size_exp == 'na' and md5_ok:
                     downloaded = 1
+                    file_status_by_fn[fn].append('downloaded')
                 elif size_local == size_exp and md5_ok:
                     downloaded = 1
+                    file_status_by_fn[fn].append('downloaded')
                 else:
                     logger.warning(red(f'file downloaded, but size not match. exp = {size_exp}, local={size_local} : {fn_download}'))
+                    file_status_by_fn[fn].append('size_unmatch')
                     if not demo:
                         try:
                             os.symlink(fn_download, f'{fn_download}.bad')
@@ -717,10 +723,15 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                     uploaded = 1
                 elif size_exp == size_remote:
                     uploaded = 1
+                    file_status_by_fn[fn].append('uploaded')
                 else:
                     logger.warning(f'file uploaded, but size not match. exp = {size_exp}, remote={size_remote}')
                     uploaded = 0
+                    file_status_by_fn[fn].append(f'remote_size_unmatch')
 
+            if not os.path.exists(fn_download) and uploaded == 0:
+                file_status_by_fn[fn].append('not_started')
+            
 
             remote_sub_pw = f'{remote_pw}' if remote_flat else f'{remote_pw}/{name}'
             
@@ -855,6 +866,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                     script_list['needup'].append(fn_script)
 
 
+    need_upload = sorted(need_upload)
     n_need_upload = len(need_upload)
     logger.info(f'total files = {n_desired}, need_to_upload={n_need_upload}, already exist in server = {n_uploaded}, already downloaded = {n_downloaded}')
 
@@ -868,7 +880,10 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
             print(red(f'{n_need_download}/{n_desired} files need to be downloaded'))
         if n_need_upload > 0:
             print(red(f'{n_need_upload}/{n_desired} files need to be uploaded'))
-        print('\t' + '\n\t'.join(need_upload))
+        
+        str_tmp = [f'{_}  {red(file_status_by_fn.get(_))}' for _ in need_upload]
+        
+        print('\t' + '\n\t'.join(str_tmp))
         if n_invalid_url > 0:
             logger.info(f'\nERROR: {n_invalid_url} files with NA url')
             logger.debug('\n\t'.join(invalid_url))
@@ -1589,6 +1604,9 @@ if __name__ == "__main__":
     # get the file type to upload
     gzip_only = set()
     ft = set()
+    
+    file_status_by_fn = {}
+    
 
     if not args.ft:
         ft = ['fastq']
