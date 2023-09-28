@@ -87,7 +87,7 @@ with open(fn_vcf, 'w') as o:
 
     print(vcf, file=o)
 
-dock_path = '/scratch/cqs/chenh19/dock/annotsv.sif'
+dock_path = '/nobackup/cqs/chenh19/dock/annotsv.sif'
 annot_sv_app = f'singularity exec {dock_path}  /tools/AnnotSV/bin/AnnotSV'
 
 cmd = f'{annot_sv_app} -genomeBuild GRCh38 -typeOfAnnotation split -SVinputFile {fn_vcf}'
