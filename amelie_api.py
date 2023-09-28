@@ -242,7 +242,7 @@ def query(prj, pheno, pdict, pw, pw_main):
         for ipaper in ires[3:]:
             # ipaper is a dict, keys = ['journal', 'pmid', 'pubmed_year', 'score', 'title', 'hpo']
             pmid = ipaper['pmid']
-            pmid = f'https://pubmed.ncbi.nlm.nih.gov/{pmid}/'
+            pmid_url = f'https://pubmed.ncbi.nlm.nih.gov/{pmid}/'
             hpo = re_group_hpo(ipaper['hpo'])  # a list
 
             for _, hpo_des in hpo.items():
@@ -250,10 +250,11 @@ def query(prj, pheno, pdict, pw, pw_main):
                     for _ in hpo_des:
                         _ = _.lower()
                         if _.find(ipheno) > -1:
+                            tmp = [pmid_url, ipaper['title'], f"{ipaper['journal']} ({ipaper['pubmed_year']})", f'PMID: {pmid}', hpo_des]
                             try:
-                                hit[ipheno].append([pmid, ipaper['title'], ipaper['journal'], ipaper['pubmed_year'], hpo_des])
+                                hit[ipheno].append(tmp)
                             except:
-                                hit[ipheno] = [[pmid, ipaper['title'], ipaper['journal'], ipaper['pubmed_year'], hpo_des]]
+                                hit[ipheno] = [tmp]
                             break
         if len(hit) > 0:
             res[ign] = [score, omim, hit]

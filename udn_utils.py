@@ -436,7 +436,7 @@ class UDN_case():
             mount = '-B /mnt/d -B /data'
         else:
             # dock_path = '/scratch/cqs/chenh19/dock/annotsv.sif'
-            dock_path = '/data/cqs/chenh19/dock/annotsv.sif'
+            dock_path = '/data/cqs/chenh19/dock/annotsv/'
             mount = ''
         # the annot_sv_rank and gnomad_AF filtering would only take effect on the proband, would not filter on the parent
 
@@ -1901,7 +1901,9 @@ class UDN_case():
                 for amelie_pheno, amelie_v1 in amelie_str.items():
                     amelie_v1_dedup = []
                     dedup = set()
+                    
                     for i in amelie_v1:
+                        # i = [pmid_link, ipaper['title'], ipaper['journal'] + ipaper['pubmed_year'], pmid,  hpo_des]
                         if i[0] not in dedup:
                             dedup.add(i[0])
                             amelie_v1_dedup.append(i)

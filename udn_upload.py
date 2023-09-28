@@ -1391,10 +1391,14 @@ def main(pw, script_list, info_file=None, remote_pw_in=None, updated_version_onl
         build_script(pw, d, info_file, no_upload=no_upload)
     return ct, script_list, file_status
 
-def clearlog(force=False):
+def clearlog(force=False, args=None):
     # get folder list
     pw_list = os.popen(f'ls -d *UDN*/ vudp*/ VUDP*/ 2>/dev/null|sort|uniq').read().strip().split('\n')
     pw_list = [_[:-1] for _ in pw_list if _.strip()]
+    
+    if args.pw:
+        pw_list = sorted(set(pw_list) & set(args.pw))
+    
     n_pw = len(pw_list)
     
     logger.info(pw_list)
@@ -1410,10 +1414,11 @@ def clearlog(force=False):
     log_fls = []
 
     for ipw in pw_list:
-        fls = os.popen(f'find {ipw}/log -iname "*.log" -type f -size +50k 2>/dev/null').read().strip().split('\n')
+        fls = os.popen(f'find {ipw}/log -iname "*.log" -type f -size +20k 2>/dev/null').read().strip().split('\n')
         log_fls += [_.strip() for _ in fls if _.strip()]
 
-    logger.warning(f'now trying to clear the logs, n = {len(log_fls)}')
+    if len(log_fls) > 0:
+        logger.warning(f'now trying to clear the logs, n = {len(log_fls)}')
     upload_fls = []
     download_fls = []
 
@@ -1454,6 +1459,7 @@ def clearlog(force=False):
     for ipw in pw_list:
         pw_download = f'{ipw}/download'
         if not os.path.exists(pw_download):
+            logger.info(f'{ipw}, already removed')
             continue
         if not force:
             proceed = input(f'are you sure you need to remove folder\n  {pw_download}?  (y/n): ')
@@ -1593,6 +1599,7 @@ if __name__ == "__main__":
         else:
             bind = ''
         dock = f'singularity exec {bind} /data/cqs/chenh19/dock/centos.sif '
+        dock_smb = dock
 
 
     convert1 = {'dropbox': 'dropbox', 'db': 'dropbox', 'emedgene': 'emedgene', 'em': 'emedgene', 'ed':'emedgene', 'rdrive': 'rdrive', 'r': 'rdrive'}
@@ -1733,15 +1740,16 @@ if __name__ == "__main__":
 
         remote_pw_list = [remote_pw]
 
-        for fn in file_status['need_to_upload']:
+        fls = sorted(file_status['need_to_upload'])
+        purenames = [os.path.basename(_) for _ in fls]
+        max_len = max([len(_) for _ in purenames])
+        tmp = zip(fls, purenames)
+        for fn, fn_pure in tmp:
             
             fn_remote = add_fn_suffix(fn, fn_suffix)
-            
-            
             fn_remote = get_fn_remote(fn, dir_local_files, local_pw_layers, fn_remote=fn_remote)
             # UDN620340_287/UDN763389_Father/9769-LR-0005_S1_L005_R1_001.fastq.gz 
             # if depth = 0, will be plain file name
-            fn_pure = os.path.basename(fn)
             
             tmp = fn_remote.split('/')[:-1]
             if len(tmp) > 0:
@@ -1752,7 +1760,9 @@ if __name__ == "__main__":
                         remote_pw_list.append(tmp2)
             
             fn_script = build_script_single(dest, remote_pw, fn, simple=True, need_upload=True, fn_remote=fn_remote, local_file_size=local_file_size)
-            print(f'{fn_pure}\tremote:  {remote_pw}/{fn_remote}')
+            tmp = f'{remote_pw}/{fn_remote}'
+            tmp = tmp.replace('/', red(' / '))
+            print(fn_pure.ljust(max_len + 5) + f'remote:  {tmp}')
             
             if fn_script is None:
                 logger.warning(f'fail to build script for {fn_pure}')
@@ -1793,7 +1803,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     if clearlog_flag:
-        sys.exit(clearlog(force_clear))
+        sys.exit(clearlog(force_clear, args))
 
     # get pw
     pw_raw = args.pw or [os.getcwd()]
