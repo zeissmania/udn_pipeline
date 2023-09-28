@@ -1711,6 +1711,8 @@ if __name__ == "__main__":
             else:
                 logger.info(f'\tdownloading CNV vcf file')
                 os.system(f'bash intermed/download.cnv.{udn}.sh >/dev/null 2>&1')
+                tmp = os.popen(f'ls -lha "origin/*.cnv.vcf.gz" ')
+                logger.info(tmp)
         try:
             os.unlink('geckodriver.log')
         except:
