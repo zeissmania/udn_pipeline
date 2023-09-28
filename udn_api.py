@@ -15,6 +15,7 @@ import sys
 # import pprint
 import os
 import time
+import traceback
 import re
 import glob
 import json
@@ -519,10 +520,15 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
 
     if is_proband:
         family_members = get_json(f'participants/{udn}/family')
-        phenotip_info = get_json(f'participants/{udn}/phenotips')['phenotips']
-        application_id = basic_info['application']['id']
-        application = get_json(f'applications/{application_id}')
-        baylor_candidate_raw = basic_info['diagnoses']
+        try:
+            phenotip_info = get_json(f'participants/{udn}/phenotips')['phenotips']
+            application_id = basic_info['application']['id']
+            application = get_json(f'applications/{application_id}')
+            baylor_candidate_raw = basic_info['diagnoses']
+        except:
+            e = traceback.format_exc()
+            logger.error(f'fail to get basic info for {udn}\n{e}')
+            return res_all
 
 
         res_family = []
