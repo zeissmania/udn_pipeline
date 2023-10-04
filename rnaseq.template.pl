@@ -27,10 +27,10 @@ my $def = {
   perform_multiqc    => 0,
 
   #We use webgestalt to do gene enrichment analysis using differential expressed genes.
-  perform_webgestalt => 1,
+  perform_webgestalt => 0,
 
   #We use GSEA for gene set enrichment analysis. It works for human genome only.
-  perform_gsea       => 1,
+  perform_gsea       => 0,
 
   #If we need to trim the adapter from reads. Set to 0 if you don't find adapter in raw data.
   perform_cutadapt => 1,
@@ -50,7 +50,6 @@ my $def = {
   #source files, it's a hashmap with key (sample name) points to array of files. For single end data, the array should contains one file only.
 
   files => { %files
-
   },
 
   #group definition, group name points to array of sample name defined in files.
