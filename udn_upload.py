@@ -247,6 +247,7 @@ def build_remote_subfolder(name, dest):
     # if demo:
     #     logger.info(f'demo mode, skip building remote subfolder')
     #     return 0
+    name = re.sub('^/', '', name)
     if dest == 'dropbox':
         cmd = f'{dock} dbxcli mkdir "{name}/" >>{dest}.create_folder.log 2>{dest}.create_folder.log'
     elif dest == 'emedgene':
@@ -273,6 +274,12 @@ def get_file_extension(fn):
 def parse_smb(fn, remote_pw):
     res = {}
     d_exist = {}
+    
+    remote_pw = re.sub(r'/$', '', remote_pw)
+    remote_pw = re.sub(r'^/', '', remote_pw)
+    if remote_pw:
+        remote_pw += '/'
+    
     sub_folders = set()
     #   .                                   D        0  Mon Feb  4 10:04:18 2019
     #   ..                                  D        0  Thu Apr 27 12:58:22 2023
@@ -292,6 +299,7 @@ def parse_smb(fn, remote_pw):
     #   LTG038_S3_L001_R1_001.bam.bai       A  3463032  Fri Nov 16 19:52:12 2018
     #   LTG038_S3_L001_R1_001.bam           A 7569750225  Fri Nov 16 19:52:10 2018
     pw = ''
+    pwo = ''
     with open(fn) as f:
         for i in f:
             i = re.sub(r'\s+', ' ', i.strip())
@@ -301,23 +309,30 @@ def parse_smb(fn, remote_pw):
                 # add the root folder
                 sub_folders.add('')
             if i.startswith('\\GEN'):
-                pw = i.strip().replace('\\', '/') + '/'
+                pw = i.strip().replace('\\', '/')
                 folder = pw.replace(remote_pw, '')
-                folder = re.sub(r'^/', '', folder)
-                folder = re.sub(r'/$', '', folder)
+                pw = re.sub(r'/+$', '', pw)
+
+                folder = re.sub(r'^/+', '', folder)
+                folder = re.sub(r'/+$', '', folder)
                 sub_folders.add(folder)
                 continue
-            
-            
+
+            if pw:
+                pwo = pw + '/'
             
             if len(a) != 8 or a[0] in {'.', '..'} or a[1] == 'D':
                 continue
             fn, size = a[0], a[2]
+            fn = f'{pw}{fn}'
+            
             try:
                 size = int(size)
             except:
                 continue
-            fn_full = f'{pw}{fn}'
+            
+            
+            fn_full = f'{remote_pw}{fn}'
             d_exist[fn] = [fn_full, size]
             
 
@@ -327,8 +342,12 @@ def get_remote_file_list(pw, dest, remote_pw):
     """
     return d_exist,  key = fn, value = [remote path, file size]
     """
+    remote_pw = re.sub(r'/$', '', remote_pw)
+    remote_pw = re.sub(r'^/', '', remote_pw)
     logger.info(f'remote_pw={remote_pw}, dest={dest}')
-    remote_pw_plain = re.sub(r'\W+', '_', remote_pw)
+
+    
+    remote_pw_plain = re.sub(r'\W+', '_', remote_pw) or 'root'
     # fn_exist_complete = f'{pw}/remote.existing_files.{remote_pw_plain}.completed.txt'
 
     fn_exist = f'{pw}/remote.existing_files.{remote_pw_plain}.txt'
@@ -336,7 +355,7 @@ def get_remote_file_list(pw, dest, remote_pw):
     if dest == 'dropbox':
         os.system(f'{dock} dbxcli ls -R "/{remote_pw}" -l > {fn_exist}')
     elif dest == 'emedgene':
-        os.system(f'{dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}/" --recursive > {fn_exist}')
+        os.system(f'{dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}" --recursive > {fn_exist}')
     elif dest == 'rdrive':
         cmd = f'{dock_smb} smbclient "//i10file.vumc.org/ped/"   -A /home/chenh19/cred/smbclient.conf -D "{remote_pw}" <<< $\'recurse on\\nls\' 2>/dev/null > {fn_exist}'
         # logger.info(cmd)
@@ -361,7 +380,7 @@ def get_remote_file_list(pw, dest, remote_pw):
             for i in fp:
                 i = i.strip()
                 a = re.split('/', i, 1)
-                fn = a[-1].rsplit('/', 1)[-1]
+                fn = a[-1]
 
                 d_exist[fn] = [a[-1], 0]
                 if i[0] == '-':
@@ -370,28 +389,17 @@ def get_remote_file_list(pw, dest, remote_pw):
                     folder = re.sub(r'/$', '', folder)
                     sub_folders.add(folder)
     elif dest == 'emedgene':
-        # 2021-02-22 15:45:30          0 Vanderbilt/upload/UDN782882_261_DP/Father_UDN098366/
-        # 2021-02-22 18:43:14 44042338086 Vanderbilt/upload/UDN782882_261_DP/Father_UDN098366/939022-UDN098366-D_R1.fastq.gz
-        # 2021-02-22 18:48:16 48156982037 Vanderbilt/upload/UDN782882_261_DP/Father_UDN098366/939022-UDN098366-D_R2.fastq.gz
-        # 2021-02-22 15:45:29          0 Vanderbilt/upload/UDN782882_261_DP/Mother_UDN954693/
-        # 2021-02-22 18:25:53 43856874123 Vanderbilt/upload/UDN782882_261_DP/Mother_UDN954693/939020-UDN954693-M_R1.fastq.gz
-        # 2021-02-22 18:53:31 47591653919 Vanderbilt/upload/UDN782882_261_DP/Mother_UDN954693/939020-UDN954693-M_R2.fastq.gz
-        # 2021-02-22 15:45:32          0 Vanderbilt/upload/UDN782882_261_DP/Proband_UDN782882/
-        # 2021-02-22 19:10:52 43542249072 Vanderbilt/upload/UDN782882_261_DP/Proband_UDN782882/939019-UDN782882-P_R1.fastq.gz
-        # 2021-02-22 19:49:40 47567355208 Vanderbilt/upload/UDN782882_261_DP/Proband_UDN782882/939019-UDN782882-P_R2.fastq.gz
-        # 2021-02-22 15:46:55       1829 Vanderbilt/upload/UDN782882_261_DP/UDN782882_all_files.md5
         with open(fn_exist) as fp:
             for i in fp:
                 i = i.strip()
                 a = re.split('Vanderbilt/upload/', i)
-                fn = a[-1].rsplit('/', 1)[-1]
+                fn = a[-1]
+                
                 if i[-1] == '/':
                     folder = a[-1].replace(remote_pw, '')
-                    folder = re.sub(r'^/', '', folder)
+                    # folder = re.sub(r'^/', '', folder)
                     folder = re.sub(r'/$', '', folder)
                     sub_folders.add(folder)
-
-
                 file_size = re.split(r'\s+', i.strip())[2]
                 try:
                     file_size = int(file_size)
@@ -403,6 +411,7 @@ def get_remote_file_list(pw, dest, remote_pw):
                     d_exist[fn] = [a[-1], file_size]
     elif dest == 'rdrive':
         d_exist, sub_folders = parse_smb(fn_exist, remote_pw)
+        logger.info(d_exist)
 
     return d_exist, sub_folders
 
@@ -673,6 +682,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
             #     logger.warning(f'URL = NA : {fn}')
 
             fn_download = f'{pw}/download/{fn}'
+            fn_remote = f'{remote_pw}/{fn}'
 
             downloaded = 0
             file_status_by_fn[fn] = []
@@ -714,7 +724,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                         except:
                             pass
             try:
-                size_remote = d_exist[fn][1]
+                size_remote = d_exist[fn_remote][1]
             except:
                 uploaded = 0
                 size_remote = 0
@@ -735,8 +745,8 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
 
             remote_sub_pw = f'{remote_pw}' if remote_flat else f'{remote_pw}/{name}'
             
-            if fn in d_exist:
-                remote_sub_pw_exist = d_exist[fn][0].replace(fn, '')
+            if fn_remote in d_exist:
+                remote_sub_pw_exist = d_exist[remote][0].replace(fn, '')
                 remote_sub_pw_exist = re.sub(r'\/+$', '', remote_sub_pw_exist)
                 remote_sub_pw_map[remote_sub_pw] = remote_sub_pw_exist
             
@@ -1020,6 +1030,10 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
 
     fn = os.path.basename(fn_local)
     pw = pw or os.getcwd()
+    remote_pw = re.sub('^/', '', remote_pw)
+    
+    if remote_pw:
+        remote_pw += '/'
         
     local_file_size = local_file_size or {}
 
@@ -1091,7 +1105,7 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
 
         cmd.append(f"""
     checklocal(){{
-        local_size=$(stat -c "%s" {fn_local} 2>/dev/null)
+        local_size=$(stat -Lc "%s" {fn_local} 2>/dev/null)
         if [[ $local_size -eq 0 ]];then
         rm {fn_local} 2>/dev/null
         echo 1
@@ -1110,7 +1124,7 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
         # check remote
         fn_pure = os.path.basename(fn_remote)
         check_remote_logic = f"""
-        local_size=$(stat -c "%s" "{fn_local}" 2>/dev/null)
+        local_size=$(stat -Lc "%s" "{fn_local}" 2>/dev/null)
         fnlog="{fn_status}"
 
         size_exp={size_exp}
@@ -1154,7 +1168,7 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
                 return
             fi
         elif [[ "$remote_file_size" -eq "{size_exp}" ]];then
-                echo {fn} successfully uploaded to {remote_pw}/  filesize={size_exp} >>  "$fnlog"
+                echo {fn} successfully uploaded to {remote_pw}  filesize={size_exp} >>  "$fnlog"
                 echo already_uploaded
                 return
         elif [[ $size_exp -eq $local_size ]];then
@@ -1175,7 +1189,7 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
         if dest == 'emedgene':
             cmd.append(f"""
     checkremote(){{
-        remote_file_size=$({dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_remote}"|grep -E -m1 "{fn_pure}$" | tr -s " "|cut -d " " -f 3)
+        remote_file_size=$({dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}{fn_remote}"|grep -E -m1 "{fn_pure}$" | tr -s " "|cut -d " " -f 3)
         {check_remote_logic}
 
     }}
@@ -1184,7 +1198,7 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
             # there is no way for dropbox to get byte file size
             cmd.append(f"""
     checkremote(){{
-        file_exist_from_remote=$({dock} dbxcli ls -l "/{remote_pw}/"|grep -E -m1 "{fn_remote}($|[^.])")
+        file_exist_from_remote=$({dock} dbxcli ls -l "/{remote_pw}"|grep -E -m1 "{fn_remote}($|[^.])")
         if [[ ! -z "$file_exist_from_remote" ]];then
             echo alrady_uploaded
         else
@@ -1203,7 +1217,7 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
             
             cmd.append(f"""
     checkremote(){{
-        remote_file_size=$({dock_smb} smbclient "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf" -D "{remote_pw}/" <<< $'recurse on\\nls "{sub_pw}" '|grep -E -m1 "{fn_remote_pure}($|[^.])"|head -1|tr -s " "|cut -d ' ' -f 4)
+        remote_file_size=$({dock_smb} smbclient "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf" -D "{remote_pw}" <<< $'recurse on\\nls "{sub_pw}" '|grep -E -m1 "{fn_remote_pure}($|[^.])"|head -1|tr -s " "|cut -d ' ' -f 4)
         {check_remote_logic}
     }}
             """)
@@ -1267,21 +1281,20 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
             """)
 
         if dest == 'dropbox':
-            upload_cmd = f'{dock} dbxcli put "{fn_local}" "/{remote_pw}/{fn_remote}" > {pw}/log/upload.{dest}.{fn}.log 2>&1'
+            upload_cmd = f'{dock} dbxcli put "{fn_local}" "/{remote_pw}{fn_remote}" > {pw}/log/upload.{dest}.{fn}.log 2>&1'
         elif dest == 'emedgene':
-            upload_cmd = f'{dock} aws s3 cp "{fn_local}" "s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}/{fn_remote}" > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log'
+            upload_cmd = f'{dock} aws s3 cp "{fn_local}" "s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}{fn_remote}" > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log'
         elif dest == 'rdrive':
-            # upload_cmd = f"""{dock} smbclient  --socket-options='TCP_NODELAY IPTOS_LOWDELAY SO_KEEPALIVE SO_RCVBUF=16777216 SO_SNDBUF=16777216 SO_RCVTIMEO=120000 SO_SNDTIMEO=120000' "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf"  <<< $'rm "{remote_pw}/{fn_remote}"\ntimeout 120\niosize 16384\nput "{fn_local}" "{remote_pw}/{fn_remote}" ' """
             
             fn_pure, ext = fn_remote.rsplit('.', 1)
-            upload_cmd = f"""{dock_smb} smbclient "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf"  <<< $'rm "{remote_pw}/{fn_remote}"\nput "{fn_local}" "{remote_pw}/{fn_remote}" ' """
+            upload_cmd = f"""{dock_smb} smbclient "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf"  <<< $'rm "{remote_pw}{fn_remote}"\nput "{fn_local}" "{remote_pw}{fn_remote}" ' """
 
         if not no_upload and need_upload:
             cmd.append(f"""
     upload_status=$(checkremote)
 
     if [[ $upload_status = "local_not_ready" ]];then
-    echo local file note ready >> {fn_status}
+    echo local file not ready >> {fn_status}
     exit 1
     fi
 
@@ -1673,7 +1686,7 @@ if __name__ == "__main__":
             local_files_ft_ct[ext] += 1
 
         if not remote_pw:
-            logger.error('you must specify the remote path for uploading')
+            logger.warning('no remote folder is specified, if need to upload to root, use /')
             sys.exit(1)
         
         if not demo:
@@ -1684,26 +1697,30 @@ if __name__ == "__main__":
                 sys.exit(1)
         
         remote_pw = re.sub(r'\\', '/', remote_pw)
+        if remote_pw == '/':
+            remote_pw = ''
+        else:
+            remote_pw += '/'
+        
         d_exist, sub_folders = get_remote_file_list(pw, dest, remote_pw)
         file_status = {'uploaded': [], 'need_to_upload': [], 'size_not_match': []}
         
-        sub_folders = {f'{remote_pw}/{_}' if _ else remote_pw for _ in sub_folders}
+        sub_folders = {f'{remote_pw}{_}' if _ else remote_pw for _ in sub_folders}
 
         # logger.info('\n\t' + '\n\t'.join(sub_folders))
         
-        
         # logger.info(d_exist)
+        remote_fls_map = {}
         for fn in local_files:
-            fn_pure = os.path.basename(fn)
-            if fn_suffix:
-                fn_pure = add_fn_suffix(fn_pure, fn_suffix)
-            
-            if fn_pure not in d_exist:
+            fn_remote = add_fn_suffix(fn, fn_suffix)
+            fn_remote = get_fn_remote(fn, dir_local_files, local_pw_layers, fn_remote=fn_remote)
+            remote_fls_map[fn] = fn_remote
+            if fn_remote not in d_exist:
                 file_status['need_to_upload'].append(fn)
             else:
                 size = local_file_size.get(fn) or os.path.getsize(fn)
                 # logger.info(f'{fn}: {size}')
-                size_remote = d_exist[fn_pure][1]
+                size_remote = d_exist[fn_remote][1]
                 if size_remote == size:
                     file_status['uploaded'].append(fn)
                 else:
@@ -1743,24 +1760,19 @@ if __name__ == "__main__":
         fls = sorted(file_status['need_to_upload'])
         purenames = [os.path.basename(_) for _ in fls]
         max_len = max([len(_) for _ in purenames])
-        tmp = zip(fls, purenames)
-        for fn, fn_pure in tmp:
-            
-            fn_remote = add_fn_suffix(fn, fn_suffix)
-            fn_remote = get_fn_remote(fn, dir_local_files, local_pw_layers, fn_remote=fn_remote)
-            # UDN620340_287/UDN763389_Father/9769-LR-0005_S1_L005_R1_001.fastq.gz 
-            # if depth = 0, will be plain file name
-            
+        remote_fls = [remote_fls_map[fn] for fn in fls]
+        tmp = zip(fls, purenames, remote_fls)
+        for fn, fn_pure, fn_remote in tmp:
             tmp = fn_remote.split('/')[:-1]
             if len(tmp) > 0:
                 for i in range(len(tmp)):
                     tmp1 = '/'.join(tmp[:i+1])
-                    tmp2 = f'{remote_pw}/{tmp1}'
+                    tmp2 = f'{remote_pw}{tmp1}'
                     if tmp2 not in remote_pw_list:
                         remote_pw_list.append(tmp2)
             
             fn_script = build_script_single(dest, remote_pw, fn, simple=True, need_upload=True, fn_remote=fn_remote, local_file_size=local_file_size)
-            tmp = f'{remote_pw}/{fn_remote}'
+            tmp = f'{remote_pw}{fn_remote}'.replace('//', '/')
             tmp = tmp.replace('/', red(' / '))
             print(fn_pure.ljust(max_len + 5) + f'remote:  {tmp}')
             
@@ -1769,11 +1781,11 @@ if __name__ == "__main__":
                 continue
             scripts.append(fn_script)
         
-        # logger.info(remote_pw_list)
-        # logger.info(sub_folders)
+        logger.info(remote_pw_list)
         
         for pwtmp in remote_pw_list:
             if pwtmp  in sub_folders:
+                
                 continue
             cmd = build_remote_subfolder(pwtmp, dest)
             # if not demo:
