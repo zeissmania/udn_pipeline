@@ -436,7 +436,7 @@ class UDN_case():
             mount = '-B /mnt/d -B /data'
         else:
             # dock_path = '/scratch/cqs/chenh19/dock/annotsv.sif'
-            dock_path = '/data/cqs/chenh19/dock/annotsv/'
+            dock_path = '/data/cqs/chenh19/dock/annotsv.sif'
             mount = ''
         # the annot_sv_rank and gnomad_AF filtering would only take effect on the proband, would not filter on the parent
 
@@ -861,13 +861,14 @@ class UDN_case():
 
         f_anno_filter = f'{pw}/{intermediate_folder}/{lb}.filtered.txt'
         f_anno_extract = f'{pw}/{intermediate_folder}/{lb}.extracted.txt'
-
+        fn_genelist = f'{pw}/{intermediate_folder}/{prj}.genelist'
+        
         # validate existence
         if not os.path.exists(f_anno_filter):
             logger.error(f'filtered annot file not exist: {lb}')
             return 'err'
 
-        if os.path.exists(f_anno_extract):
+        if os.path.exists(f_anno_extract) and os.path.exists(fn_genelist):
             lines = os.popen(f'cat {f_anno_extract}|wc -l').read().strip()
             lines = int(lines)
             logger.info(f'extracted file lines = {lines}')
@@ -1110,7 +1111,6 @@ class UDN_case():
                 logger.error(f'too many genes in the gene list ( {n_genes}) ,please check!')
                 sys.exit(1)
 
-            fn_genelist = f'{pw}/{intermediate_folder}/{prj}.genelist'
             logger.info(f'gene list count = {n_genes}')
             with open(fn_genelist, 'w') as o:
                 print('\n'.join(gene_list), file=o)

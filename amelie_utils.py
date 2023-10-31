@@ -45,11 +45,9 @@ def get_amelie_dict(pw, prj, logger=None):
     try:
         d_amelie = [_.strip().split('\t') for _ in open(fn)]
         d_amelie = {k: v for k, v in d_amelie}
-        logger.info(f'AMELIE count = {len(d_amelie)}')
     except:
         if not os.path.exists(fn):
             logger.error(f'amelie result not found: {fn}, would use dummy amelie score')
             fn_genelist = f'{pw}/{intermediate_folder}/{prj}.genelist'
             return {gn.strip(): 0 for gn in open(fn_genelist) if gn.strip()}
-
     return d_amelie
