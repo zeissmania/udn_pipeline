@@ -1889,7 +1889,6 @@ class UDN_case():
 
         # logger.info(f'OMIM query count={len(res)}')
 
-
         # amelie result
         try:
             with open(f'{pw}/{udn}.amelie.matched_query.pkl', 'rb') as f:
@@ -1911,7 +1910,7 @@ class UDN_case():
 
                     ires.append(f'#### {amelie_pheno} n articles = {len(amelie_v1_dedup)}')
                     for amelie_v2 in amelie_v1_dedup:
-                        ires.append('- ' + '\t'.join(amelie_v2[:4]))
+                        ires.append('- ' + '  '.join(amelie_v2[:4]))
 
                 amelie_str = '\n'.join(ires)
                 matched_amelie[gn] = amelie_str

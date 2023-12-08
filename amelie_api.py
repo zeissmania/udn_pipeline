@@ -172,7 +172,7 @@ def parse_json(prj, json_pdict, pw=None, pw_main=None, force=0):
 
     # export the tsv file
 
-    with gzip.open(f'{pw}/{prj}.amelie.parsed.raw.txt', 'wb') as out:
+    with gzip.open(f'{pw}/{prj}.amelie.parsed.raw.gz', 'wb') as out:
         for i in res_all:
             score, gn, omim, *papers = i
             out.write(f'{gn}\t{score}\n'.encode())

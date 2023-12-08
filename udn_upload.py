@@ -391,7 +391,7 @@ def get_remote_file_list(pw, dest, remote_pw):
 
                 d_exist[fn] = [a[-1], 0]
                 if i[0] == '-':
-                    folder = a[-1].replace(remote_pw, '')
+                    folder = re.sub(f'^{remote_pw}', '', a[-1].strip())
                     folder = re.sub(r'^/', '', folder)
                     folder = re.sub(r'/$', '', folder)
                     sub_folders.add(folder)
@@ -403,11 +403,11 @@ def get_remote_file_list(pw, dest, remote_pw):
                 if len(a) != 2:
                     logger.info(f'invalid line: {i}')
                     continue
-                
-                fn = a[-1].strip().replace(remote_pw, '')
+
+                fn = re.sub(f'^{remote_pw}', '', a[-1].strip())
                 
                 if i[-1] == '/':
-                    folder = a[-1].replace(remote_pw, '')
+                    folder = re.sub(f'^{remote_pw}', '', a[-1].strip())
                     # folder = re.sub(r'^/', '', folder)
                     folder = re.sub(r'/$', '', folder)
                     sub_folders.add(folder)
@@ -979,7 +979,7 @@ def refine_remote_pw(remote_pw, dest):
     
     remote_pw = re.sub('^/', '', remote_pw)
     remote_pw = re.sub('upload_?', '', remote_pw, flags=re.I)
-    # remote_pw = re.sub(r'^\d+_', '', remote_pw, 1)
+    remote_pw = re.sub(r'^\d+_', '', remote_pw, 1)
     m = re.match(r'(.*)?\s*(UDN\d+)\s*(.*)?', remote_pw)
 
     
@@ -1007,7 +1007,8 @@ def refine_remote_pw(remote_pw, dest):
             m1 = re.match('(\d+)_(\d+.*)', p1)
             if m1:
                 p1 = m1.group(2)
-
+            if p2 and p1.match('\d+(_|$)'):
+                p1 = ''
 
         p_trailing = '_'.join([_ for _ in (p1, p2) if _])
         p_trailing = '_' + p_trailing if p_trailing else ''
@@ -1447,6 +1448,7 @@ def clearlog(force=False, args=None):
         log_fls += [_.strip() for _ in fls if _.strip()]
 
     if len(log_fls) > 0:
+        logger.info(f'gb@now removing {pw_download}')
         logger.warning(f'now trying to clear the logs, n = {len(log_fls)}')
     upload_fls = []
     download_fls = []
@@ -1495,7 +1497,6 @@ def clearlog(force=False, args=None):
             if not proceed.lower().strip().startswith('y'):
                 logger.warning(f'\tskip...')
                 continue
-        logger.info(f'gb@now removing {pw_download}')
         fn_flist = f'{ipw}/download.flist.txt'
         os.system(f'echo -e "\n\n$(date)\\n" >> {fn_flist}; ls {pw_download} -lha >> {fn_flist}; echo -e "***********\\n\\n" >> {fn_flist}; rm -rf {pw_download}')
 
