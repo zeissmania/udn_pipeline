@@ -310,7 +310,7 @@ def parse_smb(fn, remote_pw):
             if a[0] == '.':
                 # add the root folder
                 sub_folders.add('')
-            if i.startswith('\\GEN'):
+            if i.startswith('\\'):
                 pw = i.strip().replace('\\', '/')
                 pw = re.sub(r'/+$', '', pw)
 
@@ -324,7 +324,11 @@ def parse_smb(fn, remote_pw):
             if pw:
                 pwo = pw + '/'
             
-            if len(a) != 8 or a[0] in {'.', '..'} or a[1] == 'D':
+            if len(a) != 8 or a[0] in {'.', '..'}:
+                continue
+            
+            if a[1] == 'D':
+                sub_folders.add(f'{pwo}{a[0]}')
                 continue
             fn, size = a[0], a[2]
             fn = f'{pwo}{fn}'
@@ -1145,7 +1149,7 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
         fnlog="{fn_status}"
 
         size_exp={size_exp}
-        echo local_size=$local_size , remote size = $remote_file_size exp size = $size_exp >> "$fnlog"
+        echo local_size=$local_size , remote size = $remote_file_size,  exp size = $size_exp >> "$fnlog"
 
         if [[ -z $remote_file_size ]];then
             # local file not exist
@@ -1176,7 +1180,7 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
             exit 1
         elif [[ $size_exp == "na" ]];then
             if [[ "$local_size" -eq "$remote_file_size" ]];then
-                echo size check is not specified, remote_file_size=$remote_file_size local_filesize=$local_size >>  "$fnlog"
+                echo size check is not specified, remote_file_size=$remote_file_size,  local_filesize=$local_size >>  "$fnlog"
                 echo already_uploaded
                 return
             else
@@ -1230,11 +1234,11 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
             if len(tmp) == 1:
                 sub_pw = ''
             else:
-                sub_pw = tmp[0]
+                sub_pw = f'"{tmp[0]}"'
             
             cmd.append(f"""
     checkremote(){{
-        remote_file_size=$({dock_smb} smbclient "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf" -D "/{remote_pw}" <<< $'recurse on\\nls "{sub_pw}" '|grep -E -m1 "{fn_remote_pure}($|[^.])"|head -1|tr -s " "|cut -d ' ' -f 4)
+        remote_file_size=$({dock_smb} smbclient "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf" -D "/{remote_pw}" <<< $'recurse on\\nls {sub_pw} '|grep -E -m1 "{fn_remote_pure}($|[^.])"|head -1|tr -s " "|cut -d ' ' -f 4)
         {check_remote_logic}
     }}
             """)
@@ -1727,7 +1731,7 @@ if __name__ == "__main__":
         
         # logger.info('\n\t' + '\n\t'.join(sub_folders))
         
-        logger.info(d_exist)
+        # logger.info(d_exist)
         remote_fls_map = {}
         for fn in local_files:
             fn_remote = add_fn_suffix(fn, fn_suffix)
@@ -1798,7 +1802,7 @@ if __name__ == "__main__":
                 continue
             scripts.append(fn_script)
         
-        logger.info(remote_pw_list)
+        # logger.info(remote_pw_list)
         
         for pwtmp in remote_pw_list:
             if pwtmp  in sub_folders:
