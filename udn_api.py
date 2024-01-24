@@ -1117,7 +1117,6 @@ default:
                 continue
 
             logger.debug(f'{fn}\t{url}')
-            logger.info(fn)
             
             if fn not in file_dedup:
                 file_dedup.add(fn)
