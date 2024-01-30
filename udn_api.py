@@ -380,7 +380,7 @@ def green(msg):
 
 
 
-def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=None,  udn_proband=None, gzip_only=None, sv_caller='dragen', newname_prefix=None, rel_specified=None, seq_id_set=None):
+def get_all_info(udn, selected_files=None, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=None,  udn_proband=None, gzip_only=None, sv_caller='dragen', newname_prefix=None, rel_specified=None, seq_id_set=None):
     """
     res_all,  when running specific relative, use this dict to accumulate among the family member
     gzip only, a set, if the ext is found in this set, then, the file must be gziped to get involved. e.g. if vcf in gzip_only, then,  the file named .vcf$ would not be included
@@ -446,6 +446,10 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
                     res['seq_uploaded'] = tmp
         seq_type = ifl['seq_type'].lower()
         seq_id = int(ifl['seq_id'])
+        
+        if selected_files and ifl not in selected_files:
+            continue
+        
         
         if seq_id_set and seq_id not in seq_id_set:
             n_skip_due_to_seqid += 1
@@ -565,7 +569,7 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
 
             ires = [rel_full, name, fam_udn]
 
-            res_all = get_all_info(fam_udn, res_all=res_all, get_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family,  udn_proband=udn, gzip_only=gzip_only, sv_caller=sv_caller, newname_prefix=newname_prefix, rel_specified=rel_full, seq_id_set=seq_id_set)
+            res_all = get_all_info(fam_udn, selected_files=selected_files, res_all=res_all, get_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family,  udn_proband=udn, gzip_only=gzip_only, sv_caller=sv_caller, newname_prefix=newname_prefix, rel_specified=rel_full, seq_id_set=seq_id_set)
             
             res_family_member = res_all[rel_full]
             try:
@@ -669,7 +673,7 @@ def get_all_info(udn, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=
             pickle.dump(res_all, out)
         try:
             # (res, renew_amazon_link=False, )
-            parse_api_res(res_all, update_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family, sv_caller=sv_caller, newname_prefix=newname_prefix, gzip_only=gzip_only)
+            parse_api_res(res_all, selected_files=selected_files, update_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family, sv_caller=sv_caller, newname_prefix=newname_prefix, gzip_only=gzip_only)
         except:
             logger.error(f'fail to parse the result dict, try again')
             raise
@@ -803,7 +807,7 @@ def validate_download_link(url):
 
     # return True
 
-def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None, udn_raw=None, valid_family=None, gzip_only=None, sv_caller='dragen', newname_prefix=None):
+def parse_api_res(res, selected_files=None, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None, udn_raw=None, valid_family=None, gzip_only=None, sv_caller='dragen', newname_prefix=None):
     """
     res = {proband: {}, relative: [{family1}, {family2}]}
     1. build a report for the proband
@@ -821,6 +825,7 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
         gzip_only = set()
     update_aws_ft = set([ft_convert.get(_) or _ for _ in update_aws_ft]) if update_aws_ft else set(['fastq', 'cnv'])
 
+    
 
     logger.info(green(f'file type to update url = {update_aws_ft}'))
     # pw_raw = os.getcwd().rsplit('/', 1)[-1]
@@ -848,6 +853,8 @@ def parse_api_res(res, renew_amazon_link=False, update_aws_ft=None, pkl_fn=None,
         for irel, v1 in res.items():
             iudn = v1['simpleid']
             for ifl in v1['files']:
+                if selected_files and ifl not in selected_files:
+                    continue
                 seq_type = ifl['seq_type'].lower()
                 
                 if valid_seq_type and seq_type not in valid_seq_type:
@@ -1072,6 +1079,7 @@ default:
     
     url_count = {'total': {'na': 0, 'ok': 0, 'unknown': 0}}
     
+    logger.info(selected_files)
     info_lines = []
     for rel_to_proband, irel in res.items():
         if not irel.get('files'):
@@ -1094,7 +1102,9 @@ default:
             md5 = ifl['md5']
             newname = ''
             newname_base = ''
-            
+
+            if selected_files and ifl not in selected_files:
+                continue            
             fn_prefix = []
             if seq_type != 'NA':
                 fn_prefix.append(seq_type)
@@ -1353,6 +1363,7 @@ if __name__ == "__main__":
     ps.add_argument('-update_cred', '-uc',  help="""update the credential info""", action='store_true')
     ps.add_argument('-url', '-urlonly', '-ckfls', help='get the files URL only (for each family member) and quit', action='store_true'),
     ps.add_argument('-ft', help="""could be multiple, if specified, would only update the amazon URL for these file types, if gzip only, add the .gz suffix. e.g. vcf.gz  would not match .vcf$""", nargs='*', default=None)
+    ps.add_argument('-flist', '-fls', help="""only download the specified files, the -ft will be ignored""", nargs='*')
     ps.add_argument('-seq_type', '-st', help="""sequence type to resolve download link, valid = genome, rnaseq, reanalysis(re), if not specified, will ignore the sequence type filtering""", choices=['genome', 'rnaseq', 're', 'reanalysis'], nargs='*')
     ps.add_argument('-seq_id_list', '-seqid', help="""only run specific seq id, nargs=*, type=int""", type=int, nargs='*')
     ps.add_argument('-renew', '-new', '-update', help="""flag, update the amazon shared link. default is not renew""", action='store_true')
@@ -1457,7 +1468,14 @@ if __name__ == "__main__":
     gzip_only = set()
     update_aws_ft = set()
 
-    if ft_input is None:
+    valid_ft = {'bam',}
+    ft_convert.update({k: k for k in valid_ft})
+
+
+    selected_files = args.flist
+    if selected_files:
+        update_aws_ft = {get_file_extension(fn)[0] for fn in selected_files}
+    elif ft_input is None:
         update_aws_ft = ['cnv', 'fastq']
     elif 'all' not in ft_input:
         err = 0
@@ -1476,6 +1494,8 @@ if __name__ == "__main__":
             sys.exit(1)
     else:
         update_aws_ft = {'all',}
+
+
     logger.info(f'update_aws_ft = {update_aws_ft}')
 
     passcode = getpass('Input the passcode for the encrypted credential file: ')
@@ -1695,12 +1715,12 @@ if __name__ == "__main__":
                 renew_amazon_link = args.renew
 
             # regular
-            parse_api_res(res, update_aws_ft=update_aws_ft, renew_amazon_link=renew_amazon_link, udn_raw=udn_raw, valid_family=valid_family, gzip_only=gzip_only, sv_caller=sv_caller, newname_prefix=newname_prefix)
+            parse_api_res(res, selected_files=selected_files, update_aws_ft=update_aws_ft, renew_amazon_link=renew_amazon_link, udn_raw=udn_raw, valid_family=valid_family, gzip_only=gzip_only, sv_caller=sv_caller, newname_prefix=newname_prefix)
 
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
         else:
-            res = get_all_info(udn, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, udn_proband=udn, gzip_only=gzip_only, sv_caller=sv_caller, newname_prefix=newname_prefix, seq_id_set=seq_id_set)
+            res = get_all_info(udn, selected_files=selected_files, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, udn_proband=udn, gzip_only=gzip_only, sv_caller=sv_caller, newname_prefix=newname_prefix, seq_id_set=seq_id_set)
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
 
