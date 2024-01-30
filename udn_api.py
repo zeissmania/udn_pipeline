@@ -380,7 +380,7 @@ def green(msg):
 
 
 
-def get_all_info(udn, selected_files=None, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=None,  udn_proband=None, gzip_only=None, sv_caller='dragen', newname_prefix=None, rel_specified=None, seq_id_set=None):
+def get_all_info(udn, selected_files=None, renew_amazon_link=False, res_all=None, get_aws_ft=None, udn_raw=None, valid_family=None,  udn_proband=None, gzip_only=None, sv_caller='dragen', newname_prefix=None, rel_specified=None, seq_id_set=None):
     """
     res_all,  when running specific relative, use this dict to accumulate among the family member
     gzip only, a set, if the ext is found in this set, then, the file must be gziped to get involved. e.g. if vcf in gzip_only, then,  the file named .vcf$ would not be included
@@ -446,8 +446,9 @@ def get_all_info(udn, selected_files=None, res_all=None, get_aws_ft=None, udn_ra
                     res['seq_uploaded'] = tmp
         seq_type = ifl['seq_type'].lower()
         seq_id = int(ifl['seq_id'])
+        ifn = ifl['fn']
         
-        if selected_files and ifl not in selected_files:
+        if selected_files and ifn not in selected_files:
             continue
         
         
@@ -461,7 +462,6 @@ def get_all_info(udn, selected_files=None, res_all=None, get_aws_ft=None, udn_ra
             skipped_due_to_seq_type[seq_type] += 1
             continue
 
-        ifn = ifl['fn']
         if ifn not in file_dedup:
             dup_flag = ''
             file_dedup.add(ifn)
@@ -569,7 +569,7 @@ def get_all_info(udn, selected_files=None, res_all=None, get_aws_ft=None, udn_ra
 
             ires = [rel_full, name, fam_udn]
 
-            res_all = get_all_info(fam_udn, selected_files=selected_files, res_all=res_all, get_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family,  udn_proband=udn, gzip_only=gzip_only, sv_caller=sv_caller, newname_prefix=newname_prefix, rel_specified=rel_full, seq_id_set=seq_id_set)
+            res_all = get_all_info(fam_udn, selected_files=selected_files, renew_amazon_link=renew_amazon_link, res_all=res_all, get_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family,  udn_proband=udn, gzip_only=gzip_only, sv_caller=sv_caller, newname_prefix=newname_prefix, rel_specified=rel_full, seq_id_set=seq_id_set)
             
             res_family_member = res_all[rel_full]
             try:
@@ -673,7 +673,7 @@ def get_all_info(udn, selected_files=None, res_all=None, get_aws_ft=None, udn_ra
             pickle.dump(res_all, out)
         try:
             # (res, renew_amazon_link=False, )
-            parse_api_res(res_all, selected_files=selected_files, update_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family, sv_caller=sv_caller, newname_prefix=newname_prefix, gzip_only=gzip_only)
+            parse_api_res(res_all, selected_files=selected_files, renew_amazon_link=renew_amazon_link, update_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family, sv_caller=sv_caller, newname_prefix=newname_prefix, gzip_only=gzip_only)
         except:
             logger.error(f'fail to parse the result dict, try again')
             raise
@@ -846,6 +846,7 @@ def parse_api_res(res, selected_files=None, renew_amazon_link=False, update_aws_
                 logger.warning(f'family member not in select family list, excluded: {irel} - {iudn}')
                 del res[irel]
 
+    logger.info(f'renew_amazon_link = {renew_amazon_link}')
     # update the URL
     if renew_amazon_link:
         skipped_due_to_seq_type = {}
@@ -853,15 +854,19 @@ def parse_api_res(res, selected_files=None, renew_amazon_link=False, update_aws_
         for irel, v1 in res.items():
             iudn = v1['simpleid']
             for ifl in v1['files']:
-                if selected_files and ifl not in selected_files:
-                    continue
+                
                 seq_type = ifl['seq_type'].lower()
                 
                 if valid_seq_type and seq_type not in valid_seq_type:
                     skipped_due_to_seq_type.setdefault(seq_type, 0)
                     skipped_due_to_seq_type[seq_type] += 1
                     continue
-                
+                # logger.info(ifl['fn'])
+                # continue
+                if selected_files and ifl['fn'] not in selected_files:
+                    continue
+
+                logger.info(ifl['fn'])
                 ext, gz = get_file_extension(ifl['fn'])
                 seq_type_kept.setdefault(seq_type, {}).setdefault(ext, 0)
                 seq_type_kept[seq_type][ext] += 1
@@ -1079,7 +1084,6 @@ default:
     
     url_count = {'total': {'na': 0, 'ok': 0, 'unknown': 0}}
     
-    logger.info(selected_files)
     info_lines = []
     for rel_to_proband, irel in res.items():
         if not irel.get('files'):
@@ -1103,7 +1107,7 @@ default:
             newname = ''
             newname_base = ''
 
-            if selected_files and ifl not in selected_files:
+            if selected_files and fn not in selected_files:
                 continue            
             fn_prefix = []
             if seq_type != 'NA':
@@ -1190,6 +1194,7 @@ default:
     # dedup file
     dedup = {}  # key = fn, v = (idx, seq_id, size)
     dup = []  # ele = idx
+
     for idx, line in enumerate(info_lines):
         fn, seq_id, size = line[1], int(line[7]), int(line[9])
         if fn not in dedup:
@@ -1215,7 +1220,6 @@ default:
         info_lines = [_ for idx, _ in enumerate(info_lines) if idx not in dup]
         n_new = len(info_lines)
         logger.warning(f'before and after dedup n = {n_old} / {n_new} , gap = {n_old - n_new}')
-    
     
     info_lines = ['\t'.join(map(str, _)) for _ in info_lines]
     print('\n'.join(info_lines), file=out_info)
@@ -1706,6 +1710,7 @@ if __name__ == "__main__":
             now = datetime.today().strftime('%Y/%m%d %H:%M:%S')
             print(f'\n\n\n***  {now}   ***\n', file=o)
 
+        
         if os.path.exists(fn_udn_api_pkl) and not force:
             logger.info(green('\tdirectly load API query result from pickle file'))
             res = pickle.load(open(fn_udn_api_pkl, 'rb'))
@@ -1713,6 +1718,7 @@ if __name__ == "__main__":
                 renew_amazon_link = False
             else:
                 renew_amazon_link = args.renew
+            logger.info(f'{renew_amazon_link=}, {args.renew=}, {demo=}')
 
             # regular
             parse_api_res(res, selected_files=selected_files, update_aws_ft=update_aws_ft, renew_amazon_link=renew_amazon_link, udn_raw=udn_raw, valid_family=valid_family, gzip_only=gzip_only, sv_caller=sv_caller, newname_prefix=newname_prefix)
@@ -1720,7 +1726,8 @@ if __name__ == "__main__":
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
         else:
-            res = get_all_info(udn, selected_files=selected_files, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, udn_proband=udn, gzip_only=gzip_only, sv_caller=sv_caller, newname_prefix=newname_prefix, seq_id_set=seq_id_set)
+            renew_amazon_link = not demo
+            res = get_all_info(udn, selected_files=selected_files, renew_amazon_link=renew_amazon_link, get_aws_ft=update_aws_ft, udn_raw=udn_raw, valid_family=valid_family, udn_proband=udn, gzip_only=gzip_only, sv_caller=sv_caller, newname_prefix=newname_prefix, seq_id_set=seq_id_set)
             with open(fn_udn_api_pkl, 'wb') as out:
                 pickle.dump(res, out)
 
