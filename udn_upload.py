@@ -1009,12 +1009,12 @@ def refine_remote_pw(remote_pw, dest):
 
         p1 = extract_str(m[0])
         p2 = extract_str(m[2])
-        
+        # logger.info(f'{p1=}, {p2=}')
         if p1:
             m1 = re.match('(\d+)_(\d+.*)', p1)
             if m1:
                 p1 = m1.group(2)
-            if p2 and p1.match('\d+(_|$)'):
+            elif p2 and re.match('\d+(_|$)', p1):
                 p1 = ''
 
         p_trailing = '_'.join([_ for _ in (p1, p2) if _])
@@ -1320,6 +1320,7 @@ ln -sf {fn_local} {pw}/download/{fn_deid}.link
 
     fn_script_upload_exp = f'{pw}/shell/{fn_refine}.upload.{dest}.sh'
     fn_script_upload = None
+    
     if not no_upload and need_upload:
         fn_script_upload = fn_script_upload_exp
         if dest == 'dropbox':
@@ -1368,7 +1369,6 @@ ln -sf {fn_local} {pw}/download/{fn_deid}.link
             os.unlink(fn_script_upload_exp)
         except:
             pass
-
 
     return fn_script, fn_script_upload
 
@@ -1628,6 +1628,7 @@ if __name__ == "__main__":
     force_download = args.forcedown
     force_clear = args.force_clear
     no_upload = args.noupload
+    need_upload = not no_upload
     profile = args.profile
     clearlog_flag = args.clear
     fn_suffix = args.suffix
@@ -1703,6 +1704,7 @@ if __name__ == "__main__":
 
 
     if simple_mode:
+        logger.info(f'g@simple mode')
         remote_pw = args.remote_pw
         local_pw_layers = args.local_pw_layers  # keep the local parent folder
         # e.g. /a/b/c/d/1.fastq.gz   if layer = 0, will include no parent folder
@@ -1809,6 +1811,7 @@ if __name__ == "__main__":
 
         remote_pw_list = [remote_pw]
 
+        
         fls = sorted(file_status['need_to_upload'])
         purenames = [os.path.basename(_) for _ in fls]
         max_len = max([len(_) for _ in purenames])
@@ -1823,15 +1826,18 @@ if __name__ == "__main__":
                     if tmp2 not in remote_pw_list:
                         remote_pw_list.append(tmp2)
             
-            fn_script, fn_script_upload = build_script_single(dest, remote_pw, fn, simple=True, need_upload=True, fn_remote=fn_remote, local_file_size=local_file_size)
+            # fn_script is not valid, because no download is needed
+            fn_script, fn_script_upload = build_script_single(dest, remote_pw, fn, simple=True, need_upload=need_upload, fn_remote=fn_remote, local_file_size=local_file_size, need_download=False)
+            
             tmp = f'{remote_pw}{fn_remote}'.replace('//', '/')
             tmp = tmp.replace('/', red(' / '))
             print(fn_pure.ljust(max_len + 5) + f'remote:  {tmp}')
             
-            if fn_script is None:
-                logger.warning(f'fail to build script for {fn_pure}')
-                continue
-            scripts.append(fn_script)
+            
+            # if fn_script is None:
+            #     logger.warning(f'fail to build script for {fn_pure}')
+            #     continue
+            # scripts.append(fn_script)
             if fn_script_upload:
                 scripts_upload.append(fn_script_upload)
         

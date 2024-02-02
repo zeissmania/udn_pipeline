@@ -38,7 +38,8 @@ import logging
 import pickle
 pw_code = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(pw_code)
-from omim_utils import omim_query
+from omim_utils import omim_query, run_omim_scrapy
+
 from amelie_utils import query_amelie
 from chc_tool import getlogger
 

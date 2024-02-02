@@ -1,10 +1,13 @@
 import requests
 import time
-from amelie_utils import query_amelie
 from bs4 import BeautifulSoup as bs
 from selenium.webdriver.support.ui import WebDriverWait as wait
+from selenium.webdriver.firefox.service import Service
 from chctool_lite import getlogger
 import os, sys, re, pickle
+
+from amelie_utils import query_amelie
+
 global_flag = {'omim_blocked': 0}
 
 logger_name = 'omim_utils'
@@ -416,13 +419,17 @@ def get_driver(driver, logger):
     except:
         from selenium import webdriver
         from selenium.webdriver.firefox.options import Options
+        from selenium.webdriver.firefox.firefox_binary import FirefoxBinary
+        
         options = Options()
         options.headless = True
         platform = sys.platform
         if platform == 'darwin':
             exe_firefox = '/Users/files/work/package/firefox/geckodriver'
         else:
-            exe_firefox = f'/home/chenh19/tools/geckodriver'
+            exe_firefox = f'/data/cqs/chenh19/tools/geckodriver'
+        options.binary_location=FirefoxBinary('/data/cqs/chenh19/miniconda3_new/bin/firefox')
+
         driver = webdriver.Firefox(options=options, executable_path=exe_firefox)
         logger.warning('firefox initiated')
         driver.get('https://www.google.com/')

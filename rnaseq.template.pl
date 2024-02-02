@@ -49,7 +49,8 @@ my $def = {
   
   #source files, it's a hashmap with key (sample name) points to array of files. For single end data, the array should contains one file only.
 
-  files => { %files
+  files => {
+%files
   },
 
   #group definition, group name points to array of sample name defined in files.
