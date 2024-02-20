@@ -262,7 +262,6 @@ def parse_seq_files(info, rel_to_proband):
 
 
             ires['download'] = 'NA'
-
             for k1, k2 in [('sequenceid', 'seq_id'), ('assembly', 'build'), ('md5sum', 'md5'), ('sequencing_type', 'seq_type'), ('filename', 'fn')]:
                 try:
                     ires[k2] = ifl['metadata'][k1]
@@ -271,10 +270,10 @@ def parse_seq_files(info, rel_to_proband):
                         ires[k2] = ifl[k1]
                     except:
                         ires[k2] = 'NA'
-
-            if ires['seq_id'] == 'NA':
+            if ires['seq_id'] in {'NA', ''}:
                 ires['seq_id'] = seq_id_default
-            if ires['seq_type'] == 'NA':
+                
+            if ires['seq_type'] in {'NA', ''}:
                 ires['seq_type'] = seq_type_default
             else:
                 ires['seq_type'] = ires['seq_type'].lower()
@@ -445,7 +444,11 @@ def get_all_info(udn, selected_files=None, renew_amazon_link=False, res_all=None
                     uploaded_date_ready = 1
                     res['seq_uploaded'] = tmp
         seq_type = ifl['seq_type'].lower()
-        seq_id = int(ifl['seq_id'])
+        try:
+            seq_id = int(ifl['seq_id'])
+        except:
+            logger.error(ifl)
+            sys.exit(1)
         ifn = ifl['fn']
         
         if selected_files and ifn not in selected_files:
@@ -866,7 +869,6 @@ def parse_api_res(res, selected_files=None, renew_amazon_link=False, update_aws_
                 if selected_files and ifl['fn'] not in selected_files:
                     continue
 
-                logger.info(ifl['fn'])
                 ext, gz = get_file_extension(ifl['fn'])
                 seq_type_kept.setdefault(seq_type, {}).setdefault(ext, 0)
                 seq_type_kept[seq_type][ext] += 1
@@ -874,7 +876,8 @@ def parse_api_res(res, selected_files=None, renew_amazon_link=False, update_aws_
                 download_link = get_download_link(iudn, ifl, get_aws_ft=update_aws_ft, gzip_only=gzip_only)
 
                 if download_link == 0:
-                    logger.info(colored(f'\tamazon link still valid: {ifl["fn"]}', 'green'))
+                    pass
+                    # logger.info(colored(f'\tamazon link still valid: {ifl["fn"]}', 'green'))
                 elif download_link == 1:
                     logger.info(colored(f'\tfail to get amazon link {ifl["fn"]}', 'red'))
                 elif download_link == 2:
@@ -1433,10 +1436,10 @@ if __name__ == "__main__":
             root = os.getcwd()
         if args.pw:
             pass
-        elif root.find('/udn/cases/done/') > -1:
-            root = root.rsplit('/done/', 1)[0] + '/done'
-        elif root.find('/udn/cases/') > -1:
-            root = root.rsplit('/udn/cases/', 1)[0] + '/udn/cases'
+        # elif root.find('/udn/cases/done/') > -1:
+        #     root = root.rsplit('/done/', 1)[0] + '/done'
+        # elif root.find('/udn/cases/') > -1:
+        #     root = root.rsplit('/udn/cases/', 1)[0] + '/udn/cases'
         os.chdir(root)
         logger.info(f'g@root path = {root}')
     else:
@@ -1634,8 +1637,8 @@ if __name__ == "__main__":
 
     # get the current UDN list in current folder
     udn_exist = {}  # key = pure_udn_id, v = folder name
-
-    folders = os.popen(f'ls -d {root}/*/').read().split('\n') + os.popen(f'ls -d {root}/done/*/').read().split('\n')
+    root_udncases = '/Users/files/work/cooperate/udn/cases'
+    folders = os.popen(f'ls -d {root_udncases}/*/').read().split('\n') + os.popen(f'ls -d {root_udncases}/done/*/').read().split('\n')
     for i in folders:
         i = re.sub(r'\/$', '', i)
         m = re.match(r'.*(UDN\d+)(?:\W|$)', i)
