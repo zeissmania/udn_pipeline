@@ -676,7 +676,7 @@ def get_all_info(udn, selected_files=None, renew_amazon_link=False, res_all=None
             pickle.dump(res_all, out)
         try:
             # (res, renew_amazon_link=False, )
-            parse_api_res(res_all, selected_files=selected_files, renew_amazon_link=renew_amazon_link, update_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family, sv_caller=sv_caller, newname_prefix=newname_prefix, gzip_only=gzip_only)
+            parse_api_res(res_all, selected_files=selected_files, renew_amazon_link=False, update_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family, sv_caller=sv_caller, newname_prefix=newname_prefix, gzip_only=gzip_only)
         except:
             logger.error(f'fail to parse the result dict, try again')
             raise
@@ -826,7 +826,7 @@ def parse_api_res(res, selected_files=None, renew_amazon_link=False, update_aws_
     """
     if not isinstance(gzip_only, set):
         gzip_only = set()
-    update_aws_ft = set([ft_convert.get(_) or _ for _ in update_aws_ft]) if update_aws_ft else set(['fastq', 'cnv'])
+    update_aws_ft = set([ft_convert.get(_) or _ for _ in update_aws_ft]) if update_aws_ft else set(['fastq', 'cnv', 'vcf'])
 
     
 
@@ -1172,7 +1172,7 @@ default:
 
             if re.match(r'.+\.cnv\.vcf(\.gz)?$', fn) and ('cnv' in update_aws_ft or 'all' in update_aws_ft):
                 if  fn.find('joint') < 0:
-                    logger.info(green(f'seq_id:{seq_id}\t{fn}:\tfile_id:{file_id}'))
+                    # logger.info(green(f'seq_id:{seq_id}\t{fn}:\tfile_id:{file_id}'))
                     if not os.path.exists(f'origin{fn}'):
                         if url.lower() == 'na':
                             logger.error(red(f'invalid CNV file url'))
@@ -1354,6 +1354,83 @@ def parse_phillips_map_file(fn):
 
     return udn_list, rename_list
 
+def get_cred(args):
+    passcode = getpass('Input the passcode for the encrypted credential file: ')
+    # if not fn_cred:
+    #     fn_cred = input('Specify the credential file name, if not exist, would create it: ')
+    pw_script = os.path.realpath(__file__).rsplit('/', 1)[0]
+    if not args.fn_cred and os.path.exists('udn.credential.pkl.encrypt'):
+        fn_cred = 'udn.credential.pkl.encrypt'
+    else:
+        fn_cred = f'{pw_script}/udn.credential.pkl.encrypt'
+
+    if not os.path.exists(fn_cred):
+        fn_cred = f'{pw_script}/udn.credential.pkl.encrypt'
+    key = Credential(passcode, fn_cred)
+
+    logger.info(fn_cred)
+
+    if args.create:
+        cred = create_cred()
+    elif not os.path.exists(fn_cred):
+        logger.warning(f'The credential file not found: {fn_cred}, would create it')
+        cred = create_cred()
+    else:
+        cred = key.load()
+    # unpack the cred
+
+    # print(cred)
+    # sys.exit(1)
+    update_cred = args.update_cred
+
+    if update_cred:
+        cred_key = input(f'Choose which key do you need to modify: {cred.keys()}:   ')
+
+        if cred_key in {'password', 'pw'}:
+            cred['password'] = getpass(prompt='Your password to login to UDN gateway: ')
+        else:
+            cred[cred_key] = input(f'new value for {cred_key}:   ')
+        update_cred = True
+
+    try:
+        token = cred['token']
+    except KeyError:
+        logger.error('Token not found in credential file')
+        token = input(prompt='You UDN token: ')
+
+        cred['token'] = token
+        update_cred = True
+
+    try:
+        email = cred['email']
+    except KeyError:
+        logger.error('email not found in credential file')
+        email = input(prompt='Your email to login to UDN gateway: ')
+        cred['email'] = email
+        update_cred = True
+
+    try:
+        password = cred['password']
+    except KeyError:
+        logger.error('password not found in credential file')
+        password = getpass(prompt='Your password to login to UDN gateway: ')
+        cred['password'] = password
+        update_cred = True
+
+    try:
+        vunetID = cred['vunetID']
+    except KeyError:
+        logger.error('vunetID not found in credential file')
+        vunetID = getpass(prompt='Your VUNetID to login to UDN gateway: ')
+        cred['vunetID'] = vunetID
+        update_cred = True
+
+    if update_cred:
+        logger.warning('now dumping the new cred')
+        key.dump(cred)
+        logger.info('now exiting')
+        sys.exit(1)
+    return cred
 
 if __name__ == "__main__":
 
@@ -1427,7 +1504,6 @@ if __name__ == "__main__":
     
         logger.info(f'g@valid seq type = {valid_seq_type}')
 
-
     save_rel_table = args.reltable
     headless = not args.show
     if platform == 'darwin':
@@ -1446,17 +1522,10 @@ if __name__ == "__main__":
         logger.info('platform= {platform}')
         root = os.getcwd()
 
-    pw_script = os.path.realpath(__file__).rsplit('/', 1)[0]
     lite = args.lite
     upload = not args.noupload or force_upload
 
-    if not args.fn_cred and os.path.exists('udn.credential.pkl.encrypt'):
-        fn_cred = 'udn.credential.pkl.encrypt'
-    else:
-        fn_cred = f'{pw_script}/udn.credential.pkl.encrypt'
-
     demo = not args.parse_link
-    pw_script = os.path.realpath(__file__).rsplit('/', 1)[0]
     urlonly = args.url
 
     upload_only = args.upload_only
@@ -1483,7 +1552,7 @@ if __name__ == "__main__":
     if selected_files:
         update_aws_ft = {get_file_extension(fn)[0] for fn in selected_files}
     elif ft_input is None:
-        update_aws_ft = ['cnv', 'fastq']
+        update_aws_ft = ['cnv', 'fastq', 'vcf']
     elif 'all' not in ft_input:
         err = 0
         ft_input = [_ for _ in ft_input if _.strip()]
@@ -1503,82 +1572,7 @@ if __name__ == "__main__":
         update_aws_ft = {'all',}
 
 
-    logger.info(f'update_aws_ft = {update_aws_ft}')
-
-    passcode = getpass('Input the passcode for the encrypted credential file: ')
-    if not fn_cred:
-        fn_cred = input('Specify the credential file name, if not exist, would create it: ')
-
-    if not os.path.exists(fn_cred):
-        fn_cred = f'{pw_script}/udn.credential.pkl.encrypt'
-    key = Credential(passcode, fn_cred)
-
-    logger.info(fn_cred)
-
-    if args.create:
-        cred = create_cred()
-    elif not os.path.exists(fn_cred):
-        logger.warning(f'The credential file not found: {fn_cred}, would create it')
-        cred = create_cred()
-    else:
-        cred = key.load()
-
-    # unpack the cred
-
-    # print(cred)
-    # sys.exit(1)
-    update_cred = args.update_cred
-
-    if update_cred:
-        cred_key = input(f'Choose which key do you need to modify: {cred.keys()}:   ')
-
-        if cred_key in {'password', 'pw'}:
-            cred['password'] = getpass(prompt='Your password to login to UDN gateway: ')
-        else:
-            cred[cred_key] = input(f'new value for {cred_key}:   ')
-        update_cred = True
-
-    try:
-        token = cred['token']
-    except KeyError:
-        logger.error('Token not found in credential file')
-        token = input(prompt='You UDN token: ')
-
-        cred['token'] = token
-        update_cred = True
-
-    try:
-        email = cred['email']
-    except KeyError:
-        logger.error('email not found in credential file')
-        email = input(prompt='Your email to login to UDN gateway: ')
-        cred['email'] = email
-        update_cred = True
-
-    try:
-        password = cred['password']
-    except KeyError:
-        logger.error('password not found in credential file')
-        password = getpass(prompt='Your password to login to UDN gateway: ')
-        cred['password'] = password
-        update_cred = True
-
-    try:
-        vunetID = cred['vunetID']
-    except KeyError:
-        logger.error('vunetID not found in credential file')
-        vunetID = getpass(prompt='Your VUNetID to login to UDN gateway: ')
-        cred['vunetID'] = vunetID
-        update_cred = True
-
-    if update_cred:
-        logger.warning('now dumping the new cred')
-        key.dump(cred)
-        logger.info('now exiting')
-        sys.exit(1)
-
-    api_token_gateway = cred['token']
-    api_token_fileservice = cred['fs_token']
+    logger.info(f'update_aws_ft = {update_aws_ft}, root pw = {root}')
 
     if args.showcred:
         logger.info(cred)
@@ -1588,7 +1582,7 @@ if __name__ == "__main__":
     udn_list = [_.strip() for _ in udn_list if _.strip()]
 
     # validate udn
-    p = re.compile(r'(?:.*)?(UDN\d+)')
+    p = re.compile(r'(\d{3}_)?([a-zA-Z]{2,3}_)?(\d{3}_)?(UDN\d+)(\d{3}_)?([a-zA-Z]{2,3}_)?(\d{3}_)?')
     validated = []
     for n, i in enumerate(udn_list):
         i = [_.strip() for _ in i.split('@')]
@@ -1613,27 +1607,53 @@ if __name__ == "__main__":
         if not m:
             logger.warning(f'Invalid UDN_ID: {udn_raw}')
             continue
-        udn = m.group(1)
+        tmp = m.groups()
+        num1, name_abrev1, num2, udn, num3, name_abrev2, num4 = tmp
+        if name_abrev1 and name_abrev2:
+            logger.error(f'invalid case name, multiple name abbreviations found: {tmp} ')
+            continue
+        name_abrev = name_abrev1 or name_abrev2
+        if num1 and num2 :
+            logger.error(f'multiple SN before UDN ID: {tmp}')
+            continue
+        if num3 and num4:
+            logger.error(f'multiple SN after UDN ID: {tmp}')
+            continue
+        
+        num_before = num1 or num2
+        num_after = num3 or num4
+        if all([num_before, num_after]):
+            sn_outer = num_after
+            sn_internal = num_before
+        else:
+            sn_outer = num_before or num_after
+            sn_internal = None
+        
+        tmp = [sn_internal, udn, name_abrev, sn_outer]
+        udn_raw = '_'.join([_.strip('_') for _ in tmp if _])
+        
         validated.append([udn_raw, udn, valid_family])
 
     if len(validated) == 0:
         logger.error('No UDN case passed in, please check')
         sys.exit(1)
 
-
-    # sys.exit(1)
-    logger.info('\n\n\n'+'#' *30)
-
     # driver, cookie_token = get_cookie(None, headless=headless)
     # logger.info(f'cookie_token=\n{cookie_token}')
     # driver = None
     # cookie_token = None
+    logger.info('cases = [udn_raw, udn, select_family_member]\n\t' + '\n\t'.join(map(str, validated)))
 
+    cred = get_cred(args)
+    token = cred['token']
+    api_token_fileservice = cred['fs_token']
     header1 = {
         'Content-Type': 'application/json',
         'Authorization': f'Token {token}',
     }
 
+    # sys.exit(1)
+    logger.info('\n\n\n'+'#' *30)
 
     # get the current UDN list in current folder
     udn_exist = {}  # key = pure_udn_id, v = folder name
