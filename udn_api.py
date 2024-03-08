@@ -1582,7 +1582,7 @@ if __name__ == "__main__":
     udn_list = [_.strip() for _ in udn_list if _.strip()]
 
     # validate udn
-    p = re.compile(r'(\d{3}_)?([a-zA-Z]{2,3}_)?(\d{3}_)?(UDN\d+)(\d{3}_)?([a-zA-Z]{2,3}_)?(\d{3}_)?')
+    p = re.compile(r'(\d{3}_)?([a-zA-Z]{2,3}_)?(\d{3}_)?(UDN\d+)(_\d{3})?(_[a-zA-Z]{2,3})?(_\d{3})?$')
     validated = []
     for n, i in enumerate(udn_list):
         i = [_.strip() for _ in i.split('@')]
@@ -1607,7 +1607,7 @@ if __name__ == "__main__":
         if not m:
             logger.warning(f'Invalid UDN_ID: {udn_raw}')
             continue
-        tmp = m.groups()
+        tmp =[_.strip('_') if _ else _ for _ in m.groups()]
         num1, name_abrev1, num2, udn, num3, name_abrev2, num4 = tmp
         if name_abrev1 and name_abrev2:
             logger.error(f'invalid case name, multiple name abbreviations found: {tmp} ')
@@ -1619,7 +1619,7 @@ if __name__ == "__main__":
         if num3 and num4:
             logger.error(f'multiple SN after UDN ID: {tmp}')
             continue
-        
+        logger.info(tmp)
         num_before = num1 or num2
         num_after = num3 or num4
         if all([num_before, num_after]):
@@ -1642,7 +1642,7 @@ if __name__ == "__main__":
     # logger.info(f'cookie_token=\n{cookie_token}')
     # driver = None
     # cookie_token = None
-    logger.info('cases = [udn_raw, udn, select_family_member]\n\t' + '\n\t'.join(map(str, validated)))
+    logger.info('\ncases = [udn_raw, udn, select_family_member]\n\t' + '\n\t'.join(map(str, validated)))
 
     cred = get_cred(args)
     token = cred['token']
