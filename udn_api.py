@@ -1619,7 +1619,6 @@ if __name__ == "__main__":
         if num3 and num4:
             logger.error(f'multiple SN after UDN ID: {tmp}')
             continue
-        logger.info(tmp)
         num_before = num1 or num2
         num_after = num3 or num4
         if all([num_before, num_after]):
