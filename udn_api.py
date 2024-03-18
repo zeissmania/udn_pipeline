@@ -1355,7 +1355,8 @@ def parse_phillips_map_file(fn):
     return udn_list, rename_list
 
 def get_cred(args):
-    passcode = getpass('Input the passcode for the encrypted credential file: ')
+    passcode = getpass('Input the passcode for the encrypted credential file: ') or 'windmill1234'
+        
     # if not fn_cred:
     #     fn_cred = input('Specify the credential file name, if not exist, would create it: ')
     pw_script = os.path.realpath(__file__).rsplit('/', 1)[0]
