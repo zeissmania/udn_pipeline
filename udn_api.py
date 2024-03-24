@@ -44,7 +44,7 @@ platform = sys.platform.lower()
 
 ft_convert = {
     'bai': 'bai', 
-    'cnv.vcf': 'cnv', 'gvcf': 'vcf', 'fq': 'fastq', 'vcf': 'vcf', 'bz2': 'bz2', 'txt': 'txt', 'bed': 'bed', 'xls': 'xls', 'xlsx': 'xlsx', 'wig': 'wig'}
+    'cnv.vcf': 'cnv', 'gvcf': 'vcf', 'fq': 'fastq', 'vcf': 'vcf', 'bz2': 'bz2', 'txt': 'txt', 'bed': 'bed', 'xls': 'xls', 'xlsx': 'xlsx', 'wig': 'wig', 'tar': 'tar'}
 ft_convert.update({_: _ for _ in ft_convert.values()})
 
 class Credential():
@@ -188,11 +188,11 @@ def parse_seq_files(info, rel_to_proband):
     reports = []
     files = []
     seqtype_map = {'transcriptome': 'rnaseq'}
-    seqtype_exp = {'rnaseq', 'genome', 'exome'}
+    seqtype_exp = {'rnaseq', 'genome', 'exome', 'long_read_genome'}
     udn = info['udnId']
     seq_info = []  # key = seqID, v = all meta data
     
-    unknown_seqtype = []
+    unknown_seqtype = {}
 
     for i in info['requests']:
         for i1 in i['reports']:
@@ -290,6 +290,7 @@ def parse_seq_files(info, rel_to_proband):
 
     if len(unknown_seqtype) > 0:
         logger.warning(f'unkown seq type: {unknown_seqtype}')
+        sys.exit(1)
 
     return reports, files, seq_info
 
@@ -495,19 +496,22 @@ def get_all_info(udn, selected_files=None, renew_amazon_link=False, res_all=None
             ifl['download'] = download_link
             with open(f'{udn}.downloadlink.backup.tsv', 'a') as o:
                 print(f'{rel_to_proband}\t{udn}\t{ifn}\t{download_link}', file=o)
-            
+    
+    res['seqinfo'] = [_ for _ in res['seqinfo'] if _['seq_type'] in seq_type_kept]
 
     if len(res['seqinfo']) > 0:
         logger.info('\n' + json.dumps(res['seqinfo'], indent=3))
 
         tmp = json.dumps(seq_type_kept, indent=3)
         logger.info(f'g@kept file seq type = \n{tmp}')
-        
-        if skipped_due_to_seq_type:
-            logger.info(f'g@skipped seq_type: {skipped_due_to_seq_type}')
-        
-        if n_skip_due_to_seqid:
-            logger.warning(f'{n_skip_due_to_seqid} files skipped due to seq_id filtering: {seq_id_set}')
+    else:
+        logger.warning(f'no seq files are kept')
+    if skipped_due_to_seq_type:
+        logger.info(f'g@skipped seq_type: {skipped_due_to_seq_type}')
+    
+    if n_skip_due_to_seqid:
+        logger.warning(f'{n_skip_due_to_seqid} files skipped due to seq_id filtering: {seq_id_set}')
+
     if get_report:
         download_report(res['reports'])
     # else:
@@ -1106,6 +1110,11 @@ default:
             seq_id = int(ifl['seq_id'])
             file_id = ifl.get('file_id') or 'NA'
             seq_type = ifl.get('seq_type') or 'NA'
+            
+            if valid_seq_type and seq_type not in valid_seq_type:
+                continue
+            
+            
             md5 = ifl['md5']
             newname = ''
             newname_base = ''
@@ -1449,7 +1458,7 @@ if __name__ == "__main__":
     ps.add_argument('-url', '-urlonly', '-ckfls', help='get the files URL only (for each family member) and quit', action='store_true'),
     ps.add_argument('-ft', help="""could be multiple, if specified, would only update the amazon URL for these file types, if gzip only, add the .gz suffix. e.g. vcf.gz  would not match .vcf$""", nargs='*', default=None)
     ps.add_argument('-flist', '-fls', help="""only download the specified files, the -ft will be ignored""", nargs='*')
-    ps.add_argument('-seq_type', '-st', help="""sequence type to resolve download link, valid = genome, rnaseq, reanalysis(re), if not specified, will ignore the sequence type filtering""", choices=['genome', 'rnaseq', 're', 'reanalysis'], nargs='*')
+    ps.add_argument('-seq_type', '-st', help="""sequence type to resolve download link, valid = genome, rnaseq, reanalysis(re),  longreads(long) . if not specified, will ignore the sequence type filtering""", choices=['genome', 'rnaseq', 're', 'reanalysis', 'long', 'longreads'], nargs='*')
     ps.add_argument('-seq_id_list', '-seqid', help="""only run specific seq id, nargs=*, type=int""", type=int, nargs='*')
     ps.add_argument('-renew', '-new', '-update', help="""flag, update the amazon shared link. default is not renew""", action='store_true')
     ps.add_argument('-lite', help="""flag, donot download the cnv files and the bayler report""", action='store_true')
@@ -1501,7 +1510,7 @@ if __name__ == "__main__":
 
     valid_seq_type = args.seq_type
     if valid_seq_type:
-        valid_seq_type = {{'re': 'reanalysis'}.get(_) or _ for _ in valid_seq_type}
+        valid_seq_type = {{'re': 'reanalysis', 'long': 'long_read_genome', 'longreads': 'long_read_genome'}.get(_) or _ for _ in valid_seq_type}
     
         logger.info(f'g@valid seq type = {valid_seq_type}')
 
