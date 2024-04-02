@@ -25,7 +25,6 @@ rule of remote pw
 
 1. get relative(rel) and pure_udn(iudn) info from info.text
 2. get the root remote_pw path, first check the  column remote_pw,
-if not found, then used the remote_pw_in, the default folder
 
 name = f'{rel}{iudn}'
 remote_pw_final = f'{remote_pw}' if remote_flat else f'{remote_pw}/{name}'
@@ -72,7 +71,7 @@ args = ps.parse_args()
 
 nobuild = args.nobuild
 
-ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'gvcf', 'fasta': 'fasta', 'fq': 'fastq', 'vcf': 'vcf',  'crai': 'cram', 'txt': 'txt'}
+ft_convert = {'bai': 'bam', 'cnv.vcf': 'cnv', 'gvcf': 'vcf', 'fasta': 'fasta', 'fq': 'fastq', 'vcf': 'vcf',  'crai': 'cram', 'txt': 'txt'}
 ft_convert.update({_: _ for _ in ft_convert.values()})
 
 file_ct = {}
@@ -263,7 +262,7 @@ def build_remote_subfolder(name, dest):
 
 def get_file_extension(fn):
 
-    m = re.match(r'.*?\.(bam|bai|cnv|fasta|fastq|fq|gvcf|vcf|cram|crai)\b(\.gz)?', fn.lower())
+    m = re.match(r'.*?\.(bam|bai|cnv|fasta|fastq|fq|gvcf|vcf|cram|crai|tar)\b(\.gz)?', fn.lower())
     if m:
         try:
             return ft_convert[m.group(1)], m.group(2)
@@ -352,8 +351,7 @@ def get_remote_file_list(pw, dest, remote_pw):
     """
     return d_exist,  key = fn, value = [remote path, file size]
     """
-    remote_pw = re.sub(r'/$', '', remote_pw)
-    remote_pw = re.sub(r'^/+', '', remote_pw)
+    remote_pw = remote_pw.strip('/')
     logger.info(f'remote_pw={remote_pw}, dest={dest}')
 
     
@@ -477,7 +475,7 @@ def add_fn_suffix(fn, fn_suffix):
     
 
 
-def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, updated_version_only=True, script_list=None, no_upload=False, remote_flat=False):
+def parse_info_file(pw, info_file, remote_pw, ft=None, gzip_only=None, updated_version_only=True, no_upload=False, remote_flat=False):
     """
     the info file is like
     rel_to_proband\tfn\turl\tudn\tseq_type\tsize\tbuild\tmd5\turl_s3\tdate_upload\tremote_pw\n
@@ -486,14 +484,9 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
     ft  - a list, the file type for keep, default is fastq
     remote_base_dir, default is empty, would search from the root of the emedgene server , which is emg-auto-samples/Vanderbilt/upload/
     gzip only, a set, if the ext is found in this set, then, the file must be gziped to get involved. e.g. if vcf in gzip_only, then,  the file named .vcf$ would not be included
-
-    script_list,  in order to decide script run order across cases k = needdown, needup.
     """
     d = {}
     d_exist_all = {}
-
-
-    script_list = script_list or {'needdown': [], 'needup': []}
 
     # download.info.UDN133971.txt
     udnmain = info_file.rsplit('/', 1)[-1].replace('download.info.', '').replace('.txt', '')
@@ -512,20 +505,11 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
     except:
         pass
     
-    remote_pw_in = remote_pw_in.replace('\\', '/')
-    logger.info(f'remote_pw_in={remote_pw_in}')
-    remote_pw_in_old = remote_pw_in
-    remote_pw_in = refine_remote_pw(remote_pw_in, dest)
-
-    if remote_pw_in != remote_pw_in_old:
-        logger.warning(f'r@remote_pw changed after refine, current={remote_pw_in}, prev = {remote_pw_in_old}')
-    else:
-        logger.info(f'g@remote_pw unchanged: {remote_pw_in}')
     try:
-        d_exist, sub_folders = d_exist_all[remote_pw_in]
+        d_exist, sub_folders = d_exist_all[remote_pw]
     except:
-        d_exist, sub_folders = get_remote_file_list(pw, dest, remote_pw_in)
-        d_exist_all[remote_pw_in] = (d_exist, sub_folders)
+        d_exist, sub_folders = get_remote_file_list(pw, dest, remote_pw)
+        d_exist_all[remote_pw] = (d_exist, sub_folders)
 
     fn_md5 = glob.glob(f'{pw}/download.*.md5')
     if len(fn_md5) == 0:
@@ -538,7 +522,6 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
     
         exp_md5 = parse_md5(fn_md5)
 
-    logger.info('start parsing')
     remote_sub_pw_map = {}
     
     url_na = []
@@ -599,22 +582,6 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
 
             if fatal:
                 sys.exit(1)
-
-            # get the remote_pw
-            try:
-                remote_pw = a[idx['remote_pw']].strip()
-                if not remote_pw:
-                    if not remote_pw_in:
-                        logger.error('must specify the remote_pw, in info file or by parameter, exit..')
-                        return 1
-                    remote_pw = remote_pw_in
-                else:
-                    remote_pw = refine_remote_pw(remote_pw, dest)
-            except:
-                if not remote_pw_in:
-                    logger.error('must specify the remote_pw, in info file or by parameter, exit..')
-                    return 1
-                remote_pw = remote_pw_in
 
             # remote_base_pw.add(remote_pw)
             remote_pw = remote_pw.replace('\\', '/')
@@ -807,14 +774,22 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
     logger.info(f'subfolder existed = {sub_folders_exist}')
 
     sub_folder_to_build = sorted(sub_folders_exp - sub_folders_exist)
-    if not demo and not no_upload:
-        for i in sub_folder_to_build:
-            build_remote_subfolder(i, dest=upload_type)
-    if len(sub_folder_to_build) > 0:
-        logger.info(f'demo build remote subfolder {sub_folder_to_build}')
+    cmd_build_remote_pw = []
+    for pwtmp in sub_folder_to_build:
+        cmd = build_remote_subfolder(pwtmp, dest)
+        cmd_build_remote_pw.append(cmd)
+    fn_script = f'{pw}/shell/build_pw.sh'
+    if len(cmd_build_remote_pw) > 0:
+        with open(fn_script, 'w') as o:
+            print('\n'.join(cmd_build_remote_pw), file=o)
+        if not nobuild:
+            logger.warning(f'need to build remote folder: {fn_script}')
     else:
-        logger.info(f'g@all remote subfolder are ready')
-
+        try:
+            os.unlink(fn_script)
+        except:
+            pass
+        logger.info(f'g@all remote subfolders already exist')
 
     # check the status
     n_downloaded = 0
@@ -864,8 +839,7 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
             v = v1[fn]
 
             fn_refine = re.sub(r'\s+', '_', fn)
-            fn_script_download = f'{pw}/shell/{fn_refine}.download.{dest}.sh'
-            fn_script_upload = f'{pw}/shell/{fn_refine}.upload.{dest}.sh'
+            fn_script = f'{pw}/shell/{fn_refine}.{dest}.sh'
             n_desired += 1
 
             if v['uploaded']:
@@ -887,16 +861,12 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
                 if not v['uploaded']:
                     if not no_upload:
                         need_upload.append(fn)
-                    script_list['needdown'].append(fn_script_download)
-                    script_list['needup'].append(fn_script_upload)
                     file_status['raw'].append(fn)
             else:
                 n_downloaded += 1
                 file_status['downloaded'].append(fn)
                 if not no_upload:
                     need_upload.append(fn)
-                    script_list['needup'].append(fn_script_upload)
-
 
     need_upload = sorted(need_upload)
     n_need_upload = len(need_upload)
@@ -926,32 +896,10 @@ def parse_info_file(pw, info_file, remote_pw_in=None, ft=None, gzip_only=None, u
 
     ct = {'total': n_desired, 'downloaded': n_downloaded, 'uploaded': n_uploaded, 'need_to_upload': n_need_upload}
 
-    return d, ct, script_list, file_status
-
-
-def refine_remote_pw(remote_pw, dest):
-    if asis:
-        return remote_pw
-
-    remote_pw = re.sub('/$', '', remote_pw)
-    remote_base_dir = ''
-    tmp = remote_pw.rsplit('/', 1)
-
-    if len(tmp) == 2:
-        # the remote pw is like layer1/layer2 , e.g. not simple
-        remote_base_dir = tmp[0] + '/'
-        remote_pw = tmp[-1]
-
-    # get the remote folder list
-    fn_all_folder = 'all_folders.txt'
-    if dest == "emedgene":
-        os.system(f'{dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_base_dir}" > {fn_all_folder} ')
-    elif dest == 'rdrive':
-        cmd = f'{dock_smb} smbclient "//i10file.vumc.org/ped/"  -A "/home/chenh19/cred/smbclient.conf" -D "{remote_base_dir}" -c "ls" 2>/dev/null > {fn_all_folder}'
-        os.system(cmd)
-
+    return d, ct, file_status
+def get_all_remote_folders(fn_all_folder, dest):
     all_remote_folders = {}
-    pattern = re.compile(r'.*(UDN\d+)(.*|$)')
+    pattern = re.compile(r'.*(UDN\d+|VUDP\d+)(.*|$)')
     n = 0
 
     skip_words = ['Trio']  # if the path name contains these words, would not be considered as existed path
@@ -959,7 +907,10 @@ def refine_remote_pw(remote_pw, dest):
     for i in open(fn_all_folder):
         if dest == 'rdrive':
             # UDN525928_02     D        0  Mon Feb  4 10:04:18 2019
-            i = re.split(r'\s+D\s+', i.strip())[0].strip()
+            i = re.split(r'\s+D\s+', i.strip())
+            if len(i) == 1:
+                continue
+            i = i[0].strip()
         else:
             # PRE UDN616750_AA/
             i = i.strip().rsplit(' ', 1)[-1].strip()
@@ -976,52 +927,143 @@ def refine_remote_pw(remote_pw, dest):
         m = re.match(pattern, i)
         if not m:
             continue
-        all_remote_folders[m.group(1)] = f'{remote_base_dir}{i}'
-
+        all_remote_folders[m.group(1)] = i
 
     if n == 0:
-        logger.warning(f'base folder not exist: {remote_base_dir}')
-        # sys.exit(1)
+        logger.warning(f'base folder not exist   {dest}, fn_remote_folders = {fn_all_folder}')
+    return all_remote_folders
 
+def infer_remote_pw(udn, dest):
+    fn_all_folder = 'all_folders.txt'
     
-    remote_pw = re.sub('^/', '', remote_pw)
-    remote_pw = re.sub('upload_?', '', remote_pw, flags=re.I)
-    remote_pw = re.sub(r'^\d+_', '', remote_pw, 1)
-    m = re.match(r'(.*)?\s*(UDN\d+)\s*(.*)?', remote_pw)
+    m = re.match(r'.*(UDN\d+|VUDP\d+)', udn.upper())
+    if not m:
+        logger.error(f'invalid UDN / VUDP name: {udn}')
+        return None
+    udn = m.group(1)
 
+    if dest != 'rdrive':
+        remote_base_dir = ''
+    if udn[:3] == 'UDN':
+        remote_base_dir = '/GEN/UDN/UDN Sequencing Raw Data/'
+    else:
+        remote_base_dir = '/GEN/VUDP Raw Data/'
+    
+    if dest == "emedgene":
+        os.system(f'{dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload" > {fn_all_folder} ')
+    elif dest == 'rdrive':
+        cmd = f'{dock_smb} smbclient "//i10file.vumc.org/ped/"  -A "/home/chenh19/cred/smbclient.conf" -D "{remote_base_dir}" -c "ls" 2>/dev/null > {fn_all_folder}'
+        os.system(cmd)
+
+    all_remote_folders = get_all_remote_folders(fn_all_folder, dest)
+    if udn in all_remote_folders:
+        udn_new = all_remote_folders[udn]
+        logger.info(f'g@remote folder found for {udn}: {udn_new}')
+        return f'{remote_base_dir}{udn_new}'
+    else:
+        logger.warning(f'UDN not found on {dest}: {udn}')
+        return None
+    
+
+def refine_remote_pw(remote_pw, dest):
+    if asis:
+        logger.info(f'use as-is remote pw: {remote_pw}')
+        return remote_pw
+
+    tmp = remote_pw.strip('/').split('/')
+    remote_pw_front = []
+    remote_pw_back = []
+    udn_tmp = None
+    udn_raw = None
+    
+    pattern = re.compile(r'.*(UDN|VUDP_)(\d+)')
+    udn_found = 0
+    for i in tmp:
+        i = i.strip()
+        if udn_found:
+            if i:
+                remote_pw_back.append(i)
+        else:
+            m = re.match(pattern, i)
+            if m:
+                udn_found = 1
+                udn_raw = i
+                source_lb, sn = m.groups()
+                source_lb = source_lb.strip('_')
+                udn_tmp = source_lb + sn
+            elif i:
+                remote_pw_front.append(i)
+    remote_pw_front = '/'.join(remote_pw_front)
+    remote_pw_back = '/'.join(remote_pw_back)
+    
+    if not udn_tmp:
+        # don't need to check remote folder, because no UDN/VUDP pattern found in input
+        return remote_pw
+        
+    # get the remote folder list
+    fn_all_folder = 'all_folders.txt'
+    server = "//i10file.vumc.org/ped/"
+    if dest == 'rdrive':
+        cmd = f'{dock_smb} smbclient "{server}"  -A "/home/chenh19/cred/smbclient.conf" -D "{remote_pw_front}" -c "ls" 2>/dev/null > {fn_all_folder}'
+    elif dest == 'emedgene':
+        cmd = f'{dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/"  > {fn_all_folder}'
+    logger.info(os.getcwd())
+    os.system(cmd)
+
+    udn_remote = None
+    for i in open(fn_all_folder):
+        if dest == 'rdrive':
+            # UDN525928_02     D        0  Mon Feb  4 10:04:18 2019
+            i = re.split(r'\s+D\s+', i.strip())[0].strip()
+        else:
+            # PRE UDN616750_AA/
+            i = i.strip().rsplit(' ', 1)[-1].strip()
+        i = i.strip('/')
+        m = re.match(pattern, i)
+        if not m:
+            continue
+        source_lb, sn = m.groups()
+        source_lb = source_lb.strip('_')
+        udn_pure_remote = source_lb + sn
+        if udn_pure_remote == udn_tmp:
+            udn_remote = i
+            break
+    
+    if udn_remote:
+        tmp = [remote_pw_front, udn_remote, remote_pw_back]
+        tmp = [_ for _ in tmp if _]
+        remote_pw_new = '/'.join(tmp)
+        logger.info(f'g@remote folder already exist: {remote_pw_new}')
+        return remote_pw_new
+    
     
     def extract_str(s):
+        s = s.strip().strip('_')
         if s is None or not s.strip():
             return None
-        
-        s = re.sub('^_*', '', s.strip())
-        s = re.sub('_*$', '', s)
-        
         return s
+        
+    # remote not exist, refine the local pattern
+    m = re.match(r'(.*)?\s*((?:UDN|VUDP_)\d+)\s*(.*)?', udn_raw).groups()
+    p1 = extract_str(m[0])
+    p2 = extract_str(m[2])
     
-    if m:
-        m = m.groups()
-        udn_tmp = m[1]
-        if udn_tmp in all_remote_folders:
-            remote_pw = all_remote_folders[udn_tmp]
-            logger.info(f'g@remote folder already exist: {remote_pw}')
-            return remote_pw
+    if p1:
+        m1 = re.match('(\d+)_(\d+.*)', p1)
+        if m1:
+            p1 = m1.group(2)
+        if p2 and p1.match('\d+(_|$)'):
+            p1 = ''
 
-        p1 = extract_str(m[0])
-        p2 = extract_str(m[2])
-        # logger.info(f'{p1=}, {p2=}')
-        if p1:
-            m1 = re.match('(\d+)_(\d+.*)', p1)
-            if m1:
-                p1 = m1.group(2)
-            elif p2 and re.match('\d+(_|$)', p1):
-                p1 = ''
-
-        p_trailing = '_'.join([_ for _ in (p1, p2) if _])
-        p_trailing = '_' + p_trailing if p_trailing else ''
-        remote_pw = m[1] + p_trailing
+    p_trailing = '_'.join([_ for _ in (p1, p2) if _])
+    p_trailing = '_' + p_trailing if p_trailing else ''
+    udn_local_refine = m[1] + p_trailing
+    tmp = [remote_pw_front, udn_local_refine, remote_pw_back]
+    tmp = [_ for _ in tmp if _]
+    remote_pw_new = '/'.join(tmp)
     
-    return f'{remote_base_dir}{remote_pw}'
+    logger.info(f'local remote_pw refined: {remote_pw_new}')
+    return remote_pw_new
 
 def get_fn_remote(fn_local, dir_local_files, local_pw_layers=0, fn_remote=None):
     
@@ -1053,20 +1095,20 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
 
     fn = os.path.basename(fn_local)
     pw = pw or os.getcwd()
-    remote_pw = re.sub('^/+', '', remote_pw)
-    remote_pw = re.sub('/+$', '', remote_pw)
-    
-    if remote_pw:
-        remote_pw += '/'
+    remote_pw = remote_pw.strip('/')
         
     local_file_size = local_file_size or {}
 
-    fn_remote = fn_remote or fn
+    fn_remote = (fn_remote or fn).strip('/')
+    
+    fn_remote_full = f'{remote_pw}/{fn_remote}'
+    
+    logger.info(fn_remote)
     # if not os.path.exists(fn_local):
     #     return None
 
     fn_refine = re.sub(r'\s+', '_', fn)
-    fn_script = f'{pw}/shell/{fn_refine}.download.{dest}.sh'
+    fn_script = f'{pw}/shell/{fn_refine}.{dest}.sh'
     fn_status = f'{pw}/log/status.{fn_refine}.txt'
 
     if simple == False and (url_var is None):
@@ -1125,8 +1167,6 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
     elif download_type == 'wget':
         download_cmd = f'wget -c -O "{fn_local}" "$url" > {pw}/log/download.{fn}.log 2>&1'
 
-
-    
     cmd_check_local = f"""
 checklocal(){{
     local_size=$(stat -Lc "%s" {fn_local} 2>/dev/null)
@@ -1214,7 +1254,7 @@ checklocal(){{
     if dest == 'emedgene':
         cmd_check_remote = f"""
 checkremote(){{
-    remote_file_size=$({dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}{fn_remote}"|grep -E -m1 "{fn_pure}$" | tr -s " "|cut -d " " -f 3)
+    remote_file_size=$({dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{fn_remote_full}"|grep -E -m1 "{fn_pure}$" | tr -s " "|cut -d " " -f 3)
     {check_remote_logic}
 
 }}
@@ -1250,10 +1290,6 @@ checkremote(){{
     cmd.append(cmd_check_remote)
     cmd_post_upload = f"""
 postupload(){{
-    mv {pw}/shell/{fn_refine}.download.{dest}.sh \\
-        {pw}/shell_done/{fn_refine}.download.{dest}.sh 2>/dev/null
-    mv {pw}/shell/{fn_refine}.upload.{dest}.sh \\
-        {pw}/shell_done/{fn_refine}.upload.{dest}.sh 2>/dev/null
     fntmp={pw}/log/{fn_refine}.tmplog
 
     tail -c 3000 {pw}/log/upload.{dest}.{fn_refine}.log  2>/dev/null|sed 's/\\r/\\n/g' > $fntmp;
@@ -1271,7 +1307,8 @@ download_status=$(checklocal)
 """
     cmd.append(cmd_post_upload)
     # upload_status
-    if not no_upload and not force_download:
+    # if not no_upload and not force_download:
+    if not no_upload:
         cmd.append(f"""
 upload_status=$(checkremote)
 if [[ $upload_status = "already_uploaded" ]];then
@@ -1279,8 +1316,8 @@ if [[ $upload_status = "already_uploaded" ]];then
     exit 0
 fi
 """)
-    else:
-        logger.info(f'g@{no_upload=}, {force_download=}')
+    # else:
+    #     logger.info(f'g@{no_upload=}, {force_download=}')
     cmd.append(f"""
 
 if [[ $download_status -eq 1 ]];then
@@ -1307,30 +1344,23 @@ bgzip -r {pw}/download/{fn}
 ln -sf {fn_local} {pw}/download/{fn_deid}.link
 
         """)
-        
-    if need_download:
-        with open(fn_script, 'w') as out:
-            print('\n'.join(cmd), file=out)
-            os.chmod(fn_script, 0o755)
-    elif os.path.exists(fn_script):
-        try:
-            os.unlink(fn_script)
-        except:
-            pass
 
+
+    # upload related
     fn_script_upload_exp = f'{pw}/shell/{fn_refine}.upload.{dest}.sh'
     fn_script_upload = None
     
     if not no_upload and need_upload:
         fn_script_upload = fn_script_upload_exp
+        cmd.append(f'bash {fn_script_upload}')
+
         if dest == 'dropbox':
-            upload_cmd = f'{dock} dbxcli put "{fn_local}" "/{remote_pw}{fn_remote}" > {pw}/log/upload.{dest}.{fn}.log 2>&1'
+            upload_cmd = f'{dock} dbxcli put "{fn_local}" "/{fn_remote_full}" > {pw}/log/upload.{dest}.{fn}.log 2>&1'
         elif dest == 'emedgene':
-            upload_cmd = f'{dock} aws s3 cp "{fn_local}" "s3://emg-auto-samples/Vanderbilt/upload/{remote_pw}{fn_remote}" > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log'
+            upload_cmd = f'{dock} aws s3 cp "{fn_local}" "s3://emg-auto-samples/Vanderbilt/upload/{fn_remote_full}" > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log'
         elif dest == 'rdrive':
-            
             fn_pure, ext = fn_remote.rsplit('.', 1)
-            upload_cmd = f"""{dock_smb} smbclient "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf"  <<< $'rm "/{remote_pw}{fn_remote}"\nput "{fn_local}" "/{remote_pw}{fn_remote}" ' """
+            upload_cmd = f"""{dock_smb} smbclient "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf"  <<< $'mkdir "{remote_pw}"\nrm "/{fn_remote_full}"\nput "{fn_local}" "/{fn_remote_full}" ' """
 
         
         with open(fn_script_upload, 'w') as o:
@@ -1370,13 +1400,20 @@ ln -sf {fn_local} {pw}/download/{fn_deid}.link
         except:
             pass
 
-    return fn_script, fn_script_upload
+
+    with open(fn_script, 'w') as out:
+        print('\n'.join(cmd), file=out)
+        os.chmod(fn_script, 0o755)
+
+    return fn_script
 
 def build_script(pw, d, info_file, no_upload=False):
     with open(info_file) as f:
         info_header = f.readline().strip().split('\t')
         idx_url = info_header.index('url') + 1
 
+    script_list_tmp = []
+    skipped = 0
     for _, v1 in d.items():
         for fn, v in v1.items():
             # {'size': size_exp, 'remote': f'{remote_pw}/{name}', 'url': url, 'downloaded': downloaded, 'uploaded': uploaded}
@@ -1392,17 +1429,44 @@ def build_script(pw, d, info_file, no_upload=False):
             fn_download = f'{pw}/download/{fn}'
             # fn_download_chunk = fn_download.replace('.gz', '')
 
+
+
             need_upload = not v['uploaded']
             need_download = not v['downloaded']
+            if no_upload:
+                need_upload = False
             fn_refine = re.sub(r'\s+', '_', fn)
+
+            # filter
+            if need_upload or need_download:
+                pass
+            else:
+                skipped += 1
+                # logger.info(f'skipped: {fn}')
+                continue
 
             if url.lower() == 'na':
                 continue
             url_var = f"""url=$(awk -F "\\t" '$2=="{fn_orig}" {{print ${idx_url} }}' {info_file})"""
-            fn_script, fn_script_upload = build_script_single(dest, remote_pw, fn_download, url_var, simple=False, fn_deid=fn_deid, sample_list=sample_list, pw=pw, download_type=download_type, size_exp=size_exp, need_upload=need_upload, need_download=need_download)
+            fn_script = build_script_single(dest, remote_pw, fn_download, url_var, simple=False, fn_deid=fn_deid, sample_list=sample_list, pw=pw, download_type=download_type, size_exp=size_exp, need_upload=need_upload, need_download=need_download)
             if fn_script is None:
                 # logger.info(f'{dest=}, {remote_pw=}, {fn_download=}, {fn_deid=}, {pw=}, {download_type=}, {size_exp=}, {need_upload=}')
                 logger.warning(f'fail to build script for {fn}')
+                continue
+
+            size_exp = size_exp if isinstance(size_exp, int) else 0
+            script_list_tmp.append([fn_script, size_exp])
+    tmp = sorted(script_list_tmp, key=lambda _: _[1])  # sort by size_exp
+    script_list = [_[0] for _ in tmp]
+    
+    # tmp = [[k, round(v/1024**3, 1)] for k, v in tmp]
+    # tmp = '\n'.join(map(str, tmp))
+    # logger.info(f'\n' + tmp)
+    
+    if skipped > 0:
+        logger.info(f'g@skipped scripts due to already done = {skipped}')
+    return script_list
+                
 
 
 
@@ -1422,7 +1486,8 @@ def get_prj_name(pw):
         logger.error(f'invalid prj name specified, you may in the wrong working folder: {prj}, exit...')
         sys.exit(1)
 
-def main(pw, script_list, info_file=None, remote_pw_in=None, updated_version_only=True, no_upload=False, remote_flat=False):
+def main(pw, info_file=None, remote_pw=None, updated_version_only=True, no_upload=False, remote_flat=False, script_list=None):
+    
     if not info_file:
         tmp = glob.glob(f'{pw}/download.info.*.txt')
         if len(tmp) == 0:
@@ -1434,25 +1499,24 @@ def main(pw, script_list, info_file=None, remote_pw_in=None, updated_version_onl
         else:
             info_file = tmp[0]
 
+    script_list = script_list or []
     if not os.path.exists(info_file):
         logger.error(f'info file not found')
         sys.exit(1)
 
     # remote path
     pw = re.sub('/$', '', pw)
-    remote_pw_in = remote_pw_in or pw.rsplit('/', 1)[-1]
-
-    # print(f'pw={pw}, info={info_file} remote_pw_in={remote_pw_in}')
-    # return 0
 
     # build folder
     for i in ['shell', 'shell_done', 'download', 'log']:
         os.makedirs(f'{pw}/{i}', exist_ok=True)
     # parse the info file
-    d, ct, script_list, file_status = parse_info_file(pw, info_file, remote_pw_in=remote_pw_in, ft=ft, updated_version_only=updated_version_only, script_list=script_list, no_upload=no_upload, remote_flat=remote_flat)
+    d, ct, file_status = parse_info_file(pw, info_file, remote_pw=remote_pw, ft=ft, updated_version_only=updated_version_only, no_upload=no_upload, remote_flat=remote_flat)
     # print(json.dumps(d, indent=3))
     if not lite:
-        build_script(pw, d, info_file, no_upload=no_upload)
+        script_list += build_script(pw, d, info_file, no_upload=no_upload)
+    else:
+        script_list = []
     return ct, script_list, file_status
 
 def clearlog(force=False, args=None):
@@ -1461,11 +1525,12 @@ def clearlog(force=False, args=None):
     pw_list = [_[:-1] for _ in pw_list if _.strip()]
     
     if args.pw:
-        pw_list = sorted(set(pw_list) & set(args.pw))
+        input_pw = args.pw
+        input_pw = [_.rsplit('/',1)[-1] for _ in input_pw]
+        pw_list = sorted(set(pw_list) & set(input_pw))
     
     n_pw = len(pw_list)
     
-    logger.info(pw_list)
     
     if len(pw_list) == 0:
         info_file = glob.glob(f'UDN*.yaml')
@@ -1482,8 +1547,7 @@ def clearlog(force=False, args=None):
         log_fls += [_.strip() for _ in fls if _.strip()]
 
     if len(log_fls) > 0:
-        logger.info(f'gb@now removing {pw_download}')
-        logger.warning(f'now trying to clear the logs, n = {len(log_fls)}')
+        logger.warning(f'now trying to shrink the logs, n = {len(log_fls)}')
     upload_fls = []
     download_fls = []
 
@@ -1495,13 +1559,13 @@ def clearlog(force=False, args=None):
 
     cmd = ""
     if len(download_fls) > 0:
-        download_fls = '\n'.join(download_fls)
+        download_fls_str = '\n'.join(download_fls)
         cmd += f"""
     while read fn;do
         tail -n 30 $fn  2>/dev/null> ${{fn}}.tmp;
         mv ${{fn}}.tmp $fn
     done <<EOF_
-    {download_fls}\nEOF_
+    {download_fls_str}\nEOF_
     """
     if len(upload_fls) > 0:
         upload_fls = '\n'.join(upload_fls)
@@ -1519,7 +1583,8 @@ def clearlog(force=False, args=None):
         os.system(cmd)
     else:
         logger.info(f'gb@no log files need to be cleared')
-        
+    
+    logger.info(pw_list)
     # deal with the download folder
     for ipw in pw_list:
         pw_download = f'{ipw}/download'
@@ -1532,7 +1597,7 @@ def clearlog(force=False, args=None):
                 logger.warning(f'\tskip...')
                 continue
         fn_flist = f'{ipw}/download.flist.txt'
-        os.system(f'echo -e "\n\n$(date)\\n" >> {fn_flist}; ls {pw_download} -lha >> {fn_flist}; echo -e "***********\\n\\n" >> {fn_flist}; rm -rf {pw_download}')
+        os.system(f'echo -e "\n\n$(date)\\n" >> {fn_flist}; ls {pw_download} -la >> {fn_flist}; echo -e "***********\\n\\n" >> {fn_flist}; rm -rf {pw_download}')
 
 
 def parse_ls_dump(fn):
@@ -1612,7 +1677,6 @@ def get_local_files(args, ft):
     return res, file_size
 
 
-
 if __name__ == "__main__":
 
     logger = getlogger()
@@ -1627,6 +1691,10 @@ if __name__ == "__main__":
     force_upload = args.force_upload
     force_download = args.forcedown
     force_clear = args.force_clear
+    if args.force:
+        force_upload = True
+        force_download = True
+    
     no_upload = args.noupload
     need_upload = not no_upload
     profile = args.profile
@@ -1645,7 +1713,7 @@ if __name__ == "__main__":
     rm = args.rm
     remote_pw = args.remote_pw
     remote_base = args.remote_base
-    # print(args)
+
 
     node_name = platform.node()
     updated_version_only = not args.allversion
@@ -1713,9 +1781,7 @@ if __name__ == "__main__":
         if not dir_local_files:
             logger.error(f'simple mode, must specify the root folder for the files need to be uploaded')
             sys.exit(1)
-        
-        
-        
+
         if len(dir_local_files) > 1:
             logger.warning(f'multiple folders specified, will use the first')
         dir_local_files = dir_local_files[0]
@@ -1769,7 +1835,7 @@ if __name__ == "__main__":
             fn_remote = add_fn_suffix(fn, fn_suffix)
             fn_remote = get_fn_remote(fn, dir_local_files, local_pw_layers, fn_remote=fn_remote)
             remote_fls_map[fn] = fn_remote
-            if fn_remote not in d_exist:
+            if fn_remote not in d_exist or force_upload:
                 file_status['need_to_upload'].append(fn)
             else:
                 size = local_file_size.get(fn) or os.path.getsize(fn)
@@ -1804,9 +1870,7 @@ if __name__ == "__main__":
         else:
             logger.info(f'now building scripts for {len(file_status["need_to_upload"])} files')
 
-        scripts = []
-        scripts_upload = []
-        
+        scripts = []        
         cmd_build_remote_pw = []
 
         remote_pw_list = [remote_pw]
@@ -1827,22 +1891,19 @@ if __name__ == "__main__":
                         remote_pw_list.append(tmp2)
             
             # fn_script is not valid, because no download is needed
-            fn_script, fn_script_upload = build_script_single(dest, remote_pw, fn, simple=True, need_upload=need_upload, fn_remote=fn_remote, local_file_size=local_file_size, need_download=False)
+            fn_script = build_script_single(dest, remote_pw, fn, simple=True, need_upload=need_upload, fn_remote=fn_remote, local_file_size=local_file_size, need_download=False)
             
             tmp = f'{remote_pw}{fn_remote}'.replace('//', '/')
             tmp = tmp.replace('/', red(' / '))
             print(fn_pure.ljust(max_len + 5) + f'remote:  {tmp}')
-            
-            
-            # if fn_script is None:
-            #     logger.warning(f'fail to build script for {fn_pure}')
-            #     continue
-            # scripts.append(fn_script)
-            if fn_script_upload:
-                scripts_upload.append(fn_script_upload)
-        
+
+            if fn_script is None:
+                logger.warning(f'fail to build script for {fn_pure}')
+                continue
+            scripts.append(fn_script)
+
         # logger.info(remote_pw_list)
-        
+
         for pwtmp in remote_pw_list:
             if pwtmp  in sub_folders:
                 continue
@@ -1852,8 +1913,7 @@ if __name__ == "__main__":
             #     os.system(cmd)
             # else:
             cmd_build_remote_pw.append(cmd)
-        
-        
+
         fn_script = f'shell/build_pw.sh'
         if len(cmd_build_remote_pw) > 0:
             with open(fn_script, 'w') as o:
@@ -1870,7 +1930,7 @@ if __name__ == "__main__":
         if len(scripts) > 0:
             logger.info('example scripts:\n\t' + '\n\t'.join(scripts[:4]))
         with open(f'script_list.txt', 'w') as o:
-            print('\n'.join(scripts + scripts_upload), file=o)
+            print('\n'.join(scripts), file=o)
         sys.exit(0)
 
     if clearlog_flag:
@@ -1897,10 +1957,6 @@ if __name__ == "__main__":
         logger.info(f'input pw = {args.pw}')
         logger.info(f'parsed pw = {pw}')
 
-    if len(pw) > 1 and remote_pw:
-        logger.error('multiple local path found, but only 1 remote_pw specified, try specify one at each or specify remote_base, then use auto assigned name')
-        sys.exit(1)
-
     logger.info(f'total cases = {len(pw)}\n{"*"*50}\n\n')
     pw = sorted(pw)
 
@@ -1909,25 +1965,16 @@ if __name__ == "__main__":
     #     sys.exit(1)
 
     ct = {'total': 0, 'downloaded': 0, 'uploaded': 0, 'need_to_upload': 0}
-    script_list = {'needup': [], 'needdown': []}
     file_status_all = {}
 
+    script_list = []
     for ipw in pw:
         ipw = re.sub(r'/$', '', ipw)
         pw_core = ipw.rsplit('/', 1)[-1]
         ipw = os.path.realpath(ipw)
-        # logger.warning(f'path={ipw}')
-        # continue
-
-        # fn_md5 = glob.glob(f'{ipw}/shell/*.md5.upload.sh')
-        # if len(fn_md5) > 0 and not no_upload:
-        #     script_list['needup'].append(fn_md5[0])
-
-        remote_base_prefix = f'{remote_base}/' if remote_base else ''
-        remote_pw_in = remote_pw or f'{remote_base_prefix}{pw_core}'
+        remote_pw = refine_remote_pw(pw_core, dest)
         
-        remote_pw_in = remote_pw_in.replace('\\', '/')
-        ct_prj, script_list, file_stat = main(ipw, script_list, remote_pw_in=remote_pw_in, updated_version_only=updated_version_only, no_upload=no_upload, remote_flat=remote_flat)
+        ct_prj, script_list, file_stat = main(ipw, remote_pw=remote_pw, updated_version_only=updated_version_only, no_upload=no_upload, remote_flat=remote_flat, script_list=script_list)
         
         for istat, v in file_stat.items():
             file_status_all.setdefault(istat, set()).update(set(v))
@@ -1939,12 +1986,6 @@ if __name__ == "__main__":
 
     print('\n' + '#' * 50)
     print(json.dumps(ct, indent=4))
-
-    # build the script list
-    n_needup = len(script_list['needup'])
-    n_needdown = len(script_list['needdown'])
-
-    print(f'total scripts = {n_needup + n_needdown}')
 
     for udn, v1 in file_ct.items():
         print(udn)
@@ -1972,6 +2013,4 @@ if __name__ == "__main__":
             print(line)
 
     with open(f'script_list.txt', 'w') as o:
-        for k in ['needdown', 'needup']:
-            if len(script_list[k]) > 0:
-                print('\n'.join(script_list[k]), file=o)
+        print('\n'.join(script_list), file=o)
