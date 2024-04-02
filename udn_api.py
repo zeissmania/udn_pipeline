@@ -44,7 +44,7 @@ platform = sys.platform.lower()
 
 ft_convert = {
     'bai': 'bai', 
-    'cnv.vcf': 'cnv', 'gvcf': 'vcf', 'fq': 'fastq', 'vcf': 'vcf', 'bz2': 'bz2', 'txt': 'txt', 'bed': 'bed', 'xls': 'xls', 'xlsx': 'xlsx', 'wig': 'wig'}
+    'cnv.vcf': 'cnv', 'gvcf': 'vcf', 'fq': 'fastq', 'vcf': 'vcf', 'bz2': 'bz2', 'txt': 'txt', 'bed': 'bed', 'xls': 'xls', 'xlsx': 'xlsx', 'wig': 'wig', 'tar': 'tar'}
 ft_convert.update({_: _ for _ in ft_convert.values()})
 
 class Credential():
@@ -188,11 +188,11 @@ def parse_seq_files(info, rel_to_proband):
     reports = []
     files = []
     seqtype_map = {'transcriptome': 'rnaseq'}
-    seqtype_exp = {'rnaseq', 'genome', 'exome'}
+    seqtype_exp = {'rnaseq', 'genome', 'exome', 'long_read_genome'}
     udn = info['udnId']
     seq_info = []  # key = seqID, v = all meta data
     
-    unknown_seqtype = []
+    unknown_seqtype = {}
 
     for i in info['requests']:
         for i1 in i['reports']:
@@ -290,6 +290,7 @@ def parse_seq_files(info, rel_to_proband):
 
     if len(unknown_seqtype) > 0:
         logger.warning(f'unkown seq type: {unknown_seqtype}')
+        sys.exit(1)
 
     return reports, files, seq_info
 
@@ -495,19 +496,22 @@ def get_all_info(udn, selected_files=None, renew_amazon_link=False, res_all=None
             ifl['download'] = download_link
             with open(f'{udn}.downloadlink.backup.tsv', 'a') as o:
                 print(f'{rel_to_proband}\t{udn}\t{ifn}\t{download_link}', file=o)
-            
+    
+    res['seqinfo'] = [_ for _ in res['seqinfo'] if _['seq_type'] in seq_type_kept]
 
     if len(res['seqinfo']) > 0:
         logger.info('\n' + json.dumps(res['seqinfo'], indent=3))
 
         tmp = json.dumps(seq_type_kept, indent=3)
         logger.info(f'g@kept file seq type = \n{tmp}')
-        
-        if skipped_due_to_seq_type:
-            logger.info(f'g@skipped seq_type: {skipped_due_to_seq_type}')
-        
-        if n_skip_due_to_seqid:
-            logger.warning(f'{n_skip_due_to_seqid} files skipped due to seq_id filtering: {seq_id_set}')
+    else:
+        logger.warning(f'no seq files are kept')
+    if skipped_due_to_seq_type:
+        logger.info(f'g@skipped seq_type: {skipped_due_to_seq_type}')
+    
+    if n_skip_due_to_seqid:
+        logger.warning(f'{n_skip_due_to_seqid} files skipped due to seq_id filtering: {seq_id_set}')
+
     if get_report:
         download_report(res['reports'])
     # else:
@@ -676,7 +680,7 @@ def get_all_info(udn, selected_files=None, renew_amazon_link=False, res_all=None
             pickle.dump(res_all, out)
         try:
             # (res, renew_amazon_link=False, )
-            parse_api_res(res_all, selected_files=selected_files, renew_amazon_link=renew_amazon_link, update_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family, sv_caller=sv_caller, newname_prefix=newname_prefix, gzip_only=gzip_only)
+            parse_api_res(res_all, selected_files=selected_files, renew_amazon_link=False, update_aws_ft=get_aws_ft, udn_raw=udn_raw, valid_family=valid_family, sv_caller=sv_caller, newname_prefix=newname_prefix, gzip_only=gzip_only)
         except:
             logger.error(f'fail to parse the result dict, try again')
             raise
@@ -826,7 +830,7 @@ def parse_api_res(res, selected_files=None, renew_amazon_link=False, update_aws_
     """
     if not isinstance(gzip_only, set):
         gzip_only = set()
-    update_aws_ft = set([ft_convert.get(_) or _ for _ in update_aws_ft]) if update_aws_ft else set(['fastq', 'cnv'])
+    update_aws_ft = set([ft_convert.get(_) or _ for _ in update_aws_ft]) if update_aws_ft else set(['fastq', 'cnv', 'vcf'])
 
     
 
@@ -1106,6 +1110,11 @@ default:
             seq_id = int(ifl['seq_id'])
             file_id = ifl.get('file_id') or 'NA'
             seq_type = ifl.get('seq_type') or 'NA'
+            
+            if valid_seq_type and seq_type not in valid_seq_type:
+                continue
+            
+            
             md5 = ifl['md5']
             newname = ''
             newname_base = ''
@@ -1172,7 +1181,7 @@ default:
 
             if re.match(r'.+\.cnv\.vcf(\.gz)?$', fn) and ('cnv' in update_aws_ft or 'all' in update_aws_ft):
                 if  fn.find('joint') < 0:
-                    logger.info(green(f'seq_id:{seq_id}\t{fn}:\tfile_id:{file_id}'))
+                    # logger.info(green(f'seq_id:{seq_id}\t{fn}:\tfile_id:{file_id}'))
                     if not os.path.exists(f'origin{fn}'):
                         if url.lower() == 'na':
                             logger.error(red(f'invalid CNV file url'))
@@ -1354,160 +1363,16 @@ def parse_phillips_map_file(fn):
 
     return udn_list, rename_list
 
-
-if __name__ == "__main__":
-
-    import argparse as arg
-    from argparse import RawTextHelpFormatter
-    ps = arg.ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
-    ps.add_argument('udn', help="""one or multiple UDN ID, sep by space, could also contain the prefix, eg. 11_UDN123456.  if only selected family number are needed, append with @, eg. UDN123@UDN456_father@UDN_789@mother, in this case, other family member would not be resolved""", nargs='*')
-    ps.add_argument('-pw', help='working path, default is udn/cases, if use current folder, specify as . or pwd', default=None)
-    ps.add_argument(
-        '-fn_cred', '-cred',
-        help="""filename for the credential file, must include the UDN token, login email, login username(vunetID), login_password""")
-    ps.add_argument('-create', '-encry', '-enc', help="""enter into create credential mode""", action='store_true')
-    ps.add_argument('-sv_caller', '-svcaller', '-svsoftware', help="""the software used for sv calling, default=dragen, alt=pacbio""", default='dragen', choices=['pacbio', 'dragen'])
-    ps.add_argument('-update_cred', '-uc',  help="""update the credential info""", action='store_true')
-    ps.add_argument('-url', '-urlonly', '-ckfls', help='get the files URL only (for each family member) and quit', action='store_true'),
-    ps.add_argument('-ft', help="""could be multiple, if specified, would only update the amazon URL for these file types, if gzip only, add the .gz suffix. e.g. vcf.gz  would not match .vcf$""", nargs='*', default=None)
-    ps.add_argument('-flist', '-fls', help="""only download the specified files, the -ft will be ignored""", nargs='*')
-    ps.add_argument('-seq_type', '-st', help="""sequence type to resolve download link, valid = genome, rnaseq, reanalysis(re), if not specified, will ignore the sequence type filtering""", choices=['genome', 'rnaseq', 're', 'reanalysis'], nargs='*')
-    ps.add_argument('-seq_id_list', '-seqid', help="""only run specific seq id, nargs=*, type=int""", type=int, nargs='*')
-    ps.add_argument('-renew', '-new', '-update', help="""flag, update the amazon shared link. default is not renew""", action='store_true')
-    ps.add_argument('-lite', help="""flag, donot download the cnv files and the bayler report""", action='store_true')
-    ps.add_argument('-noupload', '-noup', help="""don't upload the files to ACCRE""", action='store_true')
-    ps.add_argument('-force_upload', '-fu', help="""force upload all files to ACCRE""", action='store_true')
-    ps.add_argument('-force_rerun', '-force', help="""force rerun the API query, ignore the local pikcle file""", action='store_true')
-    ps.add_argument('-upload_only', '-uo', help="""only upload the files to upload folder, not to the data analysis folder""", action='store_true')
-    ps.add_argument('-show', '-chrome', '-noheadless', help="""disable headless mode""", action='store_true')
-    ps.add_argument('-showcred', help="""show the credential content and exit""", action='store_true')
-    ps.add_argument('-reltable', '-rel', help="""force save the relative table, even in the parse_api_result mode""", action='store_true')
-    ps.add_argument('-v', '-level', help="""set the logger level, default is info""", default='INFO', choices=['INFO', 'WARN', 'DEBUG', 'ERROR'])
-    ps.add_argument('-nodename', '-node', '-remote', help="remote node name, default is va", choices=['va', 'pc'])
-    ps.add_argument('-fn_prefix', help="rename the case name to this prefix, only valid for vcf file, number should match with prj number", nargs='*')
-    ps.add_argument('-rename', '-newname', help="if the UDN case already exist, and the raw name does not match, if true, will rename to the new name, otherwise , will use old name", action='store_true')
-    ps.add_argument('-phillips', '-philips', '-phil', help="run the tasks for Phillips, need to rename the case. argument = filename for UDN-case number map")
-    ps.add_argument('-debug', '-d', help="""debug mode, dump the intermediate json files""", action='store_true')
-    ps.add_argument('-parse_link', '-real',  help="""resolve the aws download URL, default is demo mode""", action='store_true')
-
-
-    args = ps.parse_args()
-    debug = args.debug
-    case_prefix = ''
-    pw_accre_scratch_suffix = ''
-    fn_phillips = args.phillips
-    if fn_phillips:
-        args.ft = ['vcf']
-        args.pw = '.'
-        args.upload_only = True
-        args.lite = True
-        # args.renew = True
-        args.udn, args.fn_prefix = parse_phillips_map_file(fn_phillips)
-        pw_accre_scratch_suffix = '/upload_for_phillips'
-        case_prefix = fn_phillips.rsplit('/', 1)[-1].rsplit('.', 1)[0].replace('_rerun', '') + '_'
-
-    print(args)
-    logger = get_logger(level=args.v)
-
-    force = args.force_rerun
-    rename = args.rename
-    udn_list = args.udn or [os.getcwd().rsplit('/')[-1]]
-    newname_prefix_l = args.fn_prefix
-    if newname_prefix_l:
-        newname_prefix_l = [re.sub('case[\W_]+', '', _) for _ in newname_prefix_l]
-
-    ft_input = args.ft
-
-    force_upload = args.force_upload
-    sv_caller = args.sv_caller
-
-    valid_seq_type = args.seq_type
-    if valid_seq_type:
-        valid_seq_type = {{'re': 'reanalysis'}.get(_) or _ for _ in valid_seq_type}
-    
-        logger.info(f'g@valid seq type = {valid_seq_type}')
-
-
-    save_rel_table = args.reltable
-    headless = not args.show
-    if platform == 'darwin':
-        root = args.pw or '.'
-        if root.lower() in ['.', 'pwd']:
-            root = os.getcwd()
-        if args.pw:
-            pass
-        # elif root.find('/udn/cases/done/') > -1:
-        #     root = root.rsplit('/done/', 1)[0] + '/done'
-        # elif root.find('/udn/cases/') > -1:
-        #     root = root.rsplit('/udn/cases/', 1)[0] + '/udn/cases'
-        os.chdir(root)
-        logger.info(f'g@root path = {root}')
-    else:
-        logger.info('platform= {platform}')
-        root = os.getcwd()
-
+def get_cred(args):
+    passcode = getpass('Input the passcode for the encrypted credential file: ') or 'windmill1234'
+        
+    # if not fn_cred:
+    #     fn_cred = input('Specify the credential file name, if not exist, would create it: ')
     pw_script = os.path.realpath(__file__).rsplit('/', 1)[0]
-    lite = args.lite
-    upload = not args.noupload or force_upload
-
     if not args.fn_cred and os.path.exists('udn.credential.pkl.encrypt'):
         fn_cred = 'udn.credential.pkl.encrypt'
     else:
         fn_cred = f'{pw_script}/udn.credential.pkl.encrypt'
-
-    demo = not args.parse_link
-    pw_script = os.path.realpath(__file__).rsplit('/', 1)[0]
-    urlonly = args.url
-
-    upload_only = args.upload_only
-
-
-    nodename = args.nodename or 'va'
-    pw_accre_data = '/data/cqs/chenh19/udn'
-    pw_accre_scratch = '/fs0/members/chenh19/tmp/upload' if nodename == 'va' else '/scratch/h_vangard_1/chenh19/udn/upload'
-
-
-    pw_accre_scratch += pw_accre_scratch_suffix
-    # pw_accre_upload = pw_accre_scratch
-
-    upload_file_list = ['pheno.keywords.txt', 'download.*.txt', 'download.*.md5']  # upload these files to scratch and data of ACCRE
-
-    gzip_only = set()
-    update_aws_ft = set()
-
-    valid_ft = {'bam',}
-    ft_convert.update({k: k for k in valid_ft})
-
-
-    selected_files = args.flist
-    if selected_files:
-        update_aws_ft = {get_file_extension(fn)[0] for fn in selected_files}
-    elif ft_input is None:
-        update_aws_ft = ['cnv', 'fastq']
-    elif 'all' not in ft_input:
-        err = 0
-        ft_input = [_ for _ in ft_input if _.strip()]
-        
-        for i in ft_input:
-            ext = i.replace('.gz', '')
-            if i[-2:] == 'gz':
-                gzip_only.add(ext)
-            try:
-                update_aws_ft.add(ft_convert[ext])
-            except:
-                logger.error(f'invalid filetype: {i}')
-                err = 1
-        if err:
-            sys.exit(1)
-    else:
-        update_aws_ft = {'all',}
-
-
-    logger.info(f'update_aws_ft = {update_aws_ft}')
-
-    passcode = getpass('Input the passcode for the encrypted credential file: ')
-    if not fn_cred:
-        fn_cred = input('Specify the credential file name, if not exist, would create it: ')
 
     if not os.path.exists(fn_cred):
         fn_cred = f'{pw_script}/udn.credential.pkl.encrypt'
@@ -1522,7 +1387,6 @@ if __name__ == "__main__":
         cred = create_cred()
     else:
         cred = key.load()
-
     # unpack the cred
 
     # print(cred)
@@ -1576,9 +1440,149 @@ if __name__ == "__main__":
         key.dump(cred)
         logger.info('now exiting')
         sys.exit(1)
+    return cred
 
-    api_token_gateway = cred['token']
-    api_token_fileservice = cred['fs_token']
+if __name__ == "__main__":
+
+    import argparse as arg
+    from argparse import RawTextHelpFormatter
+    ps = arg.ArgumentParser(description=__doc__, formatter_class=RawTextHelpFormatter)
+    ps.add_argument('udn', help="""one or multiple UDN ID, sep by space, could also contain the prefix, eg. 11_UDN123456.  if only selected family number are needed, append with @, eg. UDN123@UDN456_father@UDN_789@mother, in this case, other family member would not be resolved""", nargs='*')
+    ps.add_argument('-pw', help='working path, default is udn/cases, if use current folder, specify as . or pwd', default=None)
+    ps.add_argument(
+        '-fn_cred', '-cred',
+        help="""filename for the credential file, must include the UDN token, login email, login username(vunetID), login_password""")
+    ps.add_argument('-create', '-encry', '-enc', help="""enter into create credential mode""", action='store_true')
+    ps.add_argument('-sv_caller', '-svcaller', '-svsoftware', help="""the software used for sv calling, default=dragen, alt=pacbio""", default='dragen', choices=['pacbio', 'dragen'])
+    ps.add_argument('-update_cred', '-uc',  help="""update the credential info""", action='store_true')
+    ps.add_argument('-url', '-urlonly', '-ckfls', help='get the files URL only (for each family member) and quit', action='store_true'),
+    ps.add_argument('-ft', help="""could be multiple, if specified, would only update the amazon URL for these file types, if gzip only, add the .gz suffix. e.g. vcf.gz  would not match .vcf$""", nargs='*', default=None)
+    ps.add_argument('-flist', '-fls', help="""only download the specified files, the -ft will be ignored""", nargs='*')
+    ps.add_argument('-seq_type', '-st', help="""sequence type to resolve download link, valid = genome, rnaseq, reanalysis(re),  longreads(long) . if not specified, will ignore the sequence type filtering""", choices=['genome', 'rnaseq', 're', 'reanalysis', 'long', 'longreads'], nargs='*')
+    ps.add_argument('-seq_id_list', '-seqid', help="""only run specific seq id, nargs=*, type=int""", type=int, nargs='*')
+    ps.add_argument('-renew', '-new', '-update', help="""flag, update the amazon shared link. default is not renew""", action='store_true')
+    ps.add_argument('-lite', help="""flag, donot download the cnv files and the bayler report""", action='store_true')
+    ps.add_argument('-noupload', '-noup', help="""don't upload the files to ACCRE""", action='store_true')
+    ps.add_argument('-force_upload', '-fu', help="""force upload all files to ACCRE""", action='store_true')
+    ps.add_argument('-force_rerun', '-force', help="""force rerun the API query, ignore the local pikcle file""", action='store_true')
+    ps.add_argument('-upload_only', '-uo', help="""only upload the files to upload folder, not to the data analysis folder""", action='store_true')
+    ps.add_argument('-show', '-chrome', '-noheadless', help="""disable headless mode""", action='store_true')
+    ps.add_argument('-showcred', help="""show the credential content and exit""", action='store_true')
+    ps.add_argument('-reltable', '-rel', help="""force save the relative table, even in the parse_api_result mode""", action='store_true')
+    ps.add_argument('-v', '-level', help="""set the logger level, default is info""", default='INFO', choices=['INFO', 'WARN', 'DEBUG', 'ERROR'])
+    ps.add_argument('-nodename', '-node', '-remote', help="remote node name, default is va", choices=['va', 'pc'])
+    ps.add_argument('-fn_prefix', help="rename the case name to this prefix, only valid for vcf file, number should match with prj number", nargs='*')
+    ps.add_argument('-rename', '-newname', help="if the UDN case already exist, and the raw name does not match, if true, will rename to the new name, otherwise , will use old name", action='store_true')
+    ps.add_argument('-phillips', '-philips', '-phil', help="run the tasks for Phillips, need to rename the case. argument = filename for UDN-case number map")
+    ps.add_argument('-debug', '-d', help="""debug mode, dump the intermediate json files""", action='store_true')
+    ps.add_argument('-parse_link', '-real',  help="""resolve the aws download URL, default is demo mode""", action='store_true')
+
+
+    args = ps.parse_args()
+    debug = args.debug
+    case_prefix = ''
+    pw_accre_scratch_suffix = ''
+    fn_phillips = args.phillips
+    if fn_phillips:
+        args.ft = ['vcf']
+        args.pw = '.'
+        args.upload_only = True
+        args.lite = True
+        # args.renew = True
+        args.udn, args.fn_prefix = parse_phillips_map_file(fn_phillips)
+        pw_accre_scratch_suffix = '/upload_for_phillips'
+        case_prefix = fn_phillips.rsplit('/', 1)[-1].rsplit('.', 1)[0].replace('_rerun', '') + '_'
+
+    print(args)
+    logger = get_logger(level=args.v)
+
+    force = args.force_rerun
+    rename = args.rename
+    udn_list = args.udn or [os.getcwd().rsplit('/')[-1]]
+    newname_prefix_l = args.fn_prefix
+    if newname_prefix_l:
+        newname_prefix_l = [re.sub('case[\W_]+', '', _) for _ in newname_prefix_l]
+
+    ft_input = args.ft
+
+    force_upload = args.force_upload
+    sv_caller = args.sv_caller
+
+    valid_seq_type = args.seq_type
+    if valid_seq_type:
+        valid_seq_type = {{'re': 'reanalysis', 'long': 'long_read_genome', 'longreads': 'long_read_genome'}.get(_) or _ for _ in valid_seq_type}
+    
+        logger.info(f'g@valid seq type = {valid_seq_type}')
+
+    save_rel_table = args.reltable
+    headless = not args.show
+    if platform == 'darwin':
+        root = args.pw or '.'
+        if root.lower() in ['.', 'pwd']:
+            root = os.getcwd()
+        if args.pw:
+            pass
+        # elif root.find('/udn/cases/done/') > -1:
+        #     root = root.rsplit('/done/', 1)[0] + '/done'
+        # elif root.find('/udn/cases/') > -1:
+        #     root = root.rsplit('/udn/cases/', 1)[0] + '/udn/cases'
+        os.chdir(root)
+        logger.info(f'g@root path = {root}')
+    else:
+        logger.info('platform= {platform}')
+        root = os.getcwd()
+
+    lite = args.lite
+    upload = not args.noupload or force_upload
+
+    demo = not args.parse_link
+    urlonly = args.url
+
+    upload_only = args.upload_only
+
+
+    nodename = args.nodename or 'va'
+    pw_accre_data = '/data/cqs/chenh19/udn'
+    pw_accre_scratch = '/fs0/members/chenh19/tmp/upload' if nodename == 'va' else '/scratch/h_vangard_1/chenh19/udn/upload'
+
+
+    pw_accre_scratch += pw_accre_scratch_suffix
+    # pw_accre_upload = pw_accre_scratch
+
+    upload_file_list = ['pheno.keywords.txt', 'download.*.txt', 'download.*.md5']  # upload these files to scratch and data of ACCRE
+
+    gzip_only = set()
+    update_aws_ft = set()
+
+    valid_ft = {'bam',}
+    ft_convert.update({k: k for k in valid_ft})
+
+
+    selected_files = args.flist
+    if selected_files:
+        update_aws_ft = {get_file_extension(fn)[0] for fn in selected_files}
+    elif ft_input is None:
+        update_aws_ft = ['cnv', 'fastq', 'vcf']
+    elif 'all' not in ft_input:
+        err = 0
+        ft_input = [_ for _ in ft_input if _.strip()]
+        
+        for i in ft_input:
+            ext = i.replace('.gz', '')
+            if i[-2:] == 'gz':
+                gzip_only.add(ext)
+            try:
+                update_aws_ft.add(ft_convert[ext])
+            except:
+                logger.error(f'invalid filetype: {i}')
+                err = 1
+        if err:
+            sys.exit(1)
+    else:
+        update_aws_ft = {'all',}
+
+
+    logger.info(f'update_aws_ft = {update_aws_ft}, root pw = {root}')
 
     if args.showcred:
         logger.info(cred)
@@ -1588,7 +1592,7 @@ if __name__ == "__main__":
     udn_list = [_.strip() for _ in udn_list if _.strip()]
 
     # validate udn
-    p = re.compile(r'(?:.*)?(UDN\d+)')
+    p = re.compile(r'(\d{3}_)?([a-zA-Z]{2,3}_)?(\d{3}_)?(UDN\d+)(_\d{3})?(_[a-zA-Z]{2,3})?(_\d{3})?$')
     validated = []
     for n, i in enumerate(udn_list):
         i = [_.strip() for _ in i.split('@')]
@@ -1613,27 +1617,52 @@ if __name__ == "__main__":
         if not m:
             logger.warning(f'Invalid UDN_ID: {udn_raw}')
             continue
-        udn = m.group(1)
+        tmp =[_.strip('_') if _ else _ for _ in m.groups()]
+        num1, name_abrev1, num2, udn, num3, name_abrev2, num4 = tmp
+        if name_abrev1 and name_abrev2:
+            logger.error(f'invalid case name, multiple name abbreviations found: {tmp} ')
+            continue
+        name_abrev = name_abrev1 or name_abrev2
+        if num1 and num2 :
+            logger.error(f'multiple SN before UDN ID: {tmp}')
+            continue
+        if num3 and num4:
+            logger.error(f'multiple SN after UDN ID: {tmp}')
+            continue
+        num_before = num1 or num2
+        num_after = num3 or num4
+        if all([num_before, num_after]):
+            sn_outer = num_after
+            sn_internal = num_before
+        else:
+            sn_outer = num_before or num_after
+            sn_internal = None
+        
+        tmp = [sn_internal, udn, name_abrev, sn_outer]
+        udn_raw = '_'.join([_.strip('_') for _ in tmp if _])
+        
         validated.append([udn_raw, udn, valid_family])
 
     if len(validated) == 0:
         logger.error('No UDN case passed in, please check')
         sys.exit(1)
 
-
-    # sys.exit(1)
-    logger.info('\n\n\n'+'#' *30)
-
     # driver, cookie_token = get_cookie(None, headless=headless)
     # logger.info(f'cookie_token=\n{cookie_token}')
     # driver = None
     # cookie_token = None
+    logger.info('\ncases = [udn_raw, udn, select_family_member]\n\t' + '\n\t'.join(map(str, validated)))
 
+    cred = get_cred(args)
+    token = cred['token']
+    api_token_fileservice = cred['fs_token']
     header1 = {
         'Content-Type': 'application/json',
         'Authorization': f'Token {token}',
     }
 
+    # sys.exit(1)
+    logger.info('\n\n\n'+'#' *30)
 
     # get the current UDN list in current folder
     udn_exist = {}  # key = pure_udn_id, v = folder name
