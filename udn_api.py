@@ -1562,7 +1562,7 @@ if __name__ == "__main__":
     if selected_files:
         update_aws_ft = {get_file_extension(fn)[0] for fn in selected_files}
     elif ft_input is None:
-        update_aws_ft = ['cnv', 'fastq', 'vcf']
+        update_aws_ft = ['cnv', 'fastq']
     elif 'all' not in ft_input:
         err = 0
         ft_input = [_ for _ in ft_input if _.strip()]
