@@ -138,7 +138,7 @@ def dump_json(obj, fn):
 
 def get_file_extension(fn):
     # m = re.match(r'.*?\.(bam|bai|cnv|fastq|fq|gvcf|vcf)\b(\.gz)?', fn.lower())
-    m = re.match(r'.*?\.([a-z]+(?:\.g?vcf)?)(\.gz)?$', fn.lower().replace('.tbi', ''))
+    m = re.match(r'.*?\.([a-z0-9]+(?:\.g?vcf)?)(\.gz)?$', fn.lower().replace('.tbi', ''))
     if m:
         try:
             return ft_convert[m.group(1)], m.group(2)
@@ -472,6 +472,8 @@ def get_all_info(udn, selected_files=None, renew_amazon_link=False, res_all=None
         else:
             dup_flag = ' (dup)'
         ext, gz = get_file_extension(ifn)
+        # logger.info(f'{ext}: {ifn}')
+
         seq_type_kept.setdefault(seq_type, {}).setdefault(seq_id, {}).setdefault(ext, 0)
         seq_type_kept[seq_type][seq_id][ext] += 1
 
