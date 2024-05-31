@@ -123,7 +123,7 @@ def get_json(action=None, payload=None, url=None, header=None):
     r = requests.get(url, headers=headers, data=payload)
     if r.status_code != 200:
         if "sequencing/files" not in action and "applications/" not in action:
-            logger.warning(f'\taction=  {action} - {r.json()}')
+            logger.warning(f'\taction=  {action} , url = {url} - {r.json()},')
         return 0
     try:
         return r.json()
@@ -138,7 +138,8 @@ def dump_json(obj, fn):
 
 def get_file_extension(fn):
     # m = re.match(r'.*?\.(bam|bai|cnv|fastq|fq|gvcf|vcf)\b(\.gz)?', fn.lower())
-    m = re.match(r'.*?\.([a-z]+(?:\.g?vcf)?)(\.gz)?$', fn.lower().replace('.tbi', ''))
+    # m = re.match(r'.*?\.([a-z0-9]+(?:\.g?vcf)?)(\.gz)?$', fn.lower().replace('.tbi', ''))
+    m = re.match(r'.*?\.([a-z0-9]+)(\.gz)?$', fn.lower().replace('.tbi', ''))
     if m:
         try:
             return ft_convert[m.group(1)], m.group(2)
@@ -472,6 +473,8 @@ def get_all_info(udn, selected_files=None, renew_amazon_link=False, res_all=None
         else:
             dup_flag = ' (dup)'
         ext, gz = get_file_extension(ifn)
+        # logger.info(f'{ext}: {ifn}')
+
         seq_type_kept.setdefault(seq_type, {}).setdefault(seq_id, {}).setdefault(ext, 0)
         seq_type_kept[seq_type][seq_id][ext] += 1
 
@@ -1161,7 +1164,7 @@ default:
                 url_count[ext]['unkown'].append(url)
                 url_count['total']['unkown'] += 1
 
-            if newname_prefix and re.match(r'.+\.vcf', fn.lower()) and not re.match(r'(cnv|joint)', fn.lower()):
+            if newname_prefix and re.match(r'.+\.vcf', fn.lower()) and not re.match(r'.*(cnv|joint)', fn.lower()):
                 # 971146-UDN131930-P_971147-UDN771313-M_reheadered.joint.repeats.merged.vcf.gz
                 newname_base = f'{newname_prefix}_{rel_to_proband}'
 
@@ -1488,7 +1491,6 @@ if __name__ == "__main__":
         args.pw = '.'
         args.upload_only = True
         args.lite = True
-        # args.renew = True
         args.udn, args.fn_prefix = parse_phillips_map_file(fn_phillips)
         pw_accre_scratch_suffix = '/upload_for_phillips'
         case_prefix = fn_phillips.rsplit('/', 1)[-1].rsplit('.', 1)[0].replace('_rerun', '') + '_'
@@ -1661,6 +1663,7 @@ if __name__ == "__main__":
         'Authorization': f'Token {token}',
     }
 
+    # logger.info(header1)
     # sys.exit(1)
     logger.info('\n\n\n'+'#' *30)
 
@@ -1749,7 +1752,7 @@ if __name__ == "__main__":
             if demo:
                 renew_amazon_link = False
             else:
-                renew_amazon_link = args.renew
+                renew_amazon_link = args.renew 
             logger.info(f'{renew_amazon_link=}, {args.renew=}, {demo=}')
 
             # regular
