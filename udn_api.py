@@ -123,7 +123,7 @@ def get_json(action=None, payload=None, url=None, header=None):
     r = requests.get(url, headers=headers, data=payload)
     if r.status_code != 200:
         if "sequencing/files" not in action and "applications/" not in action:
-            logger.warning(f'\taction=  {action} - {r.json()}')
+            logger.warning(f'\taction=  {action} , url = {url} - {r.json()},')
         return 0
     try:
         return r.json()
@@ -1491,7 +1491,6 @@ if __name__ == "__main__":
         args.pw = '.'
         args.upload_only = True
         args.lite = True
-        # args.renew = True
         args.udn, args.fn_prefix = parse_phillips_map_file(fn_phillips)
         pw_accre_scratch_suffix = '/upload_for_phillips'
         case_prefix = fn_phillips.rsplit('/', 1)[-1].rsplit('.', 1)[0].replace('_rerun', '') + '_'
@@ -1664,6 +1663,7 @@ if __name__ == "__main__":
         'Authorization': f'Token {token}',
     }
 
+    # logger.info(header1)
     # sys.exit(1)
     logger.info('\n\n\n'+'#' *30)
 
@@ -1752,7 +1752,7 @@ if __name__ == "__main__":
             if demo:
                 renew_amazon_link = False
             else:
-                renew_amazon_link = args.renew
+                renew_amazon_link = args.renew 
             logger.info(f'{renew_amazon_link=}, {args.renew=}, {demo=}')
 
             # regular
