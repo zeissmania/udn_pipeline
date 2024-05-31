@@ -252,8 +252,8 @@ def build_remote_subfolder(name, dest):
     if dest == 'dropbox':
         cmd = f'{dock} dbxcli mkdir "{name}/" >>{dest}.create_folder.log 2>{dest}.create_folder.log'
     elif dest == 'emedgene':
-        # os.system(f'{dock} aws s3api put-object --profile {profile} --bucket emg-auto-samples --key Vanderbilt/upload/{name}/ >>{dest}.create_folder.log 2>{dest}.create_folder.log')
-        cmd = f'{dock} aws s3api put-object --bucket emg-auto-samples --key "Vanderbilt/upload/{name}/" >>{dest}.create_folder.log 2>{dest}.create_folder.log'
+        # os.system(f'{dock} aws s3api put-object --profile {profile} --bucket use1-produs-emg-auto-samples --key Vanderbilt/upload/{name}/ >>{dest}.create_folder.log 2>{dest}.create_folder.log')
+        cmd = f'{dock} aws s3api put-object --bucket use1-produs-emg-auto-samples --key "Vanderbilt/upload/{name}/" >>{dest}.create_folder.log 2>{dest}.create_folder.log'
     elif dest == 'rdrive':
         cmd = f'{dock_smb} smbclient "//i10file.vumc.org/ped/"   -A /home/chenh19/cred/smbclient.conf -c \'mkdir "{name}" \' '
         # logger.info(cmd)
@@ -365,7 +365,7 @@ def get_remote_file_list(pw, dest, remote_pw):
     if dest == 'dropbox':
         os.system(f'{dock} dbxcli ls -R "/{remote_pw}" -l > {fn_exist}')
     elif dest == 'emedgene':
-        os.system(f'{dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{remote_pw}" --recursive > {fn_exist}')
+        os.system(f'{dock} aws s3 ls "use1-produs-emg-auto-samples/Vanderbilt/upload/{remote_pw}" --recursive > {fn_exist}')
     elif dest == 'rdrive':
         cmd = f'{dock_smb} smbclient "//i10file.vumc.org/ped/"   -A /home/chenh19/cred/smbclient.conf -D "{remote_pw}" <<< $\'recurse on\\nls\' 2>/dev/null > {fn_exist}'
         # logger.info(cmd)
@@ -608,13 +608,6 @@ def parse_info_file(pw, info_file, remote_pw, ft=None, gzip_only=None, updated_v
                 logger.info(f'file skipped due to gzip file only: {fn}')
                 continue
 
-            if url == 'NA':
-                url_na.append(fn)
-                continue
-            
-
-            
-
             ifile_ct.setdefault(reltmp, {}).setdefault(ext, []).append(fn)
 
             rel = re.sub(r'\W+', '_', rel)
@@ -711,6 +704,11 @@ def parse_info_file(pw, info_file, remote_pw, ft=None, gzip_only=None, updated_v
                             os.symlink(fn_download, f'{fn_download}.bad')
                         except:
                             pass
+
+
+            if url == 'NA' and not downloaded:
+                url_na.append(fn)
+
             try:
                 size_remote = d_exist[fn_remote][1]
             except:
@@ -751,9 +749,7 @@ def parse_info_file(pw, info_file, remote_pw, ft=None, gzip_only=None, updated_v
                 d[remote_pw] = {fn: v}
 
     if len(url_na) > 0:
-        logger.warning(f'totally {len(url_na)} desired files has invalid NA url:\n\t')
-        print('\n\t'.join(url_na))
-
+        logger.warning(f'totally {len(url_na)} desired files has invalid NA url:\n\t' + '\n\t'.join(url_na))
 
     # logger.debug(d)
     sub_folders_exist = set()
@@ -770,8 +766,8 @@ def parse_info_file(pw, info_file, remote_pw, ft=None, gzip_only=None, updated_v
         for v2 in v1.values():
             sub_folders_exp.add(v2['remote'])
 
-    logger.info(f'subfolder exp = {sub_folders_exp}')
-    logger.info(f'subfolder existed = {sub_folders_exist}')
+    logger.info(f'subfolder expected = {sub_folders_exp}')
+    logger.info(f'subfolder existing = {sub_folders_exist}')
 
     sub_folder_to_build = sorted(sub_folders_exp - sub_folders_exist)
     cmd_build_remote_pw = []
@@ -829,7 +825,7 @@ def parse_info_file(pw, info_file, remote_pw, ft=None, gzip_only=None, updated_v
         
     
     file_status = {'ok': [], 'downloaded': [], 'raw': [], 'invalid_url': []}
-
+    non_fq = {}
     for _ in list(d):
         v1 = d[_]
         for fn in list(v1):
@@ -839,35 +835,48 @@ def parse_info_file(pw, info_file, remote_pw, ft=None, gzip_only=None, updated_v
             v = v1[fn]
 
             fn_refine = re.sub(r'\s+', '_', fn)
+            ext, gz = get_file_extension(fn)
             fn_script = f'{pw}/shell/{fn_refine}.{dest}.sh'
             n_desired += 1
 
             if v['uploaded']:
-                logger.info(colored(f'file already uploaded: {fn}', 'green'))
+                # logger.info(colored(f'file already uploaded: {fn}', 'green'))
                 n_uploaded += 1
                 file_status['ok'].append(fn)
-
                 if not force_download:
                     # n_downloaded += 1
                     continue
-                
-                
-                
-            if v['url'].lower() == 'na':
-                file_status['invalid_url'].append(fn)
-                continue
-            
+
             if not v['downloaded']:
+                if v['url'].lower() == 'na':
+                    file_status['invalid_url'].append(fn)
+                    continue
                 if not v['uploaded']:
                     if not no_upload:
-                        need_upload.append(fn)
-                    file_status['raw'].append(fn)
+                        if ext == 'fastq' or dest != 'emedgene':
+                            need_upload.append(fn)
+                            v['need_upload'] = 1
+                        else:
+                            non_fq.setdefault(ext, 0)
+                            non_fq[ext] += 1
+                    if v['url'].lower() != 'na':
+                        file_status['raw'].append(fn)
             else:
                 n_downloaded += 1
                 file_status['downloaded'].append(fn)
+                # logger.info(f'{fn}, {ext}')
                 if not no_upload:
-                    need_upload.append(fn)
+                        if ext == 'fastq' or dest != 'emedgene':
+                            need_upload.append(fn)
+                            v['need_upload'] = 1
+                        else:
+                            non_fq.setdefault(ext, 0)
+                            non_fq[ext] += 1
 
+    logger.info({k: len(v) for k, v in file_status.items()})
+    if non_fq:
+        logger.info(non_fq)
+    
     need_upload = sorted(need_upload)
     n_need_upload = len(need_upload)
     logger.info(f'total files = {n_desired}, need_to_upload={n_need_upload}, already exist in server = {n_uploaded}, already downloaded = {n_downloaded}')
@@ -887,7 +896,7 @@ def parse_info_file(pw, info_file, remote_pw, ft=None, gzip_only=None, updated_v
         
         print('\t' + '\n\t'.join(str_tmp))
         if n_invalid_url > 0:
-            logger.info(f'\nERROR: {n_invalid_url} files with NA url')
+            logger.warning(f'\nERROR: {n_invalid_url} files with NA url')
             logger.debug('\n\t'.join(invalid_url))
     else:
         print('\n', '*' * 50)
@@ -950,7 +959,7 @@ def infer_remote_pw(udn, dest):
         remote_base_dir = '/GEN/VUDP Raw Data/'
     
     if dest == "emedgene":
-        os.system(f'{dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload" > {fn_all_folder} ')
+        os.system(f'{dock} aws s3 ls "use1-produs-emg-auto-samples/Vanderbilt/upload" > {fn_all_folder} ')
     elif dest == 'rdrive':
         cmd = f'{dock_smb} smbclient "//i10file.vumc.org/ped/"  -A "/home/chenh19/cred/smbclient.conf" -D "{remote_base_dir}" -c "ls" 2>/dev/null > {fn_all_folder}'
         os.system(cmd)
@@ -1006,7 +1015,7 @@ def refine_remote_pw(remote_pw, dest):
     if dest == 'rdrive':
         cmd = f'{dock_smb} smbclient "{server}"  -A "/home/chenh19/cred/smbclient.conf" -D "{remote_pw_front}" -c "ls" 2>/dev/null > {fn_all_folder}'
     elif dest == 'emedgene':
-        cmd = f'{dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/"  > {fn_all_folder}'
+        cmd = f'{dock} aws s3 ls "use1-produs-emg-auto-samples/Vanderbilt/upload/"  > {fn_all_folder}'
     logger.info(os.getcwd())
     os.system(cmd)
 
@@ -1103,7 +1112,7 @@ def build_script_single(dest, remote_pw, fn_local, url_var=None, simple=False, f
     
     fn_remote_full = f'{remote_pw}/{fn_remote}'
     
-    logger.info(fn_remote)
+    # logger.info(fn_remote)
     # if not os.path.exists(fn_local):
     #     return None
 
@@ -1185,7 +1194,8 @@ checklocal(){{
     {cmd_check_md5}
 }}
 """
-    cmd.append(cmd_check_local)
+    if need_download:
+        cmd.append(cmd_check_local)
     # check remote
     fn_pure = os.path.basename(fn_remote)
     check_remote_logic = f"""
@@ -1254,7 +1264,7 @@ checklocal(){{
     if dest == 'emedgene':
         cmd_check_remote = f"""
 checkremote(){{
-    remote_file_size=$({dock} aws s3 ls "emg-auto-samples/Vanderbilt/upload/{fn_remote_full}"|grep -E -m1 "{fn_pure}$" | tr -s " "|cut -d " " -f 3)
+    remote_file_size=$({dock} aws s3 ls "use1-produs-emg-auto-samples/Vanderbilt/upload/{fn_remote_full}"|grep -E -m1 "{fn_pure}$" | tr -s " "|cut -d " " -f 3)
     {check_remote_logic}
 
 }}
@@ -1305,7 +1315,8 @@ postupload(){{
 download_status=$(checklocal)
 
 """
-    cmd.append(cmd_post_upload)
+    if need_download:
+        cmd.append(cmd_post_upload)
     # upload_status
     # if not no_upload and not force_download:
     if not no_upload:
@@ -1318,17 +1329,18 @@ fi
 """)
     # else:
     #     logger.info(f'g@{no_upload=}, {force_download=}')
-    cmd.append(f"""
+    if need_download:
+        cmd.append(f"""
 
-if [[ $download_status -eq 1 ]];then
-    {download_cmd}
-    download_status=$(checklocal)
     if [[ $download_status -eq 1 ]];then
-        echo download failed >> {fn_status}
-        exit 1
+        {download_cmd}
+        download_status=$(checklocal)
+        if [[ $download_status -eq 1 ]];then
+            echo download failed >> {fn_status}
+            exit 1
+        fi
     fi
-fi
-""")
+    """)
     # rename the vcf and bgzip
     if fn_deid:
         fn = f'{fn_deid}.vcf.gz'
@@ -1357,7 +1369,7 @@ ln -sf {fn_local} {pw}/download/{fn_deid}.link
         if dest == 'dropbox':
             upload_cmd = f'{dock} dbxcli put "{fn_local}" "/{fn_remote_full}" > {pw}/log/upload.{dest}.{fn}.log 2>&1'
         elif dest == 'emedgene':
-            upload_cmd = f'{dock} aws s3 cp "{fn_local}" "s3://emg-auto-samples/Vanderbilt/upload/{fn_remote_full}" > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log'
+            upload_cmd = f'{dock} aws s3 cp "{fn_local}" "s3://use1-produs-emg-auto-samples/Vanderbilt/upload/{fn_remote_full}" > {pw}/log/upload.{dest}.{fn}.log 2>&1\ndate +"%m-%d  %T">> {pw}/log/upload.{dest}.{fn}.log'
         elif dest == 'rdrive':
             fn_pure, ext = fn_remote.rsplit('.', 1)
             upload_cmd = f"""{dock_smb} smbclient "//i10file.vumc.org/ped/"   -A "/home/chenh19/cred/smbclient.conf"  <<< $'mkdir "{remote_pw}"\nrm "/{fn_remote_full}"\nput "{fn_local}" "/{fn_remote_full}" ' """
@@ -1429,9 +1441,7 @@ def build_script(pw, d, info_file, no_upload=False):
             fn_download = f'{pw}/download/{fn}'
             # fn_download_chunk = fn_download.replace('.gz', '')
 
-
-
-            need_upload = not v['uploaded']
+            need_upload = v.get('need_upload') or False
             need_download = not v['downloaded']
             if no_upload:
                 need_upload = False
@@ -1445,7 +1455,7 @@ def build_script(pw, d, info_file, no_upload=False):
                 # logger.info(f'skipped: {fn}')
                 continue
 
-            if url.lower() == 'na':
+            if url.lower() == 'na' and need_download:
                 continue
             url_var = f"""url=$(awk -F "\\t" '$2=="{fn_orig}" {{print ${idx_url} }}' {info_file})"""
             fn_script = build_script_single(dest, remote_pw, fn_download, url_var, simple=False, fn_deid=fn_deid, sample_list=sample_list, pw=pw, download_type=download_type, size_exp=size_exp, need_upload=need_upload, need_download=need_download)
@@ -1728,7 +1738,7 @@ if __name__ == "__main__":
             
     elif node_name.find('vampire') > -1:
         if 'hanuman' in node_name:
-            bind = '-B /fs0'
+            bind = '-B /fs0,/home/chenh19/.aws:/config/.aws'
         else:
             bind = ''
         dock = f'singularity exec {bind} /data/cqs/chenh19/dock/centos.sif '
