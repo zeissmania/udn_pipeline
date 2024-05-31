@@ -138,7 +138,8 @@ def dump_json(obj, fn):
 
 def get_file_extension(fn):
     # m = re.match(r'.*?\.(bam|bai|cnv|fastq|fq|gvcf|vcf)\b(\.gz)?', fn.lower())
-    m = re.match(r'.*?\.([a-z0-9]+(?:\.g?vcf)?)(\.gz)?$', fn.lower().replace('.tbi', ''))
+    # m = re.match(r'.*?\.([a-z0-9]+(?:\.g?vcf)?)(\.gz)?$', fn.lower().replace('.tbi', ''))
+    m = re.match(r'.*?\.([a-z0-9]+)(\.gz)?$', fn.lower().replace('.tbi', ''))
     if m:
         try:
             return ft_convert[m.group(1)], m.group(2)
@@ -1163,7 +1164,7 @@ default:
                 url_count[ext]['unkown'].append(url)
                 url_count['total']['unkown'] += 1
 
-            if newname_prefix and re.match(r'.+\.vcf', fn.lower()) and not re.match(r'(cnv|joint)', fn.lower()):
+            if newname_prefix and re.match(r'.+\.vcf', fn.lower()) and not re.match(r'.*(cnv|joint)', fn.lower()):
                 # 971146-UDN131930-P_971147-UDN771313-M_reheadered.joint.repeats.merged.vcf.gz
                 newname_base = f'{newname_prefix}_{rel_to_proband}'
 
@@ -1564,7 +1565,7 @@ if __name__ == "__main__":
     if selected_files:
         update_aws_ft = {get_file_extension(fn)[0] for fn in selected_files}
     elif ft_input is None:
-        update_aws_ft = ['cnv', 'fastq']
+        update_aws_ft = ['cnv', 'fastq', 'vcf']
     elif 'all' not in ft_input:
         err = 0
         ft_input = [_ for _ in ft_input if _.strip()]
