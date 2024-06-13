@@ -18,7 +18,7 @@ my $def = {
   emailType => "FAIL",
 
   #target dir which will be automatically created and used to save code and result, you need to change it for each project.
-  target_dir         => "%pw_prj/result",
+  target_dir         => "/nobackup/h_vangard_1/chenh19/udn/rnaseq/%prj_name",
 
   #DEseq2 fold change, you can use either 1.5 or 2 or other option you want.
   DE_fold_change     => 1.5,
@@ -45,7 +45,7 @@ my $def = {
   pairend => 1,
 
   #Call variant using GATK pipeline
-  perform_call_variants => 1,
+  perform_call_variants => 0,
   
   #source files, it's a hashmap with key (sample name) points to array of files. For single end data, the array should contains one file only.
 

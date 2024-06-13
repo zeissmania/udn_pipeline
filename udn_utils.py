@@ -47,7 +47,7 @@ platform = sys.platform
 
 logger = getlogger()
 
-redundant_words = set('and,am,is,in,the,are,to,for,of,a,an,one,two,three,four,at,on,type,activity,increased,decreased,low,level,high'.split(','))
+redundant_words = set('and,am,is,in,the,are,to,for,of,a,an,one,two,three,four,at,on,type,activity,increased,decreased,low,level,high,disease,syndrome'.split(','))
 
 sv_type_convert = {'<DEL>': 'deletion', '<DUP>': 'duplication'}
 
@@ -152,7 +152,7 @@ class UDN_case():
         self.vcf_file_path = cfg_tested['vcf_file_path']
         self.thres_annot_sv_ranking = cfg_tested['thres_annot_sv_ranking']
         self.thres_gnomad_maf = cfg_tested['thres_gnomad_maf']
-        self.amelie_dict = {}
+        self.amelie_dict = None
         self.udn_match = cfg_tested['udn_match']
 
         # copy the config file
@@ -695,7 +695,8 @@ class UDN_case():
         else:
             vcf_new = tmp[0] + '/new.' + tmp[1]
 
-        if not os.path.exists(vcf_new):
+        size_new = os.path.getsize(vcf_new) if os.path.exists(vcf_new) else 0
+        if not os.path.exists(vcf_new) or size_new < 40:
             cmd = f"""{zcat} {vcf}|awk '!match($3, /DRAGEN:REF:/)' |gzip > {vcf_new} """
             os.system(cmd)
 
@@ -749,8 +750,10 @@ class UDN_case():
                     extra_filter += f'${col_quality}>{thres_quality_score}'
                     # cmd = f"""head -1 {f_anno_exp} > {f_anno_filter};awk -F $'\\t'  '{extra_filter}' {f_anno_exp} >> {f_anno_filter} """
                     cmd = f"""awk -F $'\\t'  '{extra_filter}' {f_anno_exp} >> {f_anno_filter} """
-
-                    logger.info(f'{lb}:  filter criteria = {extra_filter}')
+                    with open(f_anno_exp) as f:
+                        first_line = f.readline().strip().split('\t')
+                        first_line = list(enumerate(first_line))
+                    logger.info(f'{lb}:  filter criteria = {extra_filter}, first line = {first_line}')
                     logger.debug(cmd)
                 else:
                     cmd = f'ln -s {f_anno_exp} {f_anno_filter}'
@@ -1269,11 +1272,14 @@ class UDN_case():
                 coord = f'{chr_}:{s}-{e}'
 
                 # info stores the extra data need to be added to this line
-                try:
-                    amelie = d_amelie[gn]
-                except:
-                    logger.debug(f'gene not found in AMELIE list, gene = {gn}')
+                if d_amelie is None:
                     amelie = -99
+                else:
+                    try:
+                        amelie = d_amelie[gn]
+                    except:
+                        logger.debug(f'gene not found in AMELIE list, gene = {gn}')
+                        amelie = -99
 
                 line = [coord, '', 'na', '', str(amelie), i]
                 print('\t'.join(line), file=final)
@@ -1388,11 +1394,15 @@ class UDN_case():
 
                 # info stores the extra data need to be added to this line
                 info = {}
-                try:
-                    amelie = d_amelie[gn]
-                except:
-                    logger.debug(f'gene not found in AMELIE list, gene = {gn}')
+                
+                if d_amelie is None:
                     amelie = -99
+                else:
+                    try:
+                        amelie = d_amelie[gn]
+                    except:
+                        logger.debug(f'gene not found in AMELIE list, gene = {gn}')
+                        amelie = -99
 
                 # get the same bin in the same family annotation results
                 for sample_id in trio_order:
@@ -1688,11 +1698,18 @@ class UDN_case():
 
         omim_gn_total = set()
         non_omim_gn_total = set()
+        other_types = []
         for gn, v in d_gene_comment_scrapy.items():
             if isinstance(v[1], list) and len(v[1]) > 0:
                 omim_gn_total.add(gn)
             elif v[1] == 'no_linked_pheno':
                 non_omim_gn_total.add(gn)
+            else:
+                other_types.append([gn, v])
+        
+        if len(other_types) > 0:
+            tmp = '\n\n'.join(map(str, other_types[:5]))
+            logger.info(f'other gene types, {len(other_types)}, first 5 = {tmp}')
 
         logger.info(f'local total gene number with OMIM description={len(omim_gn_total)};  gene without linked omim = {len(non_omim_gn_total)}')
 
@@ -1701,9 +1718,10 @@ class UDN_case():
         gene_with_omim = genename_list & omim_gn_total
         genes_without_linked_pheno = genename_list & non_omim_gn_total
         genes_need_scrapy = genename_list - set(d_gene_comment_scrapy) - genes_without_omim_id
+        no_omim_d_genes = genename_list & genes_without_omim_id - set(d_gene_comment_scrapy)
         
         logger.info(f'gene count in merged.sorted.tsv: total = {n_gene_total}, genes in d_gene = {len(d_gene)}')
-        logger.info(f'\n\tgene count in with OMIM description: {len(gene_with_omim)}\n\tgenes without linked pheno = {len(genes_without_linked_pheno)},  \n\tgenes need scrapy OMIM = {len(genes_need_scrapy)}')
+        logger.info(f'\n\tgene count in with OMIM description: {len(gene_with_omim)}\n\tgenes without linked pheno = {len(genes_without_linked_pheno)}, \n\tgenes without OMIM ID = {len(no_omim_d_genes)}, \n\tgenes need scrapy OMIM = {len(genes_need_scrapy)}')
         
 
         # build the phenotype keyword list
