@@ -1663,8 +1663,9 @@ if __name__ == "__main__":
         'Authorization': f'Token {token}',
     }
 
-    # logger.info(header1)
-    # sys.exit(1)
+
+    logger.info(header1)
+    sys.exit(1)
     logger.info('\n\n\n'+'#' *30)
 
     # get the current UDN list in current folder
